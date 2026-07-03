@@ -1,6 +1,7 @@
 # TapeBook 硬件引脚接线图
 
 > **数据来源**：`config.h`（权威）、`README.md`、`DESIGN.md` §3.2、`PRD.md` §7.2、`HARDWARE_MODULE_MIGRATION.md`  
+> **数据版本**：v1.1（R005 修订）  
 > **主控**：ESP32-S3-WROOM-1 N16R8（量产）/ WROOM-2 N32R16V（开发）
 
 ---
@@ -17,7 +18,7 @@ ESP32-S3                    MAX98357 (I2S DAC)
 │ 3.3V     ├───────────────►│ VIN           │
 │ GND      ├───────────────►│ GND           │
 │          │                │ GAIN ──► GND  │
-│          │                │ SD_MODE─►3.3V │
+│          │                │ SD_MODE─►~1MΩ─►3.3V │
 └──────────┘                └──────┬───────┘
                                   │
                               ┌───▼───┐
@@ -82,7 +83,7 @@ ESP32-S3                    电池电压检测 (可选)
 |------|------|------|------|--------|------|
 | **GPIO1** | BTN_PLAY | 播放/暂停 | IN | 上拉 | 按下低电平 |
 | **GPIO2** | BTN_STOP | 停止 | IN | 上拉 | 按下低电平 |
-| **GPIO3** | BAT_ADC | 电池检测 | IN | — | ADC1_CH2，1:1 分压 |
+| **GPIO3** | BAT_ADC | 电池检测 | IN | — | ADC1_CH2，1:1 分压；⚠️ Strapping 引脚（JTAG 信号源选择），分压网络可能影响 boot |
 | **GPIO4** | I2S_BCK | MAX98357 | OUT | — | 位时钟 |
 | **GPIO5** | I2S_WS | MAX98357 | OUT | — | 字选择（LRC） |
 | **GPIO6** | I2S_DOUT | MAX98357 | OUT | — | 数据输出 |
@@ -107,24 +108,35 @@ ESP32-S3                    电池电压检测 (可选)
 |------|--------------|----------------|
 | GPIO33/34 | **可用** ✅ | 被 Octal SPI 占用 ❌ |
 | GPIO35/36/37 | 被 Quad SPI 占用 ❌ | 被 Octal SPI 占用 ❌ |
-| GPIO47/48 | N/A | 1.8V 域（需电平转换）⚠️ |
+| GPIO47/48 | 1.8V 域（需电平转换）⚠️ | 1.8V 域（需电平转换）⚠️ |
 
 ---
 
 ## 3. 各外设详细接线
 
-### 3.1 MAX98357 I2S 功放
+### 3.1 MAX98357A I2S 功放
 
-| MAX98357 引脚 | 接 ESP32 | 接其他 |
+| MAX98357A 引脚 | 接 ESP32 | 接其他 |
 |-------------|----------|--------|
 | **BCLK** | GPIO4 | — |
 | **LRC** | GPIO5 | — |
 | **DIN** | GPIO6 | — |
 | **MCLK** | GPIO7（可选） | 可不接 |
-| **VIN** | 3.3V 或 5V（USB） | 3.3V≈1.8W，5V≈3W |
+| **VIN** | 3.3V 或 5V（USB） | 3.3V≈1W，5V≈3.2W（4Ω） |
 | **GND** | GND | — |
 | **GAIN** | — | **GND**（12dB 增益） |
-| **SD_MODE** | — | **VDD**（L+R 混合单声道） |
+| **SD_MODE** | — | **~1MΩ 接 VDD**（Mono (L+R)/2 混合单声道） |
+
+**SD_MODE 真值表（MAX98357A 规格书 Table 5）**：
+
+| SD_MODE 状态 | 电压阈值 | 输出模式 |
+|---|---|---|
+| GND | < 0.16V | Shutdown（静音） |
+| 通过 ~1MΩ 接 VDD | 0.16~0.77V | **Mono (L+R)/2** ← 单喇叭推荐 |
+| 通过 ~70kΩ 接 VDD | 0.77~1.4V | Right channel |
+| VDD | > 1.4V | Left channel |
+
+**注**：芯片内部有 100kΩ 下拉到 GND，悬空 = Shutdown。不同型号（A/B/C/D）SD_MODE 行为可能不同，请以实际 datasheet 为准。
 
 ### 3.2 MicroSD 卡（SPI 模式）
 
@@ -162,12 +174,16 @@ ESP32-S3                    电池电压检测 (可选)
 
 ### 3.5 EC11 旋转编码器（可选，V1.1+）
 
+EC11 编码器共 5 个引脚（旋转 A/B/C + 按键 D/E）：
+
 | EC11 引脚 | 接 ESP32 | 备注 |
 |----------|----------|------|
 | **A 相** | GPIO38 | 中断触发 |
 | **B 相** | GPIO39 | 中断触发 |
 | **公共端 (C)** | GND | — |
-| **A/B** | — | 建议外接 10nF 去耦电容对 GND |
+| **按键 (D)** | GPIO（可选） | 按下静音/确认，需另选 GPIO 接入 |
+| **按键公共端 (E)** | GND | 与 D 配对 |
+| **A/B 去耦** | — | 建议 A/B 对 GND 各接 10nF 电容消抖 |
 
 ### 3.6 电池电压检测（可选，V1.2+）
 
@@ -248,7 +264,8 @@ AMS1117-3.3 LDO (800mA)
 ## 6. 关键设计约束
 
 1. **I2S 引脚**：GPIO4/5/6/7 在 WROOM-1/WROOM-2 上均可用 ✅
-2. **I2C 引脚**：GPIO17/18 默认被 USB-JTAG 占用，需在 menuconfig 中关闭 USB-JTAG
-3. **GPIO1/2**：下载时作为 UART0 使用，开发调试注意
-4. **Strapping 引脚**：GPIO0/3/45/46 启动期间不能拉错电平，本项目未作业务使用 ✅
-5. **高阻引脚**：所有未用 GPIO 悬空或配置为下拉，降低功耗
+2. **I2C 引脚**：GPIO17/18 使用 I2C_NUM_0，是安全可用的普通 GPIO（非 USB-JTAG）。ESP32-S3 的 USB Serial/JTAG 引脚为 **GPIO19(USB_D+)/GPIO20(USB_D-)**，本项目未使用 ✅
+3. **UART0**：ESP32-S3 的 U0TXD=**GPIO43**、U0RXD=**GPIO44**，与 GPIO1/2 无关。本项目按键 GPIO1/2 不冲突 ✅
+4. **GPIO3 Strapping ⚠️**：GPIO3 是 strapping 引脚（JTAG 信号源选择），用作 BAT_ADC 时 1:1 分压网络会在 boot 期间将其拉至 ~2.1V（中间状态），**可能影响启动行为**。建议：改用非 strapping 引脚（如 GPIO4/5），或加 P-MOSFET 在 boot 后导通分压电路
+5. **Strapping 引脚**：GPIO0/45/46 启动期间不能拉错电平，本项目未作业务使用 ✅
+6. **高阻引脚**：所有未用 GPIO 悬空或配置为下拉，降低功耗
