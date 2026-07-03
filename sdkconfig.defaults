@@ -43,3 +43,6 @@ CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
 # Enable ESP-ADF (audio_player.cpp uses real audio_pipeline)
 CONFIG_USE_ESP_ADF=y
+
+# Enable u8g2 OLED (display.cpp uses real u8g2 rendering)
+CONFIG_USE_U8G2=y

@@ -32,5 +32,5 @@ if(CONFIG_BOARD_MODULE_WROOM_2_N32R16V)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE BOARD_MODULE_WROOM_2_N32R16V=1)
 endif()
 
-# 启用 ESP-ADF：把 ADF components 加进 build（audio_player.cpp 走真实路径需要）
-set(EXTRA_COMPONENT_DIRS $ENV{ADF_PATH}/components)
+# 注意：ESP-ADF components 通过项目根 CMakeLists.txt 的 EXTRA_COMPONENT_DIRS 引入
+# 这里不再重复设置（CMake 规范要求 EXTRA_COMPONENT_DIRS 必须在 include(project.cmake) 之前）

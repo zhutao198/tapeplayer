@@ -1,17 +1,14 @@
-# =============================================================================
-# sdkconfig.defaults template: ESP32-S3-WROOM-1 N16R8  (PRODUCTION)
-#   Flash : 16 MB Quad SPI (4-line)
-#   PSRAM :  8 MB Octal SPI (8-line)
-#   V_SPI :  3.3 V
-#
+# sdkconfig.defaults template: ESP32-S3-WROOM-1 N16R8 (PRODUCTION)
+# Flash : 16 MB Quad SPI (4-line)
+# PSRAM :  8 MB Octal SPI (8-line)
+# V_SPI :  3.3 V
 # Pairs with partitions_ota.csv (each app slot = 2 MB).
 # Used by configure.bat when BOARD_MODULE_WROOM_1_N16R8 is selected.
 # See HARDWARE_MODULE_MIGRATION.md for details.
-# =============================================================================
 
 CONFIG_IDF_TARGET="esp32s3"
 
-# ---- Flash (Quad SPI, 16 MB) ----
+# Flash (Quad SPI, 16 MB)
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 # CONFIG_ESPTOOLPY_FLASHMODE_QIO is not set
 # CONFIG_ESPTOOLPY_FLASHMODE_QOUT is not set
@@ -19,37 +16,31 @@ CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
 # CONFIG_ESPTOOLPY_FLASHMODE_DOUT is not set
 # CONFIG_ESPTOOLPY_OCT_FLASH is not set
 
-# ---- PSRAM (Octal SPI, 8 MB) ----
+# PSRAM (Octal SPI, 8 MB)
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 
-# ---- Partition table (OTA-capable, see partitions_ota.csv) ----
+# Partition table (OTA-capable, see partitions_ota.csv)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions_ota.csv"
 CONFIG_PARTITION_TABLE_OFFSET=0x8000
 
-# ---- File system ----
+# File system
 CONFIG_FATFS_LFN_STACK=y
 CONFIG_FATFS_MAX_LFN=255
 CONFIG_FATFS_CODEPAGE=437
 
-# ---- Bus config ----
+# Bus config
 CONFIG_SPI_MASTER_IN_IRAM=y
 CONFIG_I2C_ISR_IRAM_SAFE=y
 
-# ---- CPU ----
+# CPU
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
-# ---- Logging ----
+# Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
-
-# ---- OTA support (idf.py app / idf.py ota) ----
-# These are the standard CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE / app rollback
-# settings; uncomment to enable safer OTA with rollback on boot failure.
-# CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
-# CONFIG_BOOTLOADER_WDT_ENABLE=y
