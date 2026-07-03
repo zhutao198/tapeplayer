@@ -47,4 +47,5 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
 # ---- 启用 ESP-ADF (audio_player.cpp 走真实 pipeline，需要 ADF components) ----
+# 2026-07-03 R001: 启用 ESP-ADF（解锁 audio_player.cpp 真实解码路径）
 CONFIG_USE_ESP_ADF=y
