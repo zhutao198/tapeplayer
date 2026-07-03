@@ -51,12 +51,13 @@ git status --short            # 未提交改动
 
 ## 4. R 节点全景（维护中）
 
-| R 节点 | 日期 | 内容 | 状态 |
-|---|---|---|---|
-| baseline | 2026-07-03 | 首次提交（仓库基线） | ✅ |
-| R001 | 待定 | 启用 ESP-ADF（解锁音频播放） | ⏳ |
-| R002 | 待定 | 安装 u8g2 component（OLED 真实显示） | ⏳ |
-| R003 | 待定 | build 验证通过 | ⏳ |
+| R 节点 | 日期 | commit | 内容 | 状态 |
+|---|---|---|---|---|
+| baseline | 2026-07-03 | `938abbe` | 首次提交（仓库基线） | ✅ |
+| R001 | 2026-07-03 | `c0c67e4` | 启用 ESP-ADF（解锁音频播放） | ✅ |
+| R002 | 2026-07-03 | `d773f05` | 启用 u8g2 OLED 显示（改用 idf component 替换手动源码） | ✅ |
+| R003 | 2026-07-03 | `333e44e` | build 验证未通过；修 R001 ADF REQUIRES + 修 R002 u8g2 暂禁用 | ⚠️ |
+| R004 | 待定 | — | 启用真 u8g2（等正确 component 名）+ ADF 5.5 改用 idf_component.yml 引用 | ⏳ |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 
@@ -118,6 +119,8 @@ git clean -fdx
 | `REVIEW_REPORT.md` | 评审报告 |
 | `docs/DEVELOP_STATUS.md` | 功能完成度对照表（vs PRD） |
 | `HARDWARE_MODULE_MIGRATION.md` | 模组迁移指南 |
+| `docs/HARDWARE_PIN_WIRING.md` | 硬件引脚接线图（V1.0，待评审修正）|
+| `docs/HARDWARE_PIN_WIRING_REVIEW.md` | 上述文档的评审报告（V1.0，7/10）|
 | `SESSION_SUMMARY.md` | 关键决策 / 教训 |
 | `开发日志.md` | R 节点详细记录 |
 
