@@ -49,3 +49,9 @@ CONFIG_USE_ESP_ADF=y
 
 # Enable u8g2 OLED (display.cpp uses real u8g2 rendering)
 CONFIG_USE_U8G2=y
+
+# Custom audio board (project uses MAX98357 + SSD1306 on custom PCB, not LYRA-T)
+CONFIG_AUDIO_BOARD_CUSTOM=y
+
+# Suppress deprecation warnings (ADF v2.8 uses some deprecated IDF APIs)
+CONFIG_COMPILER_WARN_CFLAGS="-Wno-error=deprecated-declarations"

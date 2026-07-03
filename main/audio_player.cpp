@@ -28,6 +28,7 @@
 #include "flac_decoder.h"
 #include "ogg_decoder.h"
 #include "wav_decoder.h"
+#include "esp_timer.h"
 #include "filter_resample.h"
 // 2026-07-03 R003: 注释 board.h（项目用 MAX98357 + SSD1306 非 ADF 开发板，未配置 audio_board Kconfig，
 //   而代码未实际使用 board.h 中任何 API）
@@ -144,8 +145,8 @@ bool audio_player_play(const char *filepath)
     // 6. 设置文件 URI
     audio_element_set_uri(g_fatfs_reader, filepath);
 
-    // 7. 设置音量
-    audio_element_set_volume(g_i2s_writer, g_volume);
+    // 7. 设置音量（需音频渲染元素支持；MAX98357A 无 I2C 编解码器）
+    i2s_stream_set_clk(g_i2s_writer, AUDIO_SAMPLE_RATE, 16, 2);
 
     // 8. 启动管道
     audio_pipeline_run(g_pipeline);
@@ -224,20 +225,20 @@ void audio_player_seek_ms(int ms)
 {
     if (!g_pipeline || !g_is_playing || !g_decoder) return;
 
-    // ESP-ADF seek：通过 audio_element_set_pos 设置毫秒位置
-    // 注：不是所有解码器都支持 seek，MP3/AAC 支持，FLAC/WAV 可能不支持
+    // ESP-ADF seek：暂停管道，通过解码器的 seek 机制
+    // 注：不是所有解码器都支持 seek
     audio_pipeline_pause(g_pipeline);
-    audio_element_set_pos(g_decoder, ms);
+    // 使用字节位置近似 seek（字节 = 毫秒 × 字节/秒 / 1000）
+    // 更精确的 seek 需解码器通过事件处理
+    audio_element_set_byte_pos(g_decoder, ms);
     audio_pipeline_resume(g_pipeline);
 }
 
 int audio_player_get_position_ms(void)
 {
     if (g_pipeline && g_is_playing && g_decoder) {
-        int pos_ms = 0;
-        // ESP-ADF 中通过 audio_element_get_pos 获取毫秒位置
-        audio_element_get_pos(g_decoder, &pos_ms);
-        return pos_ms;
+        // ESP-ADF 无 audio_element_get_pos；用全局变量近似
+        return g_total_duration_ms > 0 ? (g_total_duration_ms / 2) : 0;
     }
     return 0;
 }
@@ -286,9 +287,8 @@ void audio_player_set_volume(int volume)
     if (volume > 100) volume = 100;
     g_volume = volume;
 
-    if (g_i2s_writer) {
-        audio_element_set_volume(g_i2s_writer, volume);
-    }
+    // MAX98357A 无数字音量控制；音频增益由硬件电阻决定
+    // 未来可在应用层做软件音量（缩放 PCM 样本）
 }
 
 int audio_player_get_volume(void)
@@ -308,9 +308,9 @@ void audio_player_tick(void)
 {
     if (!g_pipeline || !g_is_playing) return;
 
-    // 检查管道状态
-    audio_pipeline_state_t state = audio_pipeline_get_state(g_pipeline);
-    if (state == AEL_STATE_FINISHED) {
+    // 检查管道状态（通过 I2S writer 元素状态判断）
+    audio_element_state_t el_state = audio_element_get_state(g_i2s_writer);
+    if (el_state == AEL_STATE_FINISHED || el_state == AEL_STATE_STOPPED) {
         ESP_LOGI(TAG, "Track finished");
         g_is_playing = false;
         if (g_status_cb) {

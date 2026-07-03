@@ -3,6 +3,7 @@
 #include "driver/i2c.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -24,7 +25,7 @@ void u8g2_esp32_hal_init(u8g2_esp32_hal_t cfg) {
     };
     i2c_param_config(I2C_PORT, &conf);
     i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
-    ESP_LOGI(TAG, "u8g2 I2C init sda=d", s_sda, s_scl);
+    ESP_LOGI(TAG, "u8g2 I2C init sda=%d, scl=%d", s_sda, s_scl);
 }
 
 uint8_t u8g2_esp32_i2c_byte_cb(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
@@ -48,8 +49,8 @@ uint8_t u8g2_esp32_gpio_and_delay_cb(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int,
     switch(msg) {
         case U8X8_MSG_GPIO_RESET: break;
         case U8X8_MSG_DELAY_MILLI: vTaskDelay(arg_int/portTICK_PERIOD_MS); break;
-        case U8X8_MSG_DELAY_10MICRO: ets_delay_us(10*arg_int); break;
-        case U8X8_MSG_DELAY_100NANO: ets_delay_us(1); break;
+        case U8X8_MSG_DELAY_10MICRO: esp_rom_delay_us(10*arg_int); break;
+        case U8X8_MSG_DELAY_100NANO: esp_rom_delay_us(1); break;
         default: return 0;
     }
     return 1;

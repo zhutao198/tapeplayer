@@ -4,11 +4,16 @@ cmake_minimum_required(VERSION 3.16)
 # 启用 ESP-ADF：把 ADF components 加进 build
 # (ADF_PATH 必须在 build 环境中已 export：set ADF_PATH=D:\esp\esp-adf)
 if(DEFINED ENV{ADF_PATH} AND EXISTS "$ENV{ADF_PATH}/components/audio_pipeline")
-    set(EXTRA_COMPONENT_DIRS "$ENV{ADF_PATH}/components")
+    set(EXTRA_COMPONENT_DIRS "$ENV{ADF_PATH}/components" "components/tapebook_board")
     message(STATUS "ESP-ADF components enabled from $ENV{ADF_PATH}/components")
+    message(STATUS "Custom board component added from components/tapebook_board")
 else()
     message(WARNING "ADF_PATH not set or audio_pipeline not found; ADF components disabled")
 endif()
+
+# ADF v2.8 用了若干 IDF v5.5 标记 deprecated 的 API
+# (-Werror=all 把所有 warning 升级为 error；这里强制 -Wno-error=deprecated-declarations)
+add_compile_options(-Wno-error=deprecated-declarations)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(audiobook_player)
