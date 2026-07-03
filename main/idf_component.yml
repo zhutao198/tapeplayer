@@ -1,0 +1,10 @@
+## ESP-IDF 组件依赖声明（main 组件）
+##
+## 用于 idf.py build 时自动从组件注册表拉取依赖。
+## 2026-07-03 R002: 用 idf component 替换 components/u8g2 手动源码。
+## 之前 components/u8g2/ 是手 clone 的 334M 第三方源码，现改走 registry。
+
+dependencies:
+  ## u8g2 OLED 库（lfengineering 维护的 ESP32 封装）
+  ## 替换了之前的 components/u8g2 手动源码
+  - "lfengineering/u8g2_esp32"

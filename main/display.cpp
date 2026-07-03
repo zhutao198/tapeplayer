@@ -19,7 +19,8 @@
 // 这里演示使用 u8g2 的接口
 
 // 如果未安装 u8g2，以下为兼容的占位实现
-// 实际使用请安装: components/u8g2
+// 实际使用请通过 idf component 拉取（main/idf_component.yml）
+// 2026-07-03 R002: 从手动源码 components/u8g2 切换为 idf component 依赖
 
 #ifdef CONFIG_USE_U8G2
 

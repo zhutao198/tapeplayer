@@ -49,3 +49,7 @@ CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 # ---- 启用 ESP-ADF (audio_player.cpp 走真实 pipeline，需要 ADF components) ----
 # 2026-07-03 R001: 启用 ESP-ADF（解锁 audio_player.cpp 真实解码路径）
 CONFIG_USE_ESP_ADF=y
+
+# ---- 启用 u8g2 OLED 显示 (display.cpp 走真实渲染路径) ----
+# 2026-07-03 R002: 启用 u8g2 库（idf component 方式，替换 components/u8g2 手动源码）
+CONFIG_USE_U8G2=y
