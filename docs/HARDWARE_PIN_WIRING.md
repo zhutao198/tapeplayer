@@ -2,7 +2,8 @@
 
 > **数据来源**：`config.h`（权威）、`README.md`、`DESIGN.md` §3.2、`PRD.md` §7.2、`HARDWARE_MODULE_MIGRATION.md`  
 > **数据版本**：v1.1（R005 修订）  
-> **主控**：ESP32-S3-WROOM-1 N16R8（量产）/ WROOM-2 N32R16V（开发）
+> **主控**：ESP32-S3-WROOM-1 N16R8（量产）/ WROOM-2 N32R16V（开发）  
+> **显示屏**：SSD1315（与 SSD1306 命令兼容，I2C 地址 0x3C）
 
 ---
 
@@ -18,7 +19,7 @@ ESP32-S3                    MAX98357 (I2S DAC)
 │ 3.3V     ├───────────────►│ VIN           │
 │ GND      ├───────────────►│ GND           │
 │          │                │ GAIN ──► GND  │
-│          │                │ SD_MODE─►~1MΩ─►3.3V │
+│          │                │ SD_MODE─►634kΩ─►3.3V │
 └──────────┘                └──────┬───────┘
                                   │
                               ┌───▼───┐
@@ -108,7 +109,7 @@ ESP32-S3                    电池电压检测 (可选)
 |------|--------------|----------------|
 | GPIO33/34 | **可用** ✅ | 被 Octal SPI 占用 ❌ |
 | GPIO35/36/37 | 被 Quad SPI 占用 ❌ | 被 Octal SPI 占用 ❌ |
-| GPIO47/48 | 1.8V 域（需电平转换）⚠️ | 1.8V 域（需电平转换）⚠️ |
+| GPIO47/48 | N/A（N16R8 用 R8V 芯片无此引脚）| 1.8V 域（需电平转换）⚠️ |
 
 ---
 
@@ -125,18 +126,26 @@ ESP32-S3                    电池电压检测 (可选)
 | **VIN** | 3.3V 或 5V（USB） | 3.3V≈1W，5V≈3.2W（4Ω） |
 | **GND** | GND | — |
 | **GAIN** | — | **GND**（12dB 增益） |
-| **SD_MODE** | — | **~1MΩ 接 VDD**（Mono (L+R)/2 混合单声道） |
+| **SD_MODE** | — | **634kΩ 接 VDD**（Mono (L+R)/2 混合单声道） |
 
 **SD_MODE 真值表（MAX98357A 规格书 Table 5）**：
 
 | SD_MODE 状态 | 电压阈值 | 输出模式 |
 |---|---|---|
 | GND | < 0.16V | Shutdown（静音） |
-| 通过 ~1MΩ 接 VDD | 0.16~0.77V | **Mono (L+R)/2** ← 单喇叭推荐 |
-| 通过 ~70kΩ 接 VDD | 0.77~1.4V | Right channel |
+| 通过 RLARGE 接 VDD | 0.16~0.77V | **Mono (L+R)/2** ← 单喇叭推荐 |
+| 通过 RSMALL 接 VDD | 0.77~1.4V | Right channel |
 | VDD | > 1.4V | Left channel |
 
-**注**：芯片内部有 100kΩ 下拉到 GND，悬空 = Shutdown。不同型号（A/B/C/D）SD_MODE 行为可能不同，请以实际 datasheet 为准。
+**电阻选值公式**（规格书 Page 17）：
+
+| VDDIO | RLARGE（Mono） | RSMALL（Right） |
+|---|---|---|
+| 1.8V | 300 kΩ | 69.8 kΩ |
+| **3.3V**（本项目） | **634 kΩ** | 210.2 kΩ |
+| 5.0V | 1011 kΩ | 370 kΩ |
+
+**注**：SD_MODE 内部有 100kΩ 下拉到 GND（RPD=100kΩ typ），悬空 = Shutdown；外部上拉电阻按公式 `RLARGE(kΩ) = 222.2 × VDDIO - 100`（Mono）或 `RSMALL(kΩ) = 94.0 × VDDIO - 100`（Right）计算。不同型号（A/B/C/D）SD_MODE 行为可能不同，请以实际 datasheet 为准。
 
 ### 3.2 MicroSD 卡（SPI 模式）
 
@@ -149,7 +158,7 @@ ESP32-S3                    电池电压检测 (可选)
 | **VCC** | 3.3V | — |
 | **GND** | GND | — |
 
-### 3.3 SSD1306 OLED（I2C）
+### 3.3 SSD1315 OLED（I2C，与 SSD1306 命令兼容）
 
 | OLED 引脚 | 接 ESP32 | 备注 |
 |----------|----------|------|
@@ -157,7 +166,9 @@ ESP32-S3                    电池电压检测 (可选)
 | **SCL** | GPIO18 | I2C 时钟（400kHz） |
 | **VCC** | 3.3V | — |
 | **GND** | GND | — |
-| **ADDR** | — | 默认 0x3C（悬空/接GND） |
+| **ADDR** | — | 默认 0x3C（SA0=GND 时） |
+
+**注**：实际芯片为 SSD1315，与 SSD1306 命令集兼容（u8g2 的 `u8g2_Setup_ssd1306_i2c_128x64_noname_f` 可直接驱动）。I2C 从机地址 = `0x3C`（SA0=0 时）或 `0x3D`（SA0=1 时）。
 
 ### 3.4 按键矩阵
 
@@ -264,8 +275,10 @@ AMS1117-3.3 LDO (800mA)
 ## 6. 关键设计约束
 
 1. **I2S 引脚**：GPIO4/5/6/7 在 WROOM-1/WROOM-2 上均可用 ✅
-2. **I2C 引脚**：GPIO17/18 使用 I2C_NUM_0，是安全可用的普通 GPIO（非 USB-JTAG）。ESP32-S3 的 USB Serial/JTAG 引脚为 **GPIO19(USB_D+)/GPIO20(USB_D-)**，本项目未使用 ✅
+2. **I2C 引脚**：GPIO17/18 使用 I2C_NUM_0，是安全可用的普通 GPIO（非 USB-JTAG）。ESP32-S3 的 USB Serial/JTAG 引脚为 **GPIO19(USB_D-)/GPIO20(USB_D+)**，本项目未使用 ✅
 3. **UART0**：ESP32-S3 的 U0TXD=**GPIO43**、U0RXD=**GPIO44**，与 GPIO1/2 无关。本项目按键 GPIO1/2 不冲突 ✅
 4. **GPIO3 Strapping ⚠️**：GPIO3 是 strapping 引脚（JTAG 信号源选择），用作 BAT_ADC 时 1:1 分压网络会在 boot 期间将其拉至 ~2.1V（中间状态），**可能影响启动行为**。建议：改用非 strapping 引脚（如 GPIO4/5），或加 P-MOSFET 在 boot 后导通分压电路
 5. **Strapping 引脚**：GPIO0/45/46 启动期间不能拉错电平，本项目未作业务使用 ✅
+   - GPIO45 控制 **VDD_SPI 电压**（0=1.8V，1=3.3V）。量产 WROOM-1 N16R8 的 VDD_SPI=3.3V，与该项目无关；若改用其他模组需注意
+   - GPIO46 控制 **ROM log 打印**，不影响功能
 6. **高阻引脚**：所有未用 GPIO 悬空或配置为下拉，降低功耗
