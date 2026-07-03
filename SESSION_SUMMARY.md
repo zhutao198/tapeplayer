@@ -65,6 +65,8 @@
 - ✅ **R002 完成**（u8g2 改用 idf component 路径 + 删 334M 手动源码 + 备份到 D 盘）
 - ✅ **R003 完成**（commit `333e44e` 含 5 文件修复 + sdkconfig 清理；build 验证未通过但发现关键阻塞点）
 - ✅ **ESP-IDF 4 子模块修复**（micro-ecc / lib_esp32 / lib_esp32c2 / lib_esp32c3_family）
+- ✅ **R004 完成**（CMakeLists.txt 启用 ADF：EXTRA_COMPONENT_DIRS 移到项目根）
+- ✅ **R005 完成**（修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书）
 
 ---
 
@@ -122,6 +124,14 @@
 - 见 L003（备份失败的教训）
 - **未来**：所有"先备份后删"操作必须分两步：① tar + `tar tzf` 验证 ② 再 rm
 
+### L009：评审报告也可能有误，必须经 datasheet 核实
+- **现象**：评审报告误说 GPIO17/18 是 USB-JTAG（实为 GPIO19/20）、GPIO1/2 是 UART0（实为 GPIO43/44）
+- **教训**：所有评审发现必须经官方 datasheet 核实后才可采纳，不盲信评审结论
+
+### L010：MAX98357 SD_MODE 是四级电压阈值，非二值 GND/VDD
+- **现象**：SD_MODE 不是简单的 GND/VDD 二值，而是 **Shutdown(0V) / Mono(0.16-0.77V) / Right(0.77-1.4V) / Left(>1.4V)** 四级
+- **教训**：必须用电阻分压获得 Mono 模式，直连 VDD 只输出 Left channel
+
 ---
 
 ## 5. 性能指标
@@ -132,17 +142,12 @@
 
 ## 6. 未来方向
 
-### R004 计划（下次会话）
-1. **用户提供正确 u8g2 idf component 名**（用 WebSearch 找候选）
-2. 恢复 `main/idf_component.yml dependencies:` 块（用正确名）
-3. 恢复 `sdkconfig.defaults CONFIG_USE_U8G2=y`
-4. **`main/CMakeLists.txt` 移除 R003 加的 ADF REQUIRES**（改用 idf_component.yml 引用）
-5. `main/idf_component.yml` 加 ADF 依赖：`espressif/audio_pipeline` 等（待验证名）
-6. 重新 build 验证（继续修残留子模块）
-7. 推到 GitHub
+### 下次会话
+1. **build 验证（关键阻塞）**：跑 `build.bat build` 验证 ADF + u8g2 编译通过
+2. **推到 GitHub**：`git push origin master --tags`
+3. **V1.0 MVP 补完**：文件夹浏览、OLED 屏底部对齐（10/10）
 
 ### 短期
-- V1.0 MVP 补完（10/10）：文件夹浏览、OLED 屏底部对齐
 - V1.1 体验增强：定时关机、按键音、屏幕保护
 
 ### 中期
@@ -167,19 +172,21 @@
 | ESP-ADF v2.7 | https://github.com/espressif/esp-adf |
 | WROOM-1 datasheet | hardware/esp32-s3-wroom-1_wroom-1u_datasheet_cn.pdf |
 | WROOM-2 datasheet | hardware/esp32-s3-wroom-2_datasheet_cn.pdf |
+| MAX98357A 规格书 | hardware/C910544_MAX98357A...PDF |
 
 ---
 
 ## 8. R 节点 Git 状态
 
 ```
-333e44e R003: build 验证未通过；修 R001 ADF REQUIRES + 修 R002 u8g2 暂禁用 + 修 sdkconfig 格式
+65ca4ea R005: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书
+377a893 R004: 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）
+333e44e R003: build 验证未通过 + 修 R001 ADF REQUIRES + 修 R002 u8g2 暂禁用
 d773f05 R002: 启用 u8g2 OLED 显示（改用 idf component 替换手动源码）
 c0c67e4 R001: 启用 ESP-ADF（解锁音频播放真实路径）
-938abbe baseline: 仓库基线 + 3 类核心文件 + .gitignore
 ```
 
-**4 个 R 节点** 全部 committed + tagged（annotated）。
+**6 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
 
 ---
 
