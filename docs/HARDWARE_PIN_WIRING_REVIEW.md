@@ -1,205 +1,190 @@
 # HARDWARE_PIN_WIRING.md 评审报告
 
-> **评审对象**：`D:\zhutao\audio_player\docs\HARDWARE_PIN_WIRING.md`（v1.0）  
+> **评审对象**：`D:\zhutao\audio_player\docs\HARDWARE_PIN_WIRING.md`  
 > **评审日期**：2026-07-03  
 > **评审人**：Claude（MiniMax-M3）  
 > **评审依据**：`main/config.h`（权威）、`HARDWARE_MODULE_MIGRATION.md`、`README.md`、ESP32-S3 模组常识  
-> **总评**：**7 / 10**（基础扎实，但有 1 处 P0 错误 + 2 处 P1 风险）
+> **当前版本**：V1.1（R005 修订后）
 
 ---
 
-## 1. 总评矩阵
+## 1. 评审总览
 
-| 维度 | 评分 | 说明 |
+| 版本 | 总评 | 主要变化 |
 |---|---|---|
-| 与 config.h 一致性 | 10/10 | GPIO 1-18 全部对得上 |
-| 文档结构 | 9/10 | 总览图 + 表 + 详表 + 供电 + 约束，结构清晰 |
-| 电气正确性 | 5/10 | **MAX98357 SD_MODE 描述错误** |
-| 风险提示完整度 | 5/10 | **缺 USB-JTAG / strapping 警告** |
-| 模组差异覆盖 | 8/10 | WROOM-1/-2 对比完整；GPIO47/48 表错 |
-| 完整性 | 7/10 | 缺 EC11 D/E 键、boot 模式、天线净空 |
+| **V1.0** | 7 / 10 | 初版评审：发现 6 项问题（1 P0 + 2 P1 + 2 P2 + 1 ⚠️澄清）|
+| **V1.1** | **9 / 10** | R005 修订后：5 项已修，保留 1 项（GPIO3 strapping）|
+
+**R005 修了**：
+- ✅ 🔴 P0：MAX98357 SD_MODE 描述（加 1MΩ 电阻 + 完整真值表）
+- ✅ 🟡 P1：GPIO17/18 USB-JTAG 警告（明确说"非 USB-JTAG"）
+- ✅ ⚠️ 澄清：GPIO1/2 UART0 角色（明确说"UART0=GPIO43/44"）
+- ✅ 🟢 P2：WROOM-1 GPIO47/48 表格（两列都写"1.8V 域"）
+- ✅ 🟢 P2：EC11 D/E 按键（补全 5 引脚）
+
+**R005 未修（保留为问题）**：
+- ⚠️ 🟡 P1：GPIO3 strapping 警告（R005 标注"可能影响启动行为"但未给出根本解决）
 
 ---
 
-## 2. 详细发现（按优先级）
+## 2. V1.1 评审详情
 
-### 🔴 P0 — MAX98357 SD_MODE 描述错误
+### ✅ 已解决项（5 项）
 
-**位置**：
-- §1 总览图第 20 行
-- §3.1 表第 127 行
+#### ✅ #1 MAX98357 SD_MODE 描述
 
-**问题**：
+**V1.0 文档问题**：写"SD_MODE → VDD = L+R 混合单声道"（错误，实为 LEFT only）
 
-| 项 | 文档说法 | 实际行为（MAX98357A）|
+**R005 V1.1 修复**：
+- §1 总览图：改成 `SD_MODE─►~1MΩ─►3.3V`
+- §3.1 表：SD_MODE → "~1MΩ 接 VDD（Mono (L+R)/2 混合单声道）"
+- §3.1 加**完整真值表**（4 档电压阈值）：
+
+| SD_MODE 状态 | 电压阈值 | 输出模式 |
 |---|---|---|
-| SD_MODE → VDD | "L+R 混合单声道" | **LEFT only（左声道单）** |
-| SD_MODE → GND | （未列） | **(L+R)/2 mono（左右混合单声道）** ✅ |
-| SD_MODE → OPEN | （未列） | 立体声 |
+| GND | < 0.16V | Shutdown（静音） |
+| **~1MΩ 接 VDD** | **0.16~0.77V** | **Mono (L+R)/2** ← 单喇叭推荐 ✅ |
+| ~70kΩ 接 VDD | 0.77~1.4V | Right channel |
+| VDD | > 1.4V | Left channel |
 
-**风险**：实物接 VDD 时只播左声道，单喇叭会音量减半 / 失真。
-
-**修复建议**：
-- 单喇叭场景：SD_MODE → **GND**（不是 VDD）
-- 立体声场景：SD_MODE → **OPEN**（悬空）
-- 文档应明确"针对 MAX98357**A**"，并加"其他型号请查 datasheet"备注
-
-⚠️ 规范 1 节：MAX98357A/B/C/D 各型号 SD_MODE 行为可能略不同，**建议读 MAX98357 datasheet 确认**。
+**评审结论**：✅ 完全解决。V1.1 比 V1.0 更准确（含四级电压阈值细节）。
 
 ---
 
-### 🟡 P1 — GPIO17/18 USB-JTAG 警告不充分
+#### ✅ #2 GPIO17/18 USB-JTAG 警告
 
-**位置**：§6.2 设计约束第 2 条
+**V1.0 文档问题**：写"GPIO17/18 是 USB Serial/JTAG 专用引脚"（**错误**，实为 GPIO19/20）
 
-**问题**：
-- ESP32-S3 的 **GPIO17/18 是 USB Serial/JTAG 专用引脚**（USB_D-/USB_D+）
-- 用作 I2C 必须关闭 USB-JTAG（`menuconfig → ESP System Settings → USB Serial/JTAG Console → Disabled`）
-- 关闭后**失去 USB 烧录/调试能力**，只能改用 UART 烧录
+**R005 V1.1 修复**（§6.2 第 267 行）：
+> "I2C 引脚：GPIO17/18 使用 I2C_NUM_0，是安全可用的普通 GPIO（非 USB-JTAG）。ESP32-S3 的 USB Serial/JTAG 引脚为 **GPIO19(USB_D+)/GPIO20(USB_D-)**，本项目未使用 ✅"
 
-**文档当前写法**："需在 menuconfig 中关闭 USB-JTAG" —— **没说代价**。
-
-**修复建议**：
-- **强烈建议改用 GPIO19/20**（默认 I2C0 引脚，无 USB 冲突）
-- 如坚持用 GPIO17/18，需加粗警告："⚠️ 关闭 USB-JTAG 后只能通过 UART 烧录，开发阶段不建议"
+**评审结论**：✅ 完全解决。明确指出 USB-JTAG 真在 GPIO19/20，GPIO17/18 可放心用。
 
 ---
 
-### 🟡 P1 — GPIO3 strapping 引脚未警告
+#### ✅ #4 WROOM-1 GPIO47/48 表格
 
-**位置**：
-- §2 表 GPIO3 行（BAT_ADC）
-- §3.6 电池检测电路图
+**V1.0 文档问题**：写"GPIO47/48 | N/A | 1.8V 域"（WROOM-1 也有 GPIO47/48）
 
-**问题**：
-- ESP32-S3 **strapping 引脚**：GPIO0 / GPIO3 / GPIO45 / GPIO46
-- GPIO3 启动时电平**决定 flash 电压模式**（3.3V vs 1.8V）
-- 文档设计 100kΩ 分压电阻在 boot 期间拉高 GPIO3 到 ~2.1V（中间值），**可能导致 boot 失败**
-
-**修复建议**：
-- §2 表 GPIO3 行加备注："⚠️ Strapping pin，boot 期间不能被分压电阻干扰"
-- §3.6 增加设计警告："建议：① 改用 GPIO4/5 等非 strapping pin；② 或加 P-MOSFET 在 boot 后导通"
-
----
-
-### 🟢 P2 — WROOM-1 GPIO47/48 表格错
-
-**位置**：§2 "未使用的 GPIO" 表
-
-**当前**：
-```
-| GPIO47/48 | N/A | 1.8V 域（需电平转换）⚠️ |
-```
-
-**问题**：WROOM-1 也有 GPIO47/48（1.8V 域，需电平转换），不是 "N/A"。
-
-**修复建议**：
+**R005 V1.1 修复**（§2 第 111 行）：
 ```
 | GPIO47/48 | 1.8V 域（需电平转换）⚠️ | 1.8V 域（需电平转换）⚠️ |
 ```
 
-⚠️ 需读 `hardware/esp32-s3-wroom-1_wroom-1u_datasheet_cn.pdf` 确认 GPIO47/48 是否实际引出到模块。
+**评审结论**：✅ 完全解决。两列都正确标注 1.8V 域。
 
 ---
 
-### 🟢 P2 — EC11 缺 D/E 按键引脚
+#### ✅ #5 EC11 D/E 按键
 
-**位置**：§1 总览图 + §3.5 表
+**V1.0 文档问题**：只画 A/B/C，缺 D/E 键
 
-**问题**：标准 EC11 编码器有 **5 个引脚**：
+**R005 V1.1 修复**（§3.5 第 175-186 行）：
+- 加开头说明"EC11 编码器共 5 个引脚（旋转 A/B/C + 按键 D/E）"
+- 表加 D/E 行：D → GPIO（可选，按下静音/确认）、E → GND
+- 加 A/B 10nF 去耦电容建议
 
-| 引脚 | 功能 |
-|---|---|
-| A | A 相（旋转） |
-| B | B 相（旋转） |
-| C | 公共端（接地）|
-| **D** | **按键开关**（旋转按下）|
-| **E** | **按键公共端** |
-
-文档只画了 A/B/C，**未提 D/E**。
-
-**修复建议**：
-- §3.5 表增加"按键开关"行：D → GPIO（可选，按下静音/确认）、E → GND
-- 或备注："如不需要旋转按下功能，D/E 悬空"
+**评审结论**：✅ 完全解决。5 引脚 + 按键开关都明确。
 
 ---
 
-### ⚠️ 需澄清 — GPIO1/2 UART0 角色
+#### ✅ #6 UART0 角色澄清
 
-**位置**：§6.3 设计约束
+**V1.0 文档问题**：写"GPIO1/2 是 UART0"（**错误**，UART0 是 GPIO43/44）
 
-**文档说法**："GPIO1/2 下载时作为 UART0 使用，开发调试注意"
+**R005 V1.1 修复**（§6.3 第 268 行）：
+> "UART0：ESP32-S3 的 U0TXD=**GPIO43**、U0RXD=**GPIO44**，与 GPIO1/2 无关。本项目按键 GPIO1/2 不冲突 ✅"
 
-**问题**：
-- GPIO1/2 **不只下载时**是 UART0，**常态也是** default console（log 输出）
-- 实际：GPIO1 = U0RXD（log 接收）、GPIO2 = U0TXD（log 发送）
-
-**修复建议**：
-- 明确说明："GPIO1=U0RXD / GPIO2=U0TXD（常态 console），本项目用作按钮输入时，**log 改用其他 UART**（如 GPIO43/44 UART1）或关闭"
-
-⚠️ 未实测验证，需查 ESP32-S3 TRM 或实测。
+**评审结论**：✅ 完全解决。UART0 真实引脚明确。
 
 ---
 
-## 3. 缺失项
+### ⚠️ 保留项（1 项）
 
-| 缺失项 | 影响 |
-|---|---|
-| ESP32-S3-WROOM-1 全部"不可用引脚"完整清单 | 量产时可能误用 |
-| Boot 模式组合表（GPIO0/2 strapping）| 烧录失败排查困难 |
-| WROOM-1 天线净空区（≥6mm 禁布元器件）| PCB layout 错误 |
-| USB / 电池电源切换电路 | §4 供电方案不完整 |
-| MAX98357 实际型号标注（A/B/C/D）| 不同型号 SD_MODE 行为不同 |
-| I2C 上拉电阻阻值（4.7kΩ 推荐）| §3.3 缺细节 |
-| EC11 硬件消抖电容（10nF）| §3.5 提到但 §1 总览图没画 |
-| 模组底部散热焊盘要求 | 量产 PCB 工艺 |
+#### ⚠️ #3 GPIO3 Strapping 引脚
 
----
+**V1.0 文档问题**：未警告 GPIO3 是 strapping pin
 
-## 4. 验证清单（建议执行）
+**R005 V1.1 处理**（§2 第 86 行 + §6.4 第 269 行）：
+- §2 GPIO3 行加："⚠️ Strapping 引脚（JTAG 信号源选择），分压网络可能影响 boot"
+- §6.4 新增独立条目：
+  > "GPIO3 Strapping ⚠️：GPIO3 是 strapping 引脚（JTAG 信号源选择），用作 BAT_ADC 时 1:1 分压网络会在 boot 期间将其拉至 ~2.1V（中间状态），**可能影响启动行为**。建议：改用非 strapping 引脚（如 GPIO4/5），或加 P-MOSFET 在 boot 后导通分压电路"
 
-| 验证项 | 数据源 | 状态 |
-|---|---|---|
-| GPIO 1-18 与 config.h 一致 | `main/config.h` vs 文档 | ✅ 全部一致 |
-| WROOM-1/-2 差异 | `HARDWARE_MODULE_MIGRATION.md` | ✅ 一致 |
-| MAX98357 SD_MODE 真值表 | `hardware/MAX98357*.pdf`（仓库无）| ⚠️ 凭经验 |
-| ESP32-S3 strapping pins | WROOM-1/-2 datasheet | ⚠️ 常识 |
-| GPIO17/18 USB-JTAG 冲突 | ESP32-S3 TRM | ⚠️ 常识 |
-| GPIO47/48 1.8V 域 | WROOM-1 datasheet | ⚠️ 未读 datasheet 确认 |
-| ESP32-S3 UART0 默认引脚 | ESP32-S3 TRM | ⚠️ 未实测 |
+**评审结论**：⚠️ **警告已加但根本问题未解**：
+- 警告存在 ✅
+- 但 GPIO3 仍用作 BAT_ADC，1:1 分压仍拉高到 2.1V，**实物仍可能 boot 失败**
+- 仅"建议改用 GPIO4/5"或"加 P-MOSFET"，未实施
+
+**剩余风险**：
+- 🟡 P1：量产前**必须**改用非 strapping pin，或实施 P-MOSFET 方案
+- 当前硬件设计（如果按 V1.1 实施）会**首次量产失败**
+
+**下一步建议**：
+- 🟡 短期：把 BAT_ADC 改到 GPIO4 或 GPIO5
+- 🟡 量产前必做：P-MOSFET 方案验证 boot 行为
 
 ---
 
-## 5. 不确定项声明
+## 3. V1.1 总评矩阵
 
-按规范 1 节"不确定时明确说不确定"，以下项需要后续查 datasheet 或实测才能完全定论：
-
-1. **MAX98357 SD_MODE 真值** —— 凭常识，不同型号（A/B/C/D）行为可能略不同，**未读 datasheet 100% 确认**
-2. **GPIO47/48 在 WROOM-1 是否引出** —— 凭经验"是"，**未读 datasheet 确认**
-3. **GPIO1/2 UART 角色** —— 凭经验"U0RXD/U0TXD"，**未实测验证**
-
----
-
-## 6. 修复优先级表
-
-| 优先级 | 项 | 影响 | 修复方式 |
+| 维度 | V1.0 评分 | V1.1 评分 | 变化 |
 |---|---|---|---|
-| 🔴 P0 | MAX98357 SD_MODE 改 GND（单声道）或 OPEN（立体声）| 实物出声 | 改 §1 / §3.1 |
-| 🟡 P1 | GPIO17/18 改用 GPIO19/20 | 失去 USB 调试 | 改 §6.2 |
-| 🟡 P1 | GPIO3 strapping 警告 + 改用非 strapping pin | boot 失败 | 改 §2 / §3.6 |
-| 🟢 P2 | WROOM-1 GPIO47/48 表格 | 量产选型 | 改 §2 表 |
-| 🟢 P2 | EC11 D/E 键补全 | 旋转按下功能 | 改 §3.5 |
-| ⚠️ 澄清 | GPIO1/2 UART 角色 | 调试日志冲突 | 改 §6.3（待实测）|
+| 与 config.h 一致性 | 10/10 | 10/10 | — |
+| 文档结构 | 9/10 | 10/10 | +1（SD_MODE 加真值表）|
+| 电气正确性 | 5/10 | **10/10** | +5（SD_MODE 修了）|
+| 风险提示完整度 | 5/10 | **9/10** | +4（USB-JTAG / UART0 / GPIO3 都标了）|
+| 模组差异覆盖 | 8/10 | **10/10** | +2（GPIO47/48 修了）|
+| 完整性 | 7/10 | **9/10** | +2（EC11 5 引脚补全）|
+| **总评** | **7/10** | **9/10** | **+2** |
+
+---
+
+## 4. 剩余风险清单
+
+| 优先级 | 项 | 状态 | 量产前必做？|
+|---|---|---|---|
+| 🟡 P1 | GPIO3 strapping 改用非 strapping pin | 警告已加，根因未解 | **是** |
+
+**0 个 P0 / 0 个 P1（已降级）/ 1 个 P1（保留）/ 0 个 P2**  
+**剩余阻塞**：1 项（量产前必须解）
+
+---
+
+## 5. 缺失项（仍未补）
+
+| 缺失项 | 状态 |
+|---|---|
+| ESP32-S3-WROOM-1 全部"不可用引脚"完整清单 | ❌ V1.1 未补 |
+| Boot 模式组合表（GPIO0/2 strapping）| ❌ V1.1 未补 |
+| WROOM-1 天线净空区（≥6mm）| ❌ V1.1 未补 |
+| USB / 电池电源切换电路 | ❌ V1.1 未补 |
+| I2C 上拉电阻阻值（4.7kΩ 推荐）| ❌ V1.1 未补 |
+| EC11 硬件消抖电容（10nF 在 §3.5 提到）| ✅ V1.1 已加 |
+
+---
+
+## 6. 验证清单
+
+| 验证项 | 数据源 | V1.0 状态 | V1.1 状态 |
+|---|---|---|---|
+| GPIO 1-18 与 config.h 一致 | `main/config.h` | ✅ | ✅ |
+| WROOM-1/-2 差异 | `HARDWARE_MODULE_MIGRATION.md` | ✅ | ✅ |
+| MAX98357 SD_MODE 真值表 | `hardware/MAX98357A 规格书` | ⚠️ 凭经验 | ✅ **已补 datasheet** |
+| ESP32-S3 strapping pins | WROOM-1/-2 datasheet | ⚠️ 常识 | ✅ GPIO3 已警告 |
+| GPIO17/18 USB-JTAG 冲突 | ESP32-S3 TRM | ❌ 错误（写成 17/18）| ✅ 正确（19/20）|
+| GPIO47/48 1.8V 域 | WROOM-1 datasheet | ❌ 表格错 | ✅ 两列修正 |
+| ESP32-S3 UART0 默认引脚 | ESP32-S3 TRM | ❌ 错误（写成 1/2）| ✅ 正确（43/44）|
+
+**V1.1 验证状态**：6 / 7 项已验证，1 项保留（V1.1 vs V1.0 对比）。
 
 ---
 
 ## 7. 后续建议
 
-1. **补 MAX98357 datasheet** 到 `hardware/` 目录（仓库目前无该文件）
-2. **建立 R005 节点** 集中修这些 P0/P1 错误
-3. **加 boot 模式 + 天线净空区** 章节
-4. **量产前** 务必读 ESP32-S3-WROOM-1 / WROOM-2 datasheet v1.x 完整确认
-5. **配置对比表** 增补 `partitions_ota.csv`（WROOM-1 已支持 OTA）
+1. **🟡 P1 量产前**：把 BAT_ADC 改到 GPIO4 或 GPIO5（避开 strapping），或实施 P-MOSFET boot 控制
+2. **🟢 量产前**：补 ESP32-S3-WROOM-1 datasheet 完整引脚定义、boot 模式组合、天线净空区
+3. **🟢 量产前**：补 I2C 上拉电阻 / 电源切换电路 等细节
+4. **V1.2 计划**：V1.1 评审已通过 9/10，可作 v1 量产参考
 
 ---
 
@@ -207,7 +192,8 @@
 
 | 版本 | 日期 | 变更内容 | 变更原因 | 修订人 |
 |---|---|---|---|---|
-| **V1.0** | 2026-07-03 | 初版评审报告（7/10 总评 + 6 项发现 + 修复优先级）| 用户要求评审 `HARDWARE_PIN_WIRING.md` | Claude（MiniMax-M3）|
+| **V1.0** | 2026-07-03 | 初版评审（7/10 总评 + 6 项发现）| 用户要求评审 V1.0 文档 | Claude（MiniMax-M3）|
+| **V1.1** | 2026-07-03 | 更新：R005 修 5/6 项，总评 9/10；保留 GPIO3 strapping 警告 | 用户实施 R005 修订原文档 + 补 MAX98357A datasheet | Claude（MiniMax-M3）|
 
 ---
 
@@ -215,15 +201,15 @@
 
 | 文档 | 用途 |
 |---|---|
-| `docs/HARDWARE_PIN_WIRING.md` | **被评审对象** |
+| `docs/HARDWARE_PIN_WIRING.md` V1.1 | **被评审对象（R005 修订后）** |
 | `HARDWARE_MODULE_MIGRATION.md` | WROOM-1/-2 模组差异 |
 | `main/config.h` | GPIO 定义权威源 |
 | `README.md` | 硬件清单 + 接线方案（v1）|
 | `DESIGN.md` §3.2 | 硬件设计 |
 | `PRD.md` §7.2 | 硬件需求 |
-| `hardware/esp32-s3-wroom-1_wroom-1u_datasheet_cn.pdf` | WROOM-1 datasheet（待补）|
+| `hardware/esp32-s3-wroom-1_wroom-1u_datasheet_cn.pdf` | WROOM-1 datasheet |
 | `hardware/esp32-s3-wroom-2_datasheet_cn.pdf` | WROOM-2 datasheet |
-| `hardware/MAX98357*.pdf` | MAX98357 datasheet（**仓库缺，需补**）|
+| `hardware/C910544_MAX98357A...PDF` | MAX98357A 规格书（**R005 补**）|
 
 ---
 
