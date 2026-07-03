@@ -1,0 +1,88 @@
+menu "Target Module Selection"
+
+choice BOARD_MODULE
+    prompt "Target ESP32-S3 Module"
+    default BOARD_MODULE_WROOM_2_N32R16V
+    help
+        Select the ESP32-S3 module variant for this build.
+        This option drives which sdkconfig defaults template configure.bat uses.
+
+        - WROOM-1 N16R8:    16 MB Flash (Quad) +  8 MB PSRAM (Octal), 3.3 V SPI, supports OTA
+        - WROOM-2 N32R16V:  32 MB Flash (Octal) + 16 MB PSRAM (Octal), 1.8 V SPI
+
+        See HARDWARE_MODULE_MIGRATION.md for full details.
+
+    config BOARD_MODULE_WROOM_1_N16R8
+        bool "ESP32-S3-WROOM-1 N16R8 (16 MB Flash + 8 MB PSRAM, 3.3 V SPI) - PRODUCTION"
+        help
+            Production target. 16 MB Quad SPI flash + 8 MB Octal PSRAM.
+            Uses partitions_ota.csv (each app slot = 2 MB).
+            GPIO33/34 are free (not used by SPI).
+            PCB must NOT have an external 1.8 V LDO (SPI is 3.3 V).
+
+    config BOARD_MODULE_WROOM_2_N32R16V
+        bool "ESP32-S3-WROOM-2 N32R16V (32 MB Flash + 16 MB PSRAM, 1.8 V SPI) - DEV KIT"
+        help
+            Dev kit module (default). 32 MB Octal SPI flash + 16 MB Octal PSRAM.
+            Uses partitions.csv (single 3 MB factory app, no OTA).
+
+endchoice
+
+config BOARD_MODULE_NAME
+    string
+    default "wroom-1-n16r8"   if BOARD_MODULE_WROOM_1_N16R8
+    default "wroom-2-n32r16v" if BOARD_MODULE_WROOM_2_N32R16V
+    help
+        Derived module identifier used by configure.bat to pick the matching
+        sdkconfig.defaults template under configs/.
+
+config BOARD_SPI_VOLTAGE_1V8
+    bool
+    default y if BOARD_MODULE_WROOM_2_N32R16V
+    default n
+    help
+        SPI voltage on the module's VDD_SPI pin.
+        1.8 V for WROOM-2; 3.3 V for WROOM-1 N16R8.
+
+config BOARD_HAS_OCTAL_FLASH
+    bool
+    default y if BOARD_MODULE_WROOM_2_N32R16V
+    default n
+    help
+        Whether the on-board flash uses Octal SPI (8 lines).
+        Drives CONFIG_ESPTOOLPY_OCT_FLASH.
+
+config BOARD_SUPPORTS_OTA
+    bool
+    default y if BOARD_MODULE_WROOM_1_N16R8
+    default n
+    help
+        Whether the partition table supports OTA firmware updates.
+        N16R8 has 16 MB flash (enough for two app slots); WROOM-2 dev board
+        uses single factory partition (no OTA by default).
+
+config BOARD_PARTITION_TABLE
+    string
+    default "partitions_ota.csv" if BOARD_MODULE_WROOM_1_N16R8
+    default "partitions.csv"      if BOARD_MODULE_WROOM_2_N32R16V
+    help
+        Partition table filename (must exist in project root).
+
+config BOARD_FREE_GPIO33_34
+    bool
+    default y if BOARD_MODULE_WROOM_1_N16R8
+    default n
+    help
+        On WROOM-1 Quad SPI flash modules, GPIO33 and GPIO34 are not used by SPI
+        and are available for application use.
+
+config USE_ESP_ADF
+    bool "Enable ESP-ADF (real audio playback)"
+    default y
+    help
+        Enable ESP-ADF audio pipeline (audio_pipeline / mp3_decoder / i2s_stream).
+        When disabled, audio_player.cpp falls back to a stub that only logs.
+        Requires ADF_PATH environment variable pointing to your ESP-ADF install
+        (e.g. D:\esp\esp-adf).
+
+endmenu

@@ -1,0 +1,215 @@
+/**
+ * @file display.cpp
+ * @brief SSD1306 OLED 显示实现 (使用 u8g2 库)
+ *
+ * 屏幕布局 (128x64):
+ *
+ *  ┌──────────────────────┐
+ *  │  ▶ 01/12   ██░░ 88%  │  Line 0: 状态图标 + 曲目编号 + 音量
+ *  │ 文件名.mp3           │  Line 1: 曲目名称 (滚动)
+ *  │  ████████████████░░  │  Line 2: 进度条
+ *  │  01:23 / 45:67  ▶▶2x │  Line 3: 时间 / 速度
+ *  └──────────────────────┘
+ */
+
+#include "display.h"
+#include "config.h"
+
+// u8g2 库头文件，如果使用简化方案可以用 SSD1306 驱动
+// 这里演示使用 u8g2 的接口
+
+// 如果未安装 u8g2，以下为兼容的占位实现
+// 实际使用请安装: components/u8g2
+
+#ifdef CONFIG_USE_U8G2
+
+#include "u8g2.h"
+#include "driver/i2c.h"
+#include "u8g2_esp32_hal.h"
+
+static u8g2_t u8g2;
+
+void display_init(void)
+{
+    u8g2_esp32_hal_t u8g2_esp32_hal = U8G2_ESP32_HAL_DEFAULT;
+    u8g2_esp32_hal.bus.i2c.sda = DISPLAY_SDA_IO;
+    u8g2_esp32_hal.bus.i2c.scl = DISPLAY_SCL_IO;
+    u8g2_esp32_hal_init(u8g2_esp32_hal);
+
+    u8g2_Setup_ssd1306_i2c_128x64_noname_f(
+        &u8g2, U8G2_R0, u8g2_esp32_i2c_byte_cb, u8g2_esp32_gpio_and_delay_cb);
+    u8x8_SetI2CAddress(&u8g2.u8x8, 0x3C << 1);
+
+    u8g2_InitDisplay(&u8g2);
+    u8g2_SetPowerSave(&u8g2, 0);
+    u8g2_ClearBuffer(&u8g2);
+    u8g2_SendBuffer(&u8g2);
+}
+
+void display_show_splash(void)
+{
+    u8g2_ClearBuffer(&u8g2);
+    u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
+    u8g2_DrawStr(&u8g2, 10, 20, "Audiobook Player");
+    u8g2_SetFont(&u8g2, u8g2_font_5x7_tf);
+    u8g2_DrawStr(&u8g2, 20, 40, "ESP32-S3 Edition");
+    u8g2_DrawStr(&u8g2, 15, 55, "Loading SD card...");
+    u8g2_SendBuffer(&u8g2);
+}
+
+void display_show_no_files(void)
+{
+    u8g2_ClearBuffer(&u8g2);
+    u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
+    u8g2_DrawStr(&u8g2, 15, 25, "No Audio Files");
+    u8g2_SetFont(&u8g2, u8g2_font_5x7_tf);
+    u8g2_DrawStr(&u8g2, 5, 45, "Put .mp3/.flac/.wav");
+    u8g2_DrawStr(&u8g2, 10, 55, "files on SD card");
+    u8g2_SendBuffer(&u8g2);
+}
+
+void display_show_no_card(void)
+{
+    u8g2_ClearBuffer(&u8g2);
+    u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
+    u8g2_DrawStr(&u8g2, 10, 25, "No SD Card");
+    u8g2_SetFont(&u8g2, u8g2_font_5x7_tf);
+    u8g2_DrawStr(&u8g2, 5, 45, "Please insert SD card");
+    u8g2_SendBuffer(&u8g2);
+}
+
+static const char *state_icon(player_state_t state)
+{
+    switch (state) {
+    case PLAYER_STATE_PLAYING:       return ">";
+    case PLAYER_STATE_PAUSED:        return "||";
+    case PLAYER_STATE_STOPPED:       return "#";
+    case PLAYER_STATE_FAST_FORWARD:  return ">>";
+    case PLAYER_STATE_REWIND:        return "<<";
+    default:                         return "?";
+    }
+}
+
+static const char *gear_str(int gear)
+{
+    switch (gear) {
+    case 0: return "";
+    case 1: return "1.5x";
+    case 2: return "2.5x";
+    case 3: return "4x";
+    case 4: return "8x";
+    default: return "";
+    }
+}
+
+static void format_time(int seconds, char *buf, size_t size)
+{
+    int h = seconds / 3600;
+    int m = (seconds % 3600) / 60;
+    int s = seconds % 60;
+    if (h > 0) {
+        snprintf(buf, size, "%d:%02d:%02d", h, m, s);
+    } else {
+        snprintf(buf, size, "%02d:%02d", m, s);
+    }
+}
+
+void display_update(player_state_t state,
+                    const char *track_name,
+                    int track_idx, int total,
+                    int current_sec, int total_sec,
+                    float speed, int gear, int volume)
+{
+    u8g2_ClearBuffer(&u8g2);
+
+    /* --- Line 0: 状态行 --- */
+    u8g2_SetFont(&u8g2, u8g2_font_5x8_tf);
+    char line0[32];
+    snprintf(line0, sizeof(line0), "%s %02d/%03d  Vol:%d%%",
+             state_icon(state), track_idx, total, volume);
+    u8g2_DrawStr(&u8g2, 0, 8, line0);
+
+    /* --- Line 1: 文件名 (截断/滚动) --- */
+    u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
+    char fname[22];
+    int len = strlen(track_name);
+    if (len <= 21) {
+        snprintf(fname, sizeof(fname), "%-21s", track_name);
+    } else {
+        // 滚动显示：根据时间偏移截取
+        static int scroll_offset = 0;
+        // 这里简化处理，实际需要 tick 驱动滚动
+        snprintf(fname, sizeof(fname), "%s", track_name);
+    }
+    u8g2_DrawStr(&u8g2, 0, 21, fname);
+
+    /* --- Line 2: 进度条 --- */
+    u8g2_DrawFrame(&u8g2, 0, 30, 128, 12);
+    if (total_sec > 0) {
+        int bar_w = (int)(126.0f * current_sec / total_sec);
+        if (bar_w > 0) {
+            u8g2_DrawBox(&u8g2, 1, 31, bar_w, 10);
+        }
+    }
+
+    /* --- Line 3: 时间 + 速度 --- */
+    u8g2_SetFont(&u8g2, u8g2_font_5x8_tf);
+    char time_buf[32];
+    char cur[16], tot[16];
+    format_time(current_sec, cur, sizeof(cur));
+    format_time(total_sec, tot, sizeof(tot));
+    const char *gs = gear_str(gear);
+    if (gs && gs[0]) {
+        snprintf(time_buf, sizeof(time_buf), "%s / %s [%s]",
+                 cur, tot, gs);
+    } else {
+        snprintf(time_buf, sizeof(time_buf), "%s / %s", cur, tot);
+    }
+    u8g2_DrawStr(&u8g2, 0, 55, time_buf);
+
+    /* --- Line 4: 底部操作提示 --- */
+    u8g2_SetFont(&u8g2, u8g2_font_4x6_tf);
+    u8g2_DrawStr(&u8g2, 0, 63, "<Prev  Play  Stop  Next>  FF^RW");
+
+    u8g2_SendBuffer(&u8g2);
+}
+
+#else // CONFIG_USE_U8G2 未启用时的空实现
+
+#include "esp_log.h"
+
+static const char *TAG = "display";
+
+void display_init(void) {
+    ESP_LOGW(TAG, "u8g2 not enabled, using serial output only");
+}
+
+void display_show_splash(void) {
+    ESP_LOGI(TAG, "=== Audiobook Player ===");
+}
+
+void display_show_no_files(void) {
+    ESP_LOGI(TAG, "No audio files found!");
+}
+
+void display_show_no_card(void) {
+    ESP_LOGI(TAG, "No SD card inserted!");
+}
+
+void display_update(player_state_t state,
+                    const char *track_name,
+                    int track_idx, int total,
+                    int current_sec, int total_sec,
+                    float speed, int gear, int volume)
+{
+    const char *st = "STOP";
+    if (state == PLAYER_STATE_PLAYING) st = "PLAY";
+    else if (state == PLAYER_STATE_PAUSED) st = "PAUS";
+    else if (state == PLAYER_STATE_FAST_FORWARD) st = "FF>>";
+    else if (state == PLAYER_STATE_REWIND) st = "<<RW";
+
+    ESP_LOGI(TAG, "[%d/%d] %s | %s | %ds/%ds | %.1fx vol:%d",
+             track_idx, total, st, track_name, current_sec, total_sec, speed, volume);
+}
+
+#endif // CONFIG_USE_U8G2

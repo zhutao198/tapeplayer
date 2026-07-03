@@ -1,0 +1,50 @@
+# =============================================================================
+# sdkconfig.defaults template: ESP32-S3-WROOM-2 N32R16V
+#   Flash : 32 MB Octal SPI (8-line)
+#   PSRAM : 16 MB Octal SPI (8-line)
+#   V_SPI :  1.8 V
+#
+# Used by configure.bat when BOARD_MODULE_WROOM_2_N32R16V is selected
+# (default; matches the dev kit).
+# See docs/HARDWARE_MODULE_MIGRATION.md for the full comparison.
+# =============================================================================
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# ---- Flash (Octal SPI, 32 MB) ----
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_ESPTOOLPY_OCT_FLASH=y
+# When OCT_FLASH is enabled, FLASHMODE_DIO is set automatically; OPI is selected
+# at runtime by the bootloader based on the chip id.
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+
+# ---- PSRAM (Octal SPI, 16 MB) ----
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+
+# ---- Partition table ----
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# ---- File system ----
+CONFIG_FATFS_LFN_STACK=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_FATFS_CODEPAGE=437
+
+# ---- Bus config ----
+CONFIG_SPI_MASTER_IN_IRAM=y
+CONFIG_I2C_ISR_IRAM_SAFE=y
+
+# ---- CPU ----
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# ---- Logging ----
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# ---- 启用 ESP-ADF (audio_player.cpp 走真实 pipeline，需要 ADF components) ----
+CONFIG_USE_ESP_ADF=y

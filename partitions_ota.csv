@@ -1,0 +1,11 @@
+# Name,   Type, SubType, Offset,   Size,    Flags
+# OTA partition table for 16 MB Flash modules (e.g. WROOM-1 N16R8)
+# Each app slot = 2 MB; total = ~6 MB; leaves ~10 MB free for future use
+nvs,      data, nvs,     0x9000,    0x6000,
+phy_init, data, phy,     0xf000,    0x1000,
+factory,  app,  factory, 0x10000,   0x200000,
+otadata,  data, ota,     0x210000,  0x2000,
+ota_0,    app,  ota_0,   0x212000,  0x200000,
+ota_1,    app,  ota_1,   0x412000,  0x200000,
+# 注：SD 卡 FATFS 由 SDSPI 驱动直接挂载，不占用内部 Flash 分区
+# 剩余约 10 MB 空间可供未来 spiffs / nvs 扩展 / 自定义分区使用

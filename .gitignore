@@ -1,0 +1,54 @@
+# ESP-IDF 构建产物
+build/
+sdkconfig
+sdkconfig.old
+*.bin
+*.elf
+*.map
+*.hex
+dependencies.lock
+managed_components/
+
+# 编译日志 / 错误流
+*.log
+*.err
+*.out
+sr.log
+libs.log
+progress.log
+build_run.log
+build_verbose.log
+build_adf.log
+
+# 缓存 / 临时
+.cache/
+downloads/
+.gradle/
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDF 工具临时
+.cache/
+
+# 第三方 component 源码（用 idf.py add-dependency 拉取，不入仓）
+components/u8g2/
+
+# 本地敏感（按 CLAUDE.md 规范：禁止硬编码密钥/路径入仓）
+.env
+.env.local
+secrets/
+*.pem
+*.key

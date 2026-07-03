@@ -1,0 +1,264 @@
+===== D:\zhutao\audio_player\hardware\esp32-s3-wroom-2_datasheet_cn.pdf =====
+Total pages: 47
+
+
+----- Page 1 -----
+ESP32-S3-WROOM-2
+඀ ϱЧ 1.7
+2.4 GHz Wi-Fi (802. 11b/g/n) +ড࿩ ® 5 ଆቆ
+ଽᇂ ESP32-S3 ༢ਙྉோđXtensa®ނ32 ໊ LX7 ԩ৘ఖ
+Flash ቋնॖ࿊ 32 MB (Octal)đPSRAM ቋնॖ࿊ 16 MB (Octal)
+33۱GPIOຓഡ
+ϰᄛ PCB ฿ཌ
+ESP32-S3-WROOM-2
+www.espressif .com
+
+----- Page 2 -----
+1ඍ
+1ඍ
+ඪૼğ
+ğ
+https://www.espressif.com/documentation/esp32-s3-wroom-2_datasheet_cn.pdf
+1. 1 หྟ
+CPUோഈթԥఖ
+• ଽᇂ ESP32-S3 ྉோđXtensa®ނ32 ໊ LX7
+ۚ
+ղ 240 MHzൈᇒ௔ੱ
+• 384 KB ROM
+• 512 KB SRAM
+• 16 KB RTC SRAM
+• ቋն 16 MB PSRAM
+Wi-Fi
+• 802.11b/g/n
+• 802.11nղ 150 Mbps
+•ކTX/RX A-MPDU, TX/RX A-MSDU)
+• 0.4 µsۯࡗ޹
+•ຶğ2412 ~ 2484 MHz
+ড࿩
+•ড࿩ (Bluetooth LE)ğBluetooth 5a
+Bluetooth mesh
+• ෎ੱᆦӻ 125 Kbpsa500 Kbpsa1 Mbpsa2
+Mbps
+•Ѭঔᅚ (Advertising Extensions)
+•Ѭ (Multiple Advertisement Sets)
+•࿊ᄴ (Channel Selection Algorithm #2)
+• Wi-Fi฿ཌ
+ຓഡ
+• 33۱GPIO
+– 4ቔູ strapping࢖ܵ
+•SPIaLCD१aCamera१aUARTaI2Ca
+I2SඔఖaLED PWMaಆ෎
+USB 2.0 OTGaUSB Ա१/JT AG॥ᇅఖa
+MCPWMaSD/MMC॥ᇅఖaGDMAa
+TWAI®ಸ ISO 11898-1Ď aADCaԨଃ
+ܐ
+ࡱ
+•40 MHzᆒ
+• ቋն 32 MB Octal SPI flash
+฿ཌ࿊྘
+• ϰᄛ PCB ฿ཌ
+ࡱ
+•࿢/࿢ğ3.0 ~ 3.6 V
+•ğ ⚶40 ~ 65 °C
+ಪᆣ
+• RF࡮ᆣ඀
+•ЌಪᆣğRoHS/REACH
+ҩ൫
+• HTOL/HTSL/uHAST /TCT /ESD
+࠯2
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+
+----- Page 3 -----
+1ඍ
+1.2б
+ESP32-S3-WROOM-2 ൞๙Ⴈ྘ Wi-Fi +ড࿩ MCUຩ઎ᄎෘି
+ބAIoTე
+b
+ESP32-S3-WROOM-2 ҐႨ PCB ϰᄛ฿ཌđଆቆ஥ᇂ ESP32-S3R8VࠇESP32-S3R16V ྉோđॖ࿊ 16/32 MB
+flasha8/16 MB PSRAMb౨ᇿၩđ೏षఓ PSRAM ECC֞ۚ85 °Cđ֌൞
+PSRAMഒ 1/16b
+бೂ༯і෮ൕğ
+і 1-1. ESP32-S3-WROOM-2б
+؇3 ଆቆԄժ4
+ݼFlash1, 2 PSRAM2
+(°C) (mm)
+ESP32-S3-WROOM-2-N32R16V 32 MB (Octal SPI) 16 MB (Octal SPI)
+⚶40 ∼ 65 18.0 × 25.5 × 3.1ESP32-S3-WROOM-2-N16R8Vč๔ӁĎ 16 MB (Octal SPI) 8 MB (Octal SPI)ESP32-S3-WROOM-2-N32R8Vč๔ӁĎ 32 MB (Octal SPI)
+1 ଏಪ౦ঃ༯đଆቆ SPI flashቋնൈᇒ௔ੱູ 120 MHzିb
+2֥PSRAMࢫ6.5۬ܿb
+3b
+4ࢫ10 ଆቆԄժ.
+൞ ESP32-S3 ༢ਙྉோbྉோձᄛ Xtensa® 32 ໊ LX7ԩ৘ఖ (ᄎෘֆჭ)ቔ
+ղ 240 MHzbCPUӑԛᚐ
+ᆴb
+ඪૼğ
+Ⴟ ESP32-S3ྐ༏౨ҕॉ uESP32-S3඀vb
+֥ESP-IDFః෰ྉோϱЧྐ༏đ ౨ҕॉuESP32-S3 ༢ਙྉோा༂іv
+>ࢫྉோϱЧѓ്b
+1.3 ႋႨ
+•ं
+•߄׮
+•ࡲ
+•ሰӁ௖
+•୪ြ
+• POSࠏ
+•ఖದ
+• ၻ௔ഡС
+•ݻۿ֮IoTཌఖ
+•ݻۿ֮IoT੣ఖ
+• ജཞ๨൪௔ੀԮൻ
+• USB ഡС
+• ეၻ്љ
+• ๭ཞ്љ
+• Wi-Fi + ড࿩ຩव
+•ႋ
+࠯3
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+
+----- Page 4 -----
+ଢ੣
+ଢ੣
+1ඍ 2
+1.1 หྟ 2
+1.2б 3
+1.3 ႋႨ 3
+2ିॿ๭ 8
+3ၬ 9
+3.1҃अ 9
+3.2૭ඍ 9
+4஥ᇂཛ 12
+4.1ଆൔ॥ᇅ 13
+4.2 VDD_SPI࿢॥ᇅ 14
+4.3 ROM ರᆽյႆ॥ᇅ 14
+4.4 JT AGჷ॥ᇅ 14
+4.5໊ 15
+5 ຓഡ 16
+5.1ඍ 16
+5.2 ຓഡ૭ඍ 16
+5.2.1१ 16
+5.2.1.1 UART ॥ᇅఖ 16
+5.2.1.2 I2C१ 17
+5.2.1.3 I2S१ 17
+5.2.1.4 LCD ა Camera ॥ᇅఖ 17
+5.2.1.5१ (SPI) 18
+5.2.1.6१ (TWAI®) 19
+5.2.1.7 USB 2.0 OTG१ 20
+5.2.1.8 USB Ա१/JT AG॥ᇅఖ 21
+5.2.1.9 SD/MMC॥ᇅఖ 21
+5.2.1.10 LED PWM ॥ᇅఖ 22
+5.2.1.11ᇅఖ (MCPWM) 22
+5.2.1.12ຓဪ॥ (RMT) 23
+5.2.1.13ඔ॥ᇅఖ (PCNT) 23
+5.2.2ԩ৘ 24
+5.2.2.1 SAR ADC 24
+5.2.2.2ఖ 24
+5.2.2.3ఖ 24
+6గหྟ 25
+6.1ᆴ 25
+6.2ࡱ25
+࠯4
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+
+----- Page 5 -----
+ଢ੣
+6.3గหྟ (3.3 V , 25 °C) 25
+6.4หྟ 26
+6.4.1 Activeݻۿ֥26
+6.4.2ݻۿ֥26
+6.5۬ܿ28
+7 ഝ௔หྟ 29
+7 .1 Wi-Fi ഝ௔ 29
+7 .1.1 Wi-Fiഝఖ (TX) หྟ 29
+7 .1.2 Wi-Fi൬ఖ (RX) หྟ 30
+7 .2ড࿩ഝ௔ 31
+7 .2.1ഝఖ (TX) หྟ 31
+7 .2.2൬ఖ (RX) หྟ 33
+8 ଆቆჰ৘๭ 36
+9ჰ৘๭ 37
+10 ଆቆԄժ 38
+11 PCBၰ 39
+11.1 PCBል๭ྙ 39
+11.2 PCB٢40
+12 Ӂ௖ԩ৘ 41
+12.1ࡱ41
+12.2׈٢׈࣡ESD) 41
+12.3౷ཌ 41
+12.4׮42
+৘ 43
+ሧჷ 44
+৥ൎ 45
+࠯5
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+
+----- Page 6 -----
+۬
+۬
+1-1 ESP32-S3-WROOM-2б 3
+3-1ၬ 10
+4-1 Strappingଏಪ஥ᇂ 12
+4-2 Strappingൈ྽ҕඔඪૼ 13
+4-3ଆൔ॥ᇅ 13
+4-4 VDD_SPI࿢॥ᇅ 14
+4-5 JT AGჷ॥ᇅ 14
+4-6໊ൈ྽ҕඔඪૼ 15
+6-1ᆴ 25
+6-2ࡱ25
+6-3గหྟ (3.3 V , 25 °C) 25
+6-4 Activeݻۿ26
+6-5 Modem-sleepݻۿ֥27
+6-6ݻۿ֥27
+6-7 Flash۬ܿ28
+6-8 PSRAM۬ܿ28
+7-1 Wi-Fi۬ܿ29
+7-2ބEVMކژ802.11ੱ 29
+7-3ഝ EVM ҩ൫1 29
+7-4؇30
+7-5௜ 31
+7-6ၝᇅ 31
+7-7۬ܿ31
+7-8ড࿩ -ഝఖหྟ - 1 Mbps 31
+7-9ড࿩ -ഝఖหྟ - 2 Mbps 32
+7-10ড࿩ -ഝఖหྟ - 125 Kbps 32
+7-11ড࿩ -ഝఖหྟ - 500 Kbps 32
+7-12ড࿩ -൬ఖหྟ - 1 Mbps 33
+7-13ড࿩ -൬ఖหྟ - 2 Mbps 33
+7-14ড࿩ -൬ఖหྟ - 125 Kbps 34
+7-15ড࿩ -൬ఖหྟ - 500 Kbps 34
+࠯6
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+
+----- Page 7 -----
+Ҭ๭
+Ҭ๭
+2-1ିॿ๭ 8
+3-1൪๭Ď 9
+4-1 Strappingൈ྽ҕඔ๭ 13
+4-2໊ൈ྽ҕඔ๭ 15
+8-1 ჰ৘๭ 36
+9-1ჰ৘๭ 37
+10-1 ଆቆԄժ 38
+11-1ࡩPCBል๭ 39
+12-1౷ཌ 41
+࠯7
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+
+----- Page 8 -----
+2ିॿ๭
+2ିॿ๭
+ESP32-S3R8VESP32-S3R16VRF Matching40 MHzCrystal3V3ESP32-S3-WROOM-2UENGPIOsAntenna
+RF Matching40 MHzCrystal3V3ESP32-S3-WROOM-2ENGPIOsAntennaOSPI FlashSPICS0SPICLKSPIDSPIQSPIHDSPIWPVDD_SPI
+OSPI FlashSPICS0SPICLKSPIDSPIQSPIHDSPIWPVDD_SPIOSPI PSRAMSPIIO4
+OSPI PSRAMSPIIO5SPIIO6SPIIO7SPIDQSSPIIO4SPIIO5SPIIO6SPIIO7SPIDQSESP32-S3R8VESP32-S3R16V
+๭ 2-1.ିॿ๭
+ඪૼğ
+ልଽ PSRAM༢đ౨ҕॉ uESP32-S3඀v >۬ልଽ flash/
+PSRAM༢b
+࠯8
+࡮
+ESP32-S3-WROOM-2඀ v1.7
