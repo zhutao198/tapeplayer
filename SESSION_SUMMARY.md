@@ -67,6 +67,7 @@
 - ✅ **ESP-IDF 4 子模块修复**（micro-ecc / lib_esp32 / lib_esp32c2 / lib_esp32c3_family）
 - ✅ **R004 完成**（CMakeLists.txt 启用 ADF：EXTRA_COMPONENT_DIRS 移到项目根）
 - ✅ **R005 完成**（修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书）
+- ✅ **R006 完成**（修 HARDWARE_PIN_WIRING.md 5 处错误：SD_MODE 公式/GPIO47-48 拆分 R8V-R16V/GPIO19-20 D+/D- 标反/GPIO45 strapping + 补 SSD1315 规格书 + pdf_search 提取脚本）
 
 ---
 
@@ -129,6 +130,15 @@
 - **教训**：所有评审发现必须经官方 datasheet 核实后才可采纳，不盲信评审结论
 
 ### L010：MAX98357 SD_MODE 是四级电压阈值，非二值 GND/VDD
+
+### L011：评审必须基于规格书，不凭经验
+- **现象**：V1.0 评审凭经验误判 GPIO17/18 为 USB-JTAG、GPIO1/2 为 UART0；V2.0 基于规格书核实全部正确
+- **教训**：评审质量取决于数据来源。**必须有规格书原文支撑**，经验性评审只能作初步筛选
+
+### L012：WROOM-1 和 WROOM-2 的 GPIO47/48 引出规则不同
+- WROOM-1：仅 R16V 芯片有 GPIO47/48（脚注 c）
+- WROOM-2：R8V 和 R16V 都有 GPIO47/48（脚注 2）
+- **教训**：同一模组系列不同封装/型号可能引脚不同，必须逐型号看规格书脚注
 - **现象**：SD_MODE 不是简单的 GND/VDD 二值，而是 **Shutdown(0V) / Mono(0.16-0.77V) / Right(0.77-1.4V) / Left(>1.4V)** 四级
 - **教训**：必须用电阻分压获得 Mono 模式，直连 VDD 只输出 Left channel
 
@@ -173,20 +183,24 @@
 | WROOM-1 datasheet | hardware/esp32-s3-wroom-1_wroom-1u_datasheet_cn.pdf |
 | WROOM-2 datasheet | hardware/esp32-s3-wroom-2_datasheet_cn.pdf |
 | MAX98357A 规格书 | hardware/C910544_MAX98357A...PDF |
+| SSD1315 OLED 规格书 | hardware/OLED_SSD1315.pdf |
+| PDF 搜索脚本 | tools/pdf_search.py |
+| MAX98357A 提取文本 | tools/_max98357a.txt |
+| WROOM 提取文本 | tools/_wroom.txt |
 
 ---
 
 ## 8. R 节点 Git 状态
 
 ```
+126af18 R006: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 SSD1315 规格书 + 提取脚本
 65ca4ea R005: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书
 377a893 R004: 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）
 333e44e R003: build 验证未通过 + 修 R001 ADF REQUIRES + 修 R002 u8g2 暂禁用
 d773f05 R002: 启用 u8g2 OLED 显示（改用 idf component 替换手动源码）
-c0c67e4 R001: 启用 ESP-ADF（解锁音频播放真实路径）
 ```
 
-**6 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
+**7 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
 
 ---
 

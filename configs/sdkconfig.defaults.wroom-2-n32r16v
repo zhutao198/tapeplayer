@@ -41,6 +41,9 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
+# FreeRTOS backward compatibility for ADF (xSemaphoreHandle etc.)
+CONFIG_FREERTOS_ENABLE_BACKWARD_COMPATIBILITY=y
+
 # Enable ESP-ADF (audio_player.cpp uses real audio_pipeline)
 CONFIG_USE_ESP_ADF=y
 

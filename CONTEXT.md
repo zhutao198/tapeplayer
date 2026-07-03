@@ -59,6 +59,7 @@ git status --short            # 未提交改动
 | R003 | 2026-07-03 | `333e44e` | build 验证未通过；修 R001 ADF REQUIRES + 修 R002 u8g2 暂禁用 | ⚠️ |
 | R004 | 2026-07-03 | `377a893` | 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）| ✅ |
 | **R005** | **2026-07-03** | **`65ca4ea`** | **修 HARDWARE_PIN_WIRING.md 5 处错误（SD_MODE/GPIO47-48/EC11/USB-JTAG/UART0）+ 补 MAX98357A 规格书** | **✅** |
+| **R006** | **2026-07-03** | **`126af18`** | **修 HARDWARE_PIN_WIRING.md 5 处错误（SD_MODE 公式/GPIO47-48 R8V-R16V/GPIO45）+ 补 SSD1315 规格书** | **✅** |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 
@@ -120,7 +121,7 @@ git clean -fdx
 | `REVIEW_REPORT.md` | 评审报告 |
 | `docs/DEVELOP_STATUS.md` | 功能完成度对照表（vs PRD） |
 | `HARDWARE_MODULE_MIGRATION.md` | 模组迁移指南 |
-| `docs/HARDWARE_PIN_WIRING.md` | 硬件引脚接线图（V1.1，R005 修正）|
+| `docs/HARDWARE_PIN_WIRING.md` | 硬件引脚接线图（V1.2，R006 修正）|
 | `docs/HARDWARE_PIN_WIRING_REVIEW.md` | 上述文档的评审报告（V1.0，7/10）|
 | `SESSION_SUMMARY.md` | 关键决策 / 教训 |
 | `开发日志.md` | R 节点详细记录 |
