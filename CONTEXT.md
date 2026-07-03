@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-07-03
+> **最后更新**：2026-07-03（R007）
 
 ---
 
@@ -43,6 +43,7 @@ git status --short            # 未提交改动
 | **电源** | `main/power_mgmt.cpp` | 定时关机 / 电量检测 stub |
 | **语音** | `main/voice_prompt.cpp` | 预录 WAV 提示音 stub |
 | **配置** | `main/config.h` | GPIO 引脚定义 |
+| **自定义 Board** | `components/tapebook_board/` | ADF 板级支持（V1.0） |
 | **构建** | `CMakeLists.txt` + `main/CMakeLists.txt` | 顶层 + 组件 |
 | **分区** | `partitions.csv` / `partitions_ota.csv` | 单一 factory / OTA |
 | **配置模板** | `configs/sdkconfig.defaults.wroom-*` | 双模组切换 |
@@ -60,6 +61,7 @@ git status --short            # 未提交改动
 | R004 | 2026-07-03 | `377a893` | 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）| ✅ |
 | **R005** | **2026-07-03** | **`65ca4ea`** | **修 HARDWARE_PIN_WIRING.md 5 处错误（SD_MODE/GPIO47-48/EC11/USB-JTAG/UART0）+ 补 MAX98357A 规格书** | **✅** |
 | **R006** | **2026-07-03** | **`126af18`** | **修 HARDWARE_PIN_WIRING.md 5 处错误（SD_MODE 公式/GPIO47-48 R8V-R16V/GPIO45）+ 补 SSD1315 规格书** | **✅** |
+| **R007** | **2026-07-03** | **`e7fb604`** | **首次成功构建！修 board.h / audio_player.cpp API / u8g2_esp32_hal 兼容性** | **✅** |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 
@@ -82,7 +84,7 @@ git status --short            # 未提交改动
 | 项 | 值 |
 |---|---|
 | 串口（烧录） | 待确认（Win 上 `idf.py -p COMx flash`） |
-| ESP-IDF 版本 | v5.3（推荐） |
+| ESP-IDF 版本 | v5.5.3（实际） |
 | ESP-ADF 版本 | v2.7 |
 | 模组切换脚本 | `configure.bat wroom-1-n16r8` / `configure.bat wroom-2-n32r16v` |
 | 构建脚本 | `build.bat build` / `build.bat -p COM3 flash` |

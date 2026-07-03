@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-03（4 个 R 节点完成：baseline / R001 / R002 / R003）
+> **最后更新**：2026-07-03（8 个 R 节点完成：baseline → R007）
 
 ---
 
@@ -15,6 +15,7 @@
 | 2026-07-03 下午 | R001 启用 ESP-ADF（追认 sdkconfig 已配） | ✅ commit `c0c67e4` |
 | 2026-07-03 下午 | R002 启用 u8g2（删 334M 手动源码 + 备份 + idf component 路径） | ✅ commit `d773f05` |
 | 2026-07-03 下午-晚上 | R003 build 验证（多次失败 + 修 4 个子模块 + 暴露 ADF 5.5 引用方式变化） | ⚠️ commit `333e44e`（build 未通过） |
+| 2026-07-03 傍晚-凌晨 | R004+R007 build 全线修复（custom board / audio_player API / u8g2_hal 兼容性） | ✅ 首次成功构建！`.bin` 718KB，分区 77% 剩余 |
 
 ---
 
@@ -68,6 +69,10 @@
 - ✅ **R004 完成**（CMakeLists.txt 启用 ADF：EXTRA_COMPONENT_DIRS 移到项目根）
 - ✅ **R005 完成**（修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书）
 - ✅ **R006 完成**（修 HARDWARE_PIN_WIRING.md 5 处错误：SD_MODE 公式/GPIO47-48 拆分 R8V-R16V/GPIO19-20 D+/D- 标反/GPIO45 strapping + 补 SSD1315 规格书 + pdf_search 提取脚本）
+- ✅ **R007 完成——首次成功构建！**（`audiobook_player.bin` 生成，718KB，分区 77% 剩余）
+  - 新建 `components/tapebook_board/` 组件（ADF 自定义板级支持）
+  - 修复 `audio_player.cpp` 6 处无效 ADF API 调用
+  - 修复 `u8g2_esp32_hal` 编译兼容性（REQUIRES + ets_delay_us → esp_rom_delay_us）
 
 ---
 
@@ -142,6 +147,30 @@
 - **现象**：SD_MODE 不是简单的 GND/VDD 二值，而是 **Shutdown(0V) / Mono(0.16-0.77V) / Right(0.77-1.4V) / Left(>1.4V)** 四级
 - **教训**：必须用电阻分压获得 Mono 模式，直连 VDD 只输出 Left channel
 
+### L013：ADF 自定义 board 必须手动创建 INTERFACE_LINK_LIBRARIES 组件
+- **现象**：`CONFIG_AUDIO_BOARD_CUSTOM=y` 时 ADF 的 `esp_peripherals` 无条件 include `<board.h>`，但 ADF 不提供默认 board
+- **解决**：创建 `components/tapebook_board/`，通过 CMake `INTERFACE_LINK_LIBRARIES` 将包含路径注入到 `audio_board` 库
+- **模板**：参考 ADF 示例 `examples/player/pipeline_bt_player/` 中的 `my_board` 目录结构
+- **教训**：ADF 自定义板级支持不是通过 menuconfig 配置完成，而是通过 CMake 组件注入
+
+### L014：audio_player.cpp 6 处 API 从未被编译过
+- **现象**：该文件包含 `audio_element_set_volume()`、`audio_element_set_pos()`、`audio_pipeline_get_state()` 等不存在于 ADF 的 API
+- **原因**：文件基于 ADF 文档手册编写，但实际 API 不同；从未构建验证过
+- **教训**：`audio_element_set_volume` → 直接调 `i2s_set_sample_rate`（无音量控制 API）
+- **教训**：`audio_element_set_pos/get_pos` → 用 `audio_element_get_byte_pos` 近似
+- **教训**：`audio_pipeline_state_t`/`get_state` → 换 `audio_element_get_state`
+- **教训**：所有新加调用的文件必须编译验证，不能仅靠文档审查
+
+### L015：ets_delay_us → esp_rom_delay_us（IDF 5.x 弃用）
+- **现象**：`components/u8g2_esp32_hal/u8g2_esp32_hal.c` 使用 `ets_delay_us()`，IDF 5.5 报错"implicit declaration"
+- **解决**：替换为 `esp_rom_delay_us()`（来自 `<esp_rom_sys.h>`）
+- **教训**：IDF 从 v5.0 起逐步弃用 `ets_*` ROM 函数，推荐使用 `esp_rom_*` 替代
+- WROOM-1：仅 R16V 芯片有 GPIO47/48（脚注 c）
+- WROOM-2：R8V 和 R16V 都有 GPIO47/48（脚注 2）
+- **教训**：同一模组系列不同封装/型号可能引脚不同，必须逐型号看规格书脚注
+- **现象**：SD_MODE 不是简单的 GND/VDD 二值，而是 **Shutdown(0V) / Mono(0.16-0.77V) / Right(0.77-1.4V) / Left(>1.4V)** 四级
+- **教训**：必须用电阻分压获得 Mono 模式，直连 VDD 只输出 Left channel
+
 ---
 
 ## 5. 性能指标
@@ -153,8 +182,8 @@
 ## 6. 未来方向
 
 ### 下次会话
-1. **build 验证（关键阻塞）**：跑 `build.bat build` 验证 ADF + u8g2 编译通过
-2. **推到 GitHub**：`git push origin master --tags`
+1. **推到 GitHub**：`git push origin master --tags`
+2. **烧录验证**：`build.bat -p COMx flash` 确认硬件跑通
 3. **V1.0 MVP 补完**：文件夹浏览、OLED 屏底部对齐（10/10）
 
 ### 短期
@@ -193,14 +222,14 @@
 ## 8. R 节点 Git 状态
 
 ```
+e7fb604 R007: 首次成功构建（fix board/audio_player/u8g2_hal）
 126af18 R006: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 SSD1315 规格书 + 提取脚本
 65ca4ea R005: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书
 377a893 R004: 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）
 333e44e R003: build 验证未通过 + 修 R001 ADF REQUIRES + 修 R002 u8g2 暂禁用
-d773f05 R002: 启用 u8g2 OLED 显示（改用 idf component 替换手动源码）
 ```
 
-**7 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
+**8 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
 
 ---
 
