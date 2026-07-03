@@ -24,6 +24,7 @@
 
 #ifdef CONFIG_USE_U8G2
 
+// 2026-07-03 R003: 暂禁用 u8g2（idf component 名待定；CONFIG_USE_U8G2 未启用时本块不编译）
 #include "u8g2.h"
 #include "driver/i2c.h"
 #include "u8g2_esp32_hal.h"

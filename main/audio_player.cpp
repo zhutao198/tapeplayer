@@ -29,7 +29,9 @@
 #include "ogg_decoder.h"
 #include "wav_decoder.h"
 #include "filter_resample.h"
-#include "board.h"
+// 2026-07-03 R003: 注释 board.h（项目用 MAX98357 + SSD1306 非 ADF 开发板，未配置 audio_board Kconfig，
+//   而代码未实际使用 board.h 中任何 API）
+// #include "board.h"
 
 static const char *TAG = "audio_player";
 

@@ -17,6 +17,10 @@ idf_component_register(
         nvs_flash
         esp_timer
         fatfs
+        # 2026-07-03 R003: 补 R001 漏掉的 ADF 组件（audio_player.cpp 走真实 ADF 路径需要）
+        audio_pipeline
+        audio_stream
+        esp-adf-libs
 )
 
 # 传递目标模块选择为编译宏
