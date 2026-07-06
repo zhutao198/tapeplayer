@@ -13,7 +13,10 @@
 #include "config.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
+#include "esp_log.h"
 #include <string.h>
+
+static const char *TAG = "button";
 
 /* --- 按键状态机 --- */
 typedef enum {
@@ -39,8 +42,15 @@ typedef struct {
     bool            extra_long_fired;   // 超长按事件是否已触发
 } btn_ctx_t;
 
+/* 配置结构（纯配置，不含 runtime 状态） */
+typedef struct {
+    gpio_num_t      gpio;
+    btn_id_t        id;
+    bool            dbl_click_en;
+} btn_config_t;
+
 /* 按键配置：FF/RW 禁用双击检测，保证磁带模式即时响应 */
-static const btn_ctx_t g_btn_config[BTN_ID_MAX] = {
+static const btn_config_t g_btn_config[BTN_ID_MAX] = {
     { .gpio = BTN_PLAY_PAUSE,    .id = BTN_ID_PLAY_PAUSE,   .dbl_click_en = true  },
     { .gpio = BTN_STOP,          .id = BTN_ID_STOP,         .dbl_click_en = true  },
     { .gpio = BTN_PREV,          .id = BTN_ID_PREV,         .dbl_click_en = false },
@@ -66,7 +76,11 @@ void button_manager_init(void)
         pin_mask |= (1ULL << g_btn_config[i].gpio);
     }
     io_conf.pin_bit_mask = pin_mask;
-    gpio_config(&io_conf);
+    esp_err_t ret = gpio_config(&io_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "gpio_config failed: 0x%x", ret);
+        return;
+    }
 
     memcpy(g_buttons, g_btn_config, sizeof(g_buttons));
     for (int i = 0; i < BTN_ID_MAX; i++) {
@@ -154,10 +168,11 @@ int button_manager_scan(btn_event_info_t *events, int max_events)
             break;
 
         case BTN_STATE_DBL_DEBOUNCE:
-            if (!pressed) {
-                /* 第二次点击抖动/松开太快，视为双击 */
+            if (!pressed && (now_us - btn->press_start_us) >= debounce_us) {
                 btn->state = BTN_STATE_IDLE;
                 event = BTN_EVENT_DOUBLE_CLICK;
+            } else if (!pressed) {
+                btn->state = BTN_STATE_IDLE;
             } else if ((now_us - btn->press_start_us) >= debounce_us) {
                 btn->state = BTN_STATE_DBL_PRESSED;
             }

@@ -13,12 +13,14 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
+#include "esp_sleep.h"
 #include "nvs_flash.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
@@ -74,8 +76,7 @@ static int            g_pending_track_next = -1;
 static int            g_pending_track_seek = 0;
 
 static sdmmc_card_t   *g_sd_card = NULL;  // SD 卡句柄
-// SD 卡状态检查计时（#if 0 中留用，V1.1 恢复）
-// static uint64_t    g_last_sd_check_us = 0;
+static uint64_t    g_last_sd_check_us = 0;
 
 #define AUTO_SAVE_INTERVAL_US  (30 * 1000000)  // 30 秒自动保存
 #define SD_CHECK_INTERVAL_US   (5 * 1000000)   // 5 秒检查 SD 卡状态
@@ -196,19 +197,19 @@ static void handle_button_events(void)
     for (int i = 0; i < n; i++) {
         btn_event_info_t *e = &events[i];
 
-        /* --- 按键锁定模式下，仅响应解锁操作 --- */
+        /* 记录用户活动（先于锁定检查，避免锁定状态误触发休眠） */
+        if (e->event != BTN_EVENT_NONE) {
+            power_mgmt_record_activity();
+        }
+
+        /* 按键锁定模式下，仅响应解锁操作 */
         if (g_key_locked) {
             if (e->id == BTN_ID_PLAY_PAUSE && e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
                 g_key_locked = false;
-                g_app_state = g_state_before_lock;  // 恢复锁定前的状态
+                g_app_state = g_state_before_lock;
                 ESP_LOGI(TAG, "Key lock released, state restored to %d", g_app_state);
             }
             continue;
-        }
-
-        /* 记录用户活动（用于自动休眠计时） */
-        if (e->event != BTN_EVENT_NONE) {
-            power_mgmt_record_activity();
         }
 
         switch (e->id) {
@@ -554,26 +555,52 @@ extern "C" void app_main(void)
             }
         }
 
-        // 8. SD 卡状态监测（每 5 秒）
-        // IDF v5.5 移除了 sdmmc_card_state_t / sdmmc_get_state，此功能暂时禁用
-        // V1.1: 改用 sdmmc_io_check_events 重新实现
-#if 0
+        // 7b. 电源管理 tick（1Hz 周期性任务）
+        {
+            static uint64_t last_power_tick = 0;
+            uint64_t now = esp_timer_get_time();
+            if ((now - last_power_tick) >= 1000000) {
+                last_power_tick = now;
+                power_mgmt_tick();
+            }
+        }
+
+        // 7c. 自动休眠（5 分钟无操作进入 light sleep，按键 GPIO 唤醒）
+        if (power_mgmt_should_sleep()) {
+            ESP_LOGI(TAG, "Idle timeout, entering light sleep");
+            audio_player_stop();
+            g_app_state = APP_STATE_IDLE;
+
+            {
+                uint64_t wakeup_mask = 0;
+                wakeup_mask |= (1ULL << BTN_PLAY_PAUSE) | (1ULL << BTN_STOP);
+                wakeup_mask |= (1ULL << BTN_PREV) | (1ULL << BTN_NEXT);
+                wakeup_mask |= (1ULL << BTN_REWIND) | (1ULL << BTN_FAST_FORWARD);
+                esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+            }
+            esp_light_sleep_start();
+
+            ESP_LOGI(TAG, "Woke from light sleep");
+            power_mgmt_record_activity();
+        }
+
+        // 8. SD 卡状态监测（每 5 秒轮询挂载点）
         {
             uint64_t now = esp_timer_get_time();
             if ((now - g_last_sd_check_us) >= SD_CHECK_INTERVAL_US) {
                 g_last_sd_check_us = now;
                 if (g_sd_card != NULL) {
-                    sdmmc_card_state_t sd_state = sdmmc_get_state(g_sd_card);
-                    if (sd_state == SDMMC_CARD_REMOVED) {
+                    struct stat st;
+                    if (stat(SD_MOUNT_POINT, &st) != 0) {
                         ESP_LOGW(TAG, "SD card removed!");
                         audio_player_stop();
                         display_show_no_card();
                         g_app_state = APP_STATE_IDLE;
+                        g_sd_card = NULL;
                     }
                 }
             }
         }
-#endif
 
         // 9. 看门狗复位
         esp_task_wdt_reset();

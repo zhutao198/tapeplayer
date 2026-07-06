@@ -13,7 +13,7 @@
 #define I2S_BCK_IO          GPIO_NUM_4
 #define I2S_WS_IO           GPIO_NUM_5
 #define I2S_DOUT_IO         GPIO_NUM_6
-#define I2S_MCLK_IO         GPIO_NUM_7    // MAX98357A 不需要 MCLK，保留作为预留
+// MAX98357A 不需要 MCLK，I2S_MCLK_IO 删除（M-7）
 
 /* ============================================================
  * MicroSD 卡 (SPI)

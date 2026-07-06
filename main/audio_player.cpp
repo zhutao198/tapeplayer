@@ -47,8 +47,9 @@ static bool         g_is_playing = false;
 static bool         g_is_paused = false;
 static int          g_volume = AUDIO_OUTPUT_VOL;
 static float        g_current_speed = TAPE_SPEED_NORMAL;
-static int          g_total_duration_ms = 0;           // 总时长(ms)
-static int          g_total_file_bytes = 0;            // 当前文件字节数
+static int          g_total_duration_ms = 0;
+static int          g_total_file_bytes = 0;
+static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采样率缓存
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（或 resume 时重置）
 static uint64_t     g_pause_start_us = 0;              // 暂停起始时间
 static int64_t      g_play_offset_us = 0;              // 暂停前已累计播放时间（不含暂停）
@@ -176,7 +177,8 @@ bool audio_player_play(const char *filepath)
     // 6. 设置文件 URI
     audio_element_set_uri(g_fatfs_reader, filepath);
 
-    // 7. 设置音量（需音频渲染元素支持；MAX98357A 无 I2C 编解码器）
+    // 7. 设置 I2S 时钟（MAX98357A 无编解码器，仅需 BCLK/LRCLK 匹配）
+    g_current_sample_rate = AUDIO_SAMPLE_RATE;
     i2s_stream_set_clk(g_i2s_writer, AUDIO_SAMPLE_RATE, 16, 2);
 
     // 8. 启动管道
@@ -325,17 +327,21 @@ void audio_player_set_speed(float speed)
 {
     g_current_speed = speed;
 
-    // 通过调整 I2S 时钟实现变速（变调效果，模拟磁带机）
-    if (g_i2s_writer) {
-        if (speed > 0) {
-            int sample_rate = (int)(AUDIO_SAMPLE_RATE * speed);
-            if (sample_rate < 8000) sample_rate = 8000;
-            if (sample_rate > 96000) sample_rate = 96000;
-            i2s_stream_set_clk(g_i2s_writer, sample_rate, 16, 2);
-        } else {
-            // 快退：保持原始采样率（快退通过 seek 后退模拟）
-            i2s_stream_set_clk(g_i2s_writer, AUDIO_SAMPLE_RATE, 16, 2);
-        }
+    if (!g_i2s_writer) return;
+
+    int sample_rate;
+    if (speed > 0) {
+        sample_rate = (int)(AUDIO_SAMPLE_RATE * speed);
+        if (sample_rate < 8000) sample_rate = 8000;
+        if (sample_rate > 96000) sample_rate = 96000;
+    } else {
+        sample_rate = AUDIO_SAMPLE_RATE;
+    }
+
+    // 缓存命中则跳过冗余的 i2s_set_clk 调用
+    if (sample_rate != g_current_sample_rate) {
+        g_current_sample_rate = sample_rate;
+        i2s_stream_set_clk(g_i2s_writer, sample_rate, 16, 2);
     }
 }
 

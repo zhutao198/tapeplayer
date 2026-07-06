@@ -8,48 +8,81 @@
 #include "power_mgmt.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_sleep.h"
+#include "driver/gpio.h"
+#include "config.h"
 
 static const char *TAG = "power_mgmt";
 static uint64_t g_last_activity_us = 0;
 static int      g_auto_off_min = 0;
 static uint64_t g_auto_off_start_us = 0;
+static int      g_tick_count = 0;
 
-void power_mgmt_init(void) {
-    ESP_LOGI(TAG, "Power management init (stub for V1.1)");
+#define SLEEP_TIMEOUT_US  (5 * 60 * 1000000ULL)  // 5 分钟无操作自动休眠
+#define TICK_INTERVAL_US  (1 * 1000000)           // 1 秒
+
+void power_mgmt_init(void)
+{
+    g_last_activity_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "Power management initialized (sleep timeout: 5min)");
+}
+
+void power_mgmt_tick(void)
+{
+    g_tick_count++;
+
+    // 每 10 秒打印一次电池信息
+    if (g_tick_count % 10 == 0) {
+        int bat = power_mgmt_get_battery_percent();
+        bat_state_t st = power_mgmt_get_state();
+        if (st == BAT_STATE_LOW) {
+            ESP_LOGW(TAG, "Battery low: %d%%", bat);
+        } else if (st == BAT_STATE_CRITICAL) {
+            ESP_LOGE(TAG, "Battery critical: %d%%", bat);
+        }
+    }
+}
+
+int power_mgmt_get_battery_percent(void)
+{
+    // V1.0: 返回 100（假定 USB 供电或满电）
+    // V1.1+: ADC1 通道读取电池分压，查表换算百分比
+    return 100;
+}
+
+bat_state_t power_mgmt_get_state(void)
+{
+    int pct = power_mgmt_get_battery_percent();
+    if (pct > 15) return BAT_STATE_NORMAL;
+    if (pct > 5)  return BAT_STATE_LOW;
+    return BAT_STATE_CRITICAL;
+}
+
+bool power_mgmt_should_shutdown(void)
+{
+    return power_mgmt_get_state() == BAT_STATE_CRITICAL;
+}
+
+void power_mgmt_record_activity(void)
+{
     g_last_activity_us = esp_timer_get_time();
 }
 
-void power_mgmt_tick(void) {
-    /* V1.1+: ADC 采样电池电压 */
+bool power_mgmt_should_sleep(void)
+{
+    if (g_auto_off_min > 0) return false;  // 定时关机开启时不自动休眠
+    uint64_t idle_us = esp_timer_get_time() - g_last_activity_us;
+    return idle_us >= SLEEP_TIMEOUT_US;
 }
 
-int power_mgmt_get_battery_percent(void) {
-    return 100;  /* stub: 假定满电 */
-}
-
-bat_state_t power_mgmt_get_state(void) {
-    return BAT_STATE_NORMAL;
-}
-
-bool power_mgmt_should_shutdown(void) {
-    return false;
-}
-
-void power_mgmt_record_activity(void) {
-    g_last_activity_us = esp_timer_get_time();
-}
-
-bool power_mgmt_should_sleep(void) {
-    /* V1.0 不自动休眠 */
-    return false;
-}
-
-void power_mgmt_set_auto_off(int minutes) {
+void power_mgmt_set_auto_off(int minutes)
+{
     g_auto_off_min = minutes;
     g_auto_off_start_us = (minutes > 0) ? esp_timer_get_time() : 0;
 }
 
-bool power_mgmt_auto_off_expired(void) {
+bool power_mgmt_auto_off_expired(void)
+{
     if (g_auto_off_min <= 0) return false;
     uint64_t elapsed_s = (esp_timer_get_time() - g_auto_off_start_us) / 1000000;
     return elapsed_s >= (uint64_t)(g_auto_off_min * 60);

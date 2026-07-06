@@ -14,6 +14,7 @@
 
 #include "display.h"
 #include "config.h"
+#include "esp_timer.h"
 
 // u8g2 库头文件，如果使用简化方案可以用 SSD1306 驱动
 // 这里演示使用 u8g2 的接口
@@ -24,12 +25,33 @@
 
 #ifdef CONFIG_USE_U8G2
 
-// 2026-07-03 R003: 暂禁用 u8g2（idf component 名待定；CONFIG_USE_U8G2 未启用时本块不编译）
 #include "u8g2.h"
 #include "driver/i2c.h"
 #include "u8g2_esp32_hal.h"
 
 static u8g2_t u8g2;
+
+/* 脏区检查：指纹相同则跳过 SendBuffer，降低 I2C 流量 */
+static uint32_t g_display_fp = 0;
+static uint64_t g_display_last_update_us = 0;
+static bool     g_display_sleep = false;
+
+static uint32_t calc_fingerprint(player_state_t state,
+                                  int track_idx, int total,
+                                  int current_sec, int total_sec,
+                                  int gear, int volume)
+{
+    uint32_t h = (uint32_t)state;
+    h = h * 31 + (uint32_t)track_idx;
+    h = h * 31 + (uint32_t)total;
+    h = h * 31 + (uint32_t)current_sec;
+    h = h * 31 + (uint32_t)total_sec;
+    h = h * 31 + (uint32_t)gear;
+    h = h * 31 + (uint32_t)volume;
+    return h;
+}
+
+#define SCREEN_SAVER_TIMEOUT_US  (30 * 1000000ULL)  // 30s 无变化进入屏保
 
 void display_init(void)
 {
@@ -122,6 +144,29 @@ void display_update(player_state_t state,
                     int current_sec, int total_sec,
                     float speed, int gear, int volume)
 {
+    uint64_t now = esp_timer_get_time();
+
+    /* 脏区检查：帧内容无变化则跳过 I2C 刷新 */
+    uint32_t fp = calc_fingerprint(state, track_idx, total,
+                                    current_sec, total_sec, gear, volume);
+    if (fp == g_display_fp) {
+        /* 屏保：如果内容持续不变超过 30s，关闭显示 */
+        if (!g_display_sleep &&
+            (now - g_display_last_update_us) >= SCREEN_SAVER_TIMEOUT_US) {
+            u8g2_SetPowerSave(&u8g2, 1);
+            g_display_sleep = true;
+        }
+        return;
+    }
+    g_display_fp = fp;
+    g_display_last_update_us = now;
+
+    /* 从屏保唤醒 */
+    if (g_display_sleep) {
+        u8g2_SetPowerSave(&u8g2, 0);
+        g_display_sleep = false;
+    }
+
     u8g2_ClearBuffer(&u8g2);
 
     /* --- Line 0: 状态行 --- */
@@ -131,14 +176,13 @@ void display_update(player_state_t state,
              state_icon(state), track_idx, total, volume);
     u8g2_DrawStr(&u8g2, 0, 8, line0);
 
-    /* --- Line 1: 文件名 (截断/滚动) --- */
+    /* --- Line 1: 文件名 (截断) --- */
     u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
     char fname[22];
     int len = strlen(track_name);
     if (len <= 21) {
         snprintf(fname, sizeof(fname), "%-21s", track_name);
     } else {
-        // 长文件名截断（完整滚动 TODO: V1.1 实现）
         snprintf(fname, sizeof(fname), "%s", track_name);
     }
     u8g2_DrawStr(&u8g2, 0, 21, fname);

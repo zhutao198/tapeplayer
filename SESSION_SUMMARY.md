@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-06（9 个 R 节点完成：baseline → R008）
+> **最后更新**：2026-07-06（10 个 R 节点完成：baseline → R009）
 
 ---
 
@@ -17,6 +17,7 @@
 | 2026-07-03 下午-晚上 | R003 build 验证（多次失败 + 修 4 个子模块 + 暴露 ADF 5.5 引用方式变化） | ⚠️ commit `333e44e`（build 未通过） |
 | 2026-07-03 傍晚-凌晨 | R004+R007 build 全线修复（custom board / audio_player API / u8g2_hal 兼容性） | ✅ 首次成功构建！`.bin` 718KB，分区 77% 剩余 |
 | 2026-07-06 | R008 代码审查修复（核实 38 条发现，修 33 项） | ✅ 构建通过，二进制 0xaf9c0 |
+| 2026-07-06 | R009 审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/锁定态/button/采样率） | ✅ 构建通过，二进制 0xb26b0 |
 
 ---
 
@@ -78,6 +79,10 @@
   - CRITICAL：seek 字节换算、position 时间戳、NULL 检查、WDT 增大 + 回调异步化
   - HIGH：PSRAM 分配、NVS 返回值检查 + 降低 commit 频率、auto_off 集成到主循环
   - MEDIUM：删 unused 变量、stop_playback 语义修正、playlist_set_index 补缺
+- ✅ **R009 完成——代码审查剩余 9 项修复！**
+  - HIGH：SD 热插拔 stat() 轮询、display 脏区 + 屏保、锁定态 activity 记录、power_mgmt tick + light sleep
+  - MEDIUM：DBL_DEBOUNCE 去抖、GPIO 返回值检查、删 I2S_MCLK_IO、button 配置/状态分离
+  - LOW：采样率缓存、g_count 类型（已在 R008 修）
 
 ---
 
@@ -234,7 +239,7 @@ e7fb604 R007: 首次成功构建（fix board/audio_player/u8g2_hal）
 377a893 R004: 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）
 ```
 
-**9 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
+**10 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
 
 ---
 
