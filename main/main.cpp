@@ -35,6 +35,7 @@
 #include "settings.h"
 #include "power_mgmt.h"
 #include "voice_prompt.h"
+#include "bookmark.h"
 
 static const char *TAG = "main";
 
@@ -60,6 +61,7 @@ typedef enum {
     APP_STATE_LOCKED,          // 按键锁定
 } app_state_t;
 
+// 所有全局变量单任务访问，无需 volatile（M-9/L-8: 设计确认 OK）
 static app_state_t    g_app_state = APP_STATE_IDLE;
 static int            g_current_track = 0;
 static bool           g_key_locked = false;
@@ -67,7 +69,8 @@ static app_state_t    g_state_before_lock = APP_STATE_STOPPED;
 static uint64_t       g_last_display_update = 0;
 static int            g_vol_hold_counter = 0;  // 音量长按计数器（每 5 步=100ms 调 1 级）
 static int            g_seek_on_play_position = 0;  // 断点恢复 seek 目标（秒）
-static uint64_t       g_last_auto_save_us = 0;      // 上次自动保存时间
+// g_last_auto_save_us: 与 auto_save/settings_flush/power_mgmt 耦合，单任务下 OK（M-15: 设计级，可接受）
+static uint64_t       g_last_auto_save_us = 0;
 static play_mode_t    g_play_mode = PLAY_MODE_SEQUENCE;
 
 // 延迟处理：曲目播完 → 主循环处理下一首（避免在回调内嵌套调 play）
@@ -391,7 +394,9 @@ static bool mount_sd_card(void)
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
         .max_files = 5,
-        .allocation_unit_size = 16 * 1024
+        .allocation_unit_size = 16 * 1024,
+        .disk_status_check_enable = false,
+        .use_one_fat = false,
     };
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
@@ -450,7 +455,10 @@ static void init_hardware(void)
     // 7. 电源管理
     power_mgmt_init();
 
-    // 8. 看门狗初始化（10 秒超时，给 callback 内 pipeline 操作留余量）
+    // 8. 书签模块
+    bookmark_init();
+
+    // 9. 看门狗初始化（10 秒超时，给 callback 内 pipeline 操作留余量）
     esp_task_wdt_config_t twdt_config = {
         .timeout_ms = 10000,
         .idle_core_mask = 0,
@@ -459,7 +467,7 @@ static void init_hardware(void)
     esp_task_wdt_init(&twdt_config);
     esp_task_wdt_add(NULL);  // 订阅当前任务
 
-    // 9. 加载持久化设置
+    // 10. 加载持久化设置
     int vol = settings_load_volume();
     audio_player_set_volume(vol);
     g_play_mode = (play_mode_t)settings_load_play_mode();

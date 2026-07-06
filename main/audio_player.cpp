@@ -14,6 +14,8 @@
 #include "config.h"
 #include "tape_control.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 
 #ifdef CONFIG_USE_ESP_ADF
@@ -105,6 +107,7 @@ void audio_player_init(void)
     ESP_LOGI(TAG, "Initializing audio subsystem...");
 
     // 创建 I2S 输出流（跨曲目复用，无需每次重建）
+    // I2S 驱动由 i2s_stream_init 内部管理（L-3: 已验证 OK）
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
     i2s_cfg.type = AUDIO_STREAM_WRITER;
     g_i2s_writer = i2s_stream_init(&i2s_cfg);
@@ -231,7 +234,19 @@ void audio_player_stop(void)
 {
     if (g_pipeline) {
         audio_pipeline_stop(g_pipeline);
-        audio_pipeline_wait_for_stop(g_pipeline);
+        {
+            int retries = 100;
+            while (retries > 0) {
+                audio_element_state_t st = audio_element_get_state(g_i2s_writer);
+                if (st == AEL_STATE_FINISHED || st == AEL_STATE_STOPPED || st == AEL_STATE_INIT) break;
+                vTaskDelay(pdMS_TO_TICKS(10));
+                retries--;
+            }
+            if (retries == 0) {
+                ESP_LOGW(TAG, "Pipeline stop timeout, forcing terminate");
+                audio_pipeline_terminate(g_pipeline);
+            }
+        }
 
         // 销毁 per-track 元素（fatfs_reader + decoder）
         if (g_fatfs_reader) {

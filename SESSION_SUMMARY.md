@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-06（10 个 R 节点完成：baseline → R009）
+> **最后更新**：2026-07-06（11 个 R 节点完成：baseline → R010）
 
 ---
 
@@ -16,8 +16,10 @@
 | 2026-07-03 下午 | R002 启用 u8g2（删 334M 手动源码 + 备份 + idf component 路径） | ✅ commit `d773f05` |
 | 2026-07-03 下午-晚上 | R003 build 验证（多次失败 + 修 4 个子模块 + 暴露 ADF 5.5 引用方式变化） | ⚠️ commit `333e44e`（build 未通过） |
 | 2026-07-03 傍晚-凌晨 | R004+R007 build 全线修复（custom board / audio_player API / u8g2_hal 兼容性） | ✅ 首次成功构建！`.bin` 718KB，分区 77% 剩余 |
+| 2026-07-06 | R009-R010 代码审查全部 38 项清零 | ✅ 审查完成，代码稳定 |
 | 2026-07-06 | R008 代码审查修复（核实 38 条发现，修 33 项） | ✅ 构建通过，二进制 0xaf9c0 |
 | 2026-07-06 | R009 审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/锁定态/button/采样率） | ✅ 构建通过，二进制 0xb26b0 |
+| 2026-07-06 | R010 审查剩余 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/设计确认） | ✅ 构建通过，二进制 0xb2660 |
 
 ---
 
@@ -83,6 +85,10 @@
   - HIGH：SD 热插拔 stat() 轮询、display 脏区 + 屏保、锁定态 activity 记录、power_mgmt tick + light sleep
   - MEDIUM：DBL_DEBOUNCE 去抖、GPIO 返回值检查、删 I2S_MCLK_IO、button 配置/状态分离
   - LOW：采样率缓存、g_count 类型（已在 R008 修）
+- ✅ **R010 完成——代码审查全部 38 项清零！**
+  - MEDIUM：wait_for_stop 超时保护、sdspi mount init 警告修复
+  - LOW：bookmark NVS 书签实现、voice_prompt V1.2 预备
+  - 设计确认：M-9/M-10/M-15/L-3/L-8 单任务安全，加注释说明
 
 ---
 
@@ -239,7 +245,7 @@ e7fb604 R007: 首次成功构建（fix board/audio_player/u8g2_hal）
 377a893 R004: 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）
 ```
 
-**10 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
+**11 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
 
 ---
 
