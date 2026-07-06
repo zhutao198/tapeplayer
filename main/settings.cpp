@@ -21,13 +21,16 @@ static nvs_handle_t g_nvs_handle = 0;
 
 void settings_init(void)
 {
+    g_nvs_handle = 0;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &g_nvs_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open NVS namespace '%s' (0x%x), erasing...", NVS_NAMESPACE, err);
+        g_nvs_handle = 0;
         nvs_flash_erase();
         err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &g_nvs_handle);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "NVS still failed after erase, system may be unstable");
+            g_nvs_handle = 0;
             return;
         }
     }
@@ -40,8 +43,8 @@ void settings_save_position(int track_idx, int position_s, const char *file_name
 
     esp_err_t err;
 
-    err = nvs_set_u8(g_nvs_handle, NVS_KEY_TRACK, (uint8_t)track_idx);
-    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_TRACK, err);
+    err = nvs_set_u16(g_nvs_handle, NVS_KEY_TRACK, (uint16_t)track_idx);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u16(%s) failed: 0x%x", NVS_KEY_TRACK, err);
 
     err = nvs_set_u32(g_nvs_handle, NVS_KEY_POSITION, (uint32_t)position_s);
     if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u32(%s) failed: 0x%x", NVS_KEY_POSITION, err);
@@ -60,11 +63,11 @@ bool settings_load_position(int *track_idx_out, int *position_s_out)
 {
     if (!g_nvs_handle) return false;
 
-    uint8_t idx = 0;
+    uint16_t idx = 0;
     uint32_t pos = 0;
     esp_err_t err;
 
-    err = nvs_get_u8(g_nvs_handle, NVS_KEY_TRACK, &idx);
+    err = nvs_get_u16(g_nvs_handle, NVS_KEY_TRACK, &idx);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "No saved track index");
         return false;
@@ -162,4 +165,13 @@ int settings_load_auto_off(void)
         min = 0;
     }
     return (int)min;
+}
+
+void settings_flush(void)
+{
+    if (!g_nvs_handle) return;
+    esp_err_t err = nvs_commit(g_nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_commit failed: 0x%x", err);
+    }
 }

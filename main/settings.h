@@ -66,6 +66,11 @@ void settings_save_auto_off(int minutes);
  */
 int settings_load_auto_off(void);
 
+/**
+ * @brief 提交所有未保存的设置（批量 flush，降低 flash 磨损）
+ */
+void settings_flush(void);
+
 #ifdef __cplusplus
 }
 #endif

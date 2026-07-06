@@ -533,12 +533,15 @@ extern "C" void app_main(void)
             play_current_track();
         }
 
-        // 6. 每 30 秒自动保存断点
-        if (g_app_state == APP_STATE_PLAYING) {
+        // 6. 每 30 秒自动保存断点 + 批量 flush NVS
+        {
             uint64_t now = esp_timer_get_time();
             if ((now - g_last_auto_save_us) >= AUTO_SAVE_INTERVAL_US) {
-                save_current_position();
                 g_last_auto_save_us = now;
+                if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
+                    save_current_position();
+                }
+                settings_flush();  // 统一提交音量/模式/定时关机等 pending 写入
             }
         }
 
