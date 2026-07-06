@@ -138,9 +138,7 @@ void display_update(player_state_t state,
     if (len <= 21) {
         snprintf(fname, sizeof(fname), "%-21s", track_name);
     } else {
-        // 滚动显示：根据时间偏移截取
-        static int scroll_offset = 0;
-        // 这里简化处理，实际需要 tick 驱动滚动
+        // 长文件名截断（完整滚动 TODO: V1.1 实现）
         snprintf(fname, sizeof(fname), "%s", track_name);
     }
     u8g2_DrawStr(&u8g2, 0, 21, fname);

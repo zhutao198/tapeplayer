@@ -30,6 +30,7 @@
 #include "wav_decoder.h"
 #include "esp_timer.h"
 #include "filter_resample.h"
+#include <sys/stat.h>
 // 2026-07-03 R003: 注释 board.h（项目用 MAX98357 + SSD1306 非 ADF 开发板，未配置 audio_board Kconfig，
 //   而代码未实际使用 board.h 中任何 API）
 // #include "board.h"
@@ -47,7 +48,10 @@ static bool         g_is_paused = false;
 static int          g_volume = AUDIO_OUTPUT_VOL;
 static float        g_current_speed = TAPE_SPEED_NORMAL;
 static int          g_total_duration_ms = 0;           // 总时长(ms)
-static char         g_current_file[256] = "";
+static int          g_total_file_bytes = 0;            // 当前文件字节数
+static uint64_t     g_play_start_us = 0;               // 本次播放起始（或 resume 时重置）
+static uint64_t     g_pause_start_us = 0;              // 暂停起始时间
+static int64_t      g_play_offset_us = 0;              // 暂停前已累计播放时间（不含暂停）
 
 static audio_status_cb_t g_status_cb = NULL;
 static void              *g_user_data = NULL;
@@ -129,9 +133,23 @@ bool audio_player_play(const char *filepath)
     fatfs_stream_cfg_t fatfs_cfg = FATFS_STREAM_CFG_DEFAULT();
     fatfs_cfg.type = AUDIO_STREAM_READER;
     g_fatfs_reader = fatfs_stream_init(&fatfs_cfg);
+    if (!g_fatfs_reader) {
+        ESP_LOGE(TAG, "Failed to create FATFS reader");
+        audio_pipeline_deinit(g_pipeline);
+        g_pipeline = NULL;
+        return false;
+    }
 
     // 3. 创建解码器
     g_decoder = create_decoder(filepath);
+    if (!g_decoder) {
+        ESP_LOGE(TAG, "Failed to create decoder");
+        audio_element_deinit(g_fatfs_reader);
+        g_fatfs_reader = NULL;
+        audio_pipeline_deinit(g_pipeline);
+        g_pipeline = NULL;
+        return false;
+    }
 
     // 4. 注册元素到管道
     audio_pipeline_register(g_pipeline, g_fatfs_reader, "file");
@@ -140,7 +158,20 @@ bool audio_player_play(const char *filepath)
 
     // 5. 链接管道: file → decoder → i2s
     const char *link_tags[3] = {"file", "decoder", "i2s"};
-    audio_pipeline_link(g_pipeline, link_tags, 3);
+    esp_err_t link_err = audio_pipeline_link(g_pipeline, link_tags, 3);
+    if (link_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to link pipeline (0x%x)", link_err);
+        audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+        audio_pipeline_unregister(g_pipeline, g_decoder);
+        audio_pipeline_unregister(g_pipeline, g_i2s_writer);
+        audio_element_deinit(g_fatfs_reader);
+        audio_element_deinit(g_decoder);
+        g_fatfs_reader = NULL;
+        g_decoder = NULL;
+        audio_pipeline_deinit(g_pipeline);
+        g_pipeline = NULL;
+        return false;
+    }
 
     // 6. 设置文件 URI
     audio_element_set_uri(g_fatfs_reader, filepath);
@@ -151,15 +182,22 @@ bool audio_player_play(const char *filepath)
     // 8. 启动管道
     audio_pipeline_run(g_pipeline);
 
-    strncpy(g_current_file, filepath, sizeof(g_current_file) - 1);
     g_is_playing = true;
     g_is_paused = false;
     g_current_speed = TAPE_SPEED_NORMAL;
+    g_play_start_us = esp_timer_get_time();
+    g_play_offset_us = 0;
 
-    // 9. 获取总时长（从解码器元数据）
-    // 注：ESP-ADF 无 audio_element_get_total_time API，
-    // 需通过 AEL_MSG_CMD_REPORT_MUSIC_INFO 事件获取或播放后估算
-    g_total_duration_ms = 0; // 初始未知，通过事件回调更新
+    // 9. 计算文件字节数（用于 seek/位置换算）
+    struct stat st;
+    if (stat(filepath, &st) == 0) {
+        g_total_file_bytes = (int)st.st_size;
+    } else {
+        g_total_file_bytes = 0;
+    }
+
+    // 10. 总时长初始未知（通过事件回调更新）
+    g_total_duration_ms = 0;
 
     return true;
 }
@@ -169,6 +207,7 @@ void audio_player_pause(void)
     if (g_is_playing && !g_is_paused && g_pipeline) {
         audio_pipeline_pause(g_pipeline);
         g_is_paused = true;
+        g_pause_start_us = esp_timer_get_time();
         ESP_LOGI(TAG, "Paused");
     }
 }
@@ -176,6 +215,10 @@ void audio_player_pause(void)
 void audio_player_resume(void)
 {
     if (g_is_playing && g_is_paused && g_pipeline) {
+        // 累计暂停前的播放时间
+        g_play_offset_us += (int64_t)(esp_timer_get_time() - g_pause_start_us);
+        // 重置起始时间（抵消暂停区间）
+        g_play_start_us = esp_timer_get_time();
         audio_pipeline_resume(g_pipeline);
         g_is_paused = false;
         ESP_LOGI(TAG, "Resumed");
@@ -211,6 +254,7 @@ void audio_player_stop(void)
     g_is_paused = false;
     g_current_speed = TAPE_SPEED_NORMAL;
     g_total_duration_ms = 0;
+    g_play_offset_us = 0;
 }
 
 /* ============================================================
@@ -223,24 +267,38 @@ void audio_player_seek(int seconds)
 
 void audio_player_seek_ms(int ms)
 {
-    if (!g_pipeline || !g_is_playing || !g_decoder) return;
+    if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
 
-    // ESP-ADF seek：暂停管道，通过解码器的 seek 机制
-    // 注：不是所有解码器都支持 seek
     audio_pipeline_pause(g_pipeline);
-    // 使用字节位置近似 seek（字节 = 毫秒 × 字节/秒 / 1000）
-    // 更精确的 seek 需解码器通过事件处理
-    audio_element_set_byte_pos(g_decoder, ms);
+
+    // 换算 毫秒 → 字节位置：byte_pos = (ms / total_ms) × total_bytes
+    if (g_total_duration_ms > 0 && g_total_file_bytes > 0) {
+        int byte_pos = (int)((int64_t)ms * g_total_file_bytes / g_total_duration_ms);
+        audio_element_set_byte_pos(g_decoder, byte_pos);
+    }
+    // 无总时长时用近似值（128kbps ~16 字节/ms 作为粗略估计）
+    else if (g_total_file_bytes > 0) {
+        int byte_pos = (int)((int64_t)ms * g_total_file_bytes / 3600000);
+        audio_element_set_byte_pos(g_decoder, byte_pos);
+    }
+
+    // 调整时间戳跟踪，使 position_ms 返回新位置
+    g_play_start_us = esp_timer_get_time();
+    g_play_offset_us = (int64_t)ms * 1000;
+
     audio_pipeline_resume(g_pipeline);
 }
 
 int audio_player_get_position_ms(void)
 {
-    if (g_pipeline && g_is_playing && g_decoder) {
-        // ESP-ADF 无 audio_element_get_pos；用全局变量近似
-        return g_total_duration_ms > 0 ? (g_total_duration_ms / 2) : 0;
+    if (!g_pipeline) return 0;
+
+    // 累计播放时间 = 暂停前已累计 + 当前段播放时间（暂停期间不增加）
+    int64_t total = g_play_offset_us;
+    if (g_is_playing && !g_is_paused && g_play_start_us > 0) {
+        total += (int64_t)(esp_timer_get_time() - g_play_start_us);
     }
-    return 0;
+    return (int)(total / 1000);
 }
 
 int audio_player_get_position(void)

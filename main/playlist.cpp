@@ -8,6 +8,7 @@
 
 #include "playlist.h"
 #include "config.h"
+#include "esp_heap_caps.h"
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
@@ -25,7 +26,7 @@ typedef struct {
     char full_path[FILENAME_MAX_LEN * 2];       // 完整路径（用于打开文件）
 } playlist_item_t;
 
-static playlist_item_t g_items[PLAYLIST_TRACK_MAX];
+static playlist_item_t *g_items = NULL;
 static int   g_count = 0;
 static int   g_current = 0;
 static char  g_base_path[64] = "";
@@ -131,6 +132,20 @@ int playlist_scan(const char *base_path)
 {
     strncpy(g_base_path, base_path, sizeof(g_base_path) - 1);
     g_base_path[sizeof(g_base_path) - 1] = '\0';
+
+    // 分配 PSRAM（优先）或普通 DRAM
+    if (g_items) {
+        free(g_items);
+        g_items = NULL;
+    }
+    g_items = (playlist_item_t *)heap_caps_malloc(
+        sizeof(playlist_item_t) * PLAYLIST_TRACK_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!g_items) {
+        // PSRAM 失败时回退到普通 DRAM
+        g_items = (playlist_item_t *)malloc(sizeof(playlist_item_t) * PLAYLIST_TRACK_MAX);
+        if (!g_items) return 0;
+    }
+
     g_count = 0;
     g_current = 0;
 

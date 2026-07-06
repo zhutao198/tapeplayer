@@ -38,13 +38,19 @@ void settings_save_position(int track_idx, int position_s, const char *file_name
 {
     if (!g_nvs_handle) return;
 
-    nvs_set_u8(g_nvs_handle, NVS_KEY_TRACK, (uint8_t)track_idx);
-    nvs_set_u32(g_nvs_handle, NVS_KEY_POSITION, (uint32_t)position_s);
+    esp_err_t err;
+
+    err = nvs_set_u8(g_nvs_handle, NVS_KEY_TRACK, (uint8_t)track_idx);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_TRACK, err);
+
+    err = nvs_set_u32(g_nvs_handle, NVS_KEY_POSITION, (uint32_t)position_s);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u32(%s) failed: 0x%x", NVS_KEY_POSITION, err);
 
     /* 保存文件名，恢复时校验文件是否仍存在 */
     char key[32];
     snprintf(key, sizeof(key), "book_%d_name", track_idx);
-    nvs_set_str(g_nvs_handle, key, file_name ? file_name : "");
+    err = nvs_set_str(g_nvs_handle, key, file_name ? file_name : "");
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_str(%s) failed: 0x%x", key, err);
 
     nvs_commit(g_nvs_handle);
     ESP_LOGD(TAG, "Saved: track=%d pos=%ds name='%s'", track_idx, position_s, file_name);
@@ -104,8 +110,9 @@ bool settings_load_position(int *track_idx_out, int *position_s_out)
 void settings_save_volume(int volume)
 {
     if (!g_nvs_handle) return;
-    nvs_set_u8(g_nvs_handle, NVS_KEY_VOLUME, (uint8_t)volume);
-    nvs_commit(g_nvs_handle);
+    esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_VOLUME, (uint8_t)volume);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_VOLUME, err);
+    // 不立即 commit：由 save_position 或下一次循环统一提交
 }
 
 int settings_load_volume(void)
@@ -122,8 +129,9 @@ int settings_load_volume(void)
 void settings_save_play_mode(int mode)
 {
     if (!g_nvs_handle) return;
-    nvs_set_u8(g_nvs_handle, NVS_KEY_PLAY_MODE, (uint8_t)mode);
-    nvs_commit(g_nvs_handle);
+    esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_PLAY_MODE, (uint8_t)mode);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_PLAY_MODE, err);
+    // 不立即 commit：由 save_position 统一提交
 }
 
 int settings_load_play_mode(void)
@@ -140,8 +148,9 @@ int settings_load_play_mode(void)
 void settings_save_auto_off(int minutes)
 {
     if (!g_nvs_handle) return;
-    nvs_set_u8(g_nvs_handle, "auto_off_min", (uint8_t)minutes);
-    nvs_commit(g_nvs_handle);
+    esp_err_t err = nvs_set_u8(g_nvs_handle, "auto_off_min", (uint8_t)minutes);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(auto_off_min) failed: 0x%x", err);
+    // 不立即 commit：由 save_position 统一提交
 }
 
 int settings_load_auto_off(void)
