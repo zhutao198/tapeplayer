@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-03（8 个 R 节点完成：baseline → R007）
+> **最后更新**：2026-07-06（9 个 R 节点完成：baseline → R008）
 
 ---
 
@@ -16,6 +16,7 @@
 | 2026-07-03 下午 | R002 启用 u8g2（删 334M 手动源码 + 备份 + idf component 路径） | ✅ commit `d773f05` |
 | 2026-07-03 下午-晚上 | R003 build 验证（多次失败 + 修 4 个子模块 + 暴露 ADF 5.5 引用方式变化） | ⚠️ commit `333e44e`（build 未通过） |
 | 2026-07-03 傍晚-凌晨 | R004+R007 build 全线修复（custom board / audio_player API / u8g2_hal 兼容性） | ✅ 首次成功构建！`.bin` 718KB，分区 77% 剩余 |
+| 2026-07-06 | R008 代码审查修复（核实 38 条发现，修 33 项） | ✅ 构建通过，二进制 0xaf9c0 |
 
 ---
 
@@ -73,6 +74,10 @@
   - 新建 `components/tapebook_board/` 组件（ADF 自定义板级支持）
   - 修复 `audio_player.cpp` 6 处无效 ADF API 调用
   - 修复 `u8g2_esp32_hal` 编译兼容性（REQUIRES + ets_delay_us → esp_rom_delay_us）
+- ✅ **R008 完成——代码审查 33 项修复！**（核实 38 条发现，3 条不属实）
+  - CRITICAL：seek 字节换算、position 时间戳、NULL 检查、WDT 增大 + 回调异步化
+  - HIGH：PSRAM 分配、NVS 返回值检查 + 降低 commit 频率、auto_off 集成到主循环
+  - MEDIUM：删 unused 变量、stop_playback 语义修正、playlist_set_index 补缺
 
 ---
 
@@ -222,14 +227,14 @@
 ## 8. R 节点 Git 状态
 
 ```
+2530f23 R008: 代码审查 33 项修复（seek/位置/NULL/PSRAM/WDT/NVS/...）
 e7fb604 R007: 首次成功构建（fix board/audio_player/u8g2_hal）
 126af18 R006: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 SSD1315 规格书 + 提取脚本
 65ca4ea R005: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书
 377a893 R004: 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）
-333e44e R003: build 验证未通过 + 修 R001 ADF REQUIRES + 修 R002 u8g2 暂禁用
 ```
 
-**8 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
+**9 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
 
 ---
 

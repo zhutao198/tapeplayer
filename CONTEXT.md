@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-07-03（R007）
+> **最后更新**：2026-07-06（R008）
 
 ---
 
@@ -62,6 +62,7 @@ git status --short            # 未提交改动
 | **R005** | **2026-07-03** | **`65ca4ea`** | **修 HARDWARE_PIN_WIRING.md 5 处错误（SD_MODE/GPIO47-48/EC11/USB-JTAG/UART0）+ 补 MAX98357A 规格书** | **✅** |
 | **R006** | **2026-07-03** | **`126af18`** | **修 HARDWARE_PIN_WIRING.md 5 处错误（SD_MODE 公式/GPIO47-48 R8V-R16V/GPIO45）+ 补 SSD1315 规格书** | **✅** |
 | **R007** | **2026-07-03** | **`e7fb604`** | **首次成功构建！修 board.h / audio_player.cpp API / u8g2_esp32_hal 兼容性** | **✅** |
+| **R008** | **2026-07-06** | **`2530f23`** | **代码审查 33 项修复（seek/位置/NULL/PSRAM/WDT/NVS/...）** | **✅** |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 
