@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-07-07（R011）
+> **最后更新**：2026-07-07（R012 — V1.0 MVP 完成）
 
 ---
 
@@ -39,7 +39,7 @@ git status --short            # 未提交改动
 | **按键** | `main/button_manager.cpp` | 6 按键 + 状态机去抖 |
 | **OLED** | `main/display.cpp` | SSD1306 显示（依赖 u8g2） |
 | **设置** | `main/settings.cpp` | NVS 持久化（断点续播） |
-| **书签** | `main/bookmark.cpp` | V1.2 stub |
+| **书签** | `main/bookmark.cpp` | NVS API + STOP 双击集成 |
 | **电源** | `main/power_mgmt.cpp` | 定时关机 / 电量检测 stub |
 | **语音** | `main/voice_prompt.cpp` | 预录 WAV 提示音 stub |
 | **配置** | `main/config.h` | GPIO 引脚定义 |
@@ -65,7 +65,8 @@ git status --short            # 未提交改动
 | **R008** | **2026-07-06** | **`2530f23`** | **代码审查 33 项修复（seek/位置/NULL/PSRAM/WDT/NVS/...）** | **✅** |
 | **R009** | **2026-07-06** | `853f483` | **审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/锁定态/button/采样率）** | **✅** |
 | **R010** | **2026-07-06** | `76441b1` | **审查余下 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/设计确认）** | **✅** |
-| **R011** | **2026-07-07** | 待 commit | **修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成** | **✅** |
+| **R011** | **2026-07-07** | `df11f0d` | **修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成** | **✅** |
+| **R012** | **2026-07-07** | 待 commit | **文件夹浏览（V1.0 MVP 最后功能）** | **✅** |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 

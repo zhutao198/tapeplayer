@@ -59,6 +59,7 @@ typedef enum {
     APP_STATE_FAST_FORWARD,    // 快进（磁带模式）
     APP_STATE_REWIND,          // 快退（磁带模式）
     APP_STATE_LOCKED,          // 按键锁定
+    APP_STATE_BROWSING,        // 文件夹浏览
 } app_state_t;
 
 // 所有全局变量单任务访问，无需 volatile（M-9/L-8: 设计确认 OK）
@@ -77,6 +78,9 @@ static play_mode_t    g_play_mode = PLAY_MODE_SEQUENCE;
 static bool           g_pending_track_finished = false;
 static int            g_pending_track_next = -1;
 static int            g_pending_track_seek = 0;
+
+static int            g_browse_index = 0;              // 浏览模式选中索引
+static app_state_t    g_state_before_browse = APP_STATE_STOPPED;
 
 static sdmmc_card_t   *g_sd_card = NULL;  // SD 卡句柄
 static uint64_t    g_last_sd_check_us = 0;
@@ -189,8 +193,17 @@ static void on_track_finished(int state, void *user_data)
     }
 }
 
+static const char* browse_get_name(int index)
+{
+    static char buf[FILENAME_MAX_LEN];
+    if (playlist_get_name(index, buf, sizeof(buf))) {
+        return buf;
+    }
+    return NULL;
+}
+
 /* ============================================================
- * 按键事件处理
+ * 处理按键事件
  * ============================================================ */
 static void handle_button_events(void)
 {
@@ -211,6 +224,33 @@ static void handle_button_events(void)
                 g_key_locked = false;
                 g_app_state = g_state_before_lock;
                 ESP_LOGI(TAG, "Key lock released, state restored to %d", g_app_state);
+            }
+            continue;
+        }
+
+        /* 浏览模式：Prev/Next 滚动，Play 选择，STOP 退出 */
+        if (g_app_state == APP_STATE_BROWSING) {
+            if (e->event != BTN_EVENT_SHORT_PRESS) continue;
+            int total = playlist_count();
+            switch (e->id) {
+            case BTN_ID_PREV:
+                g_browse_index = (g_browse_index - 1 + total) % total;
+                break;
+            case BTN_ID_NEXT:
+                g_browse_index = (g_browse_index + 1) % total;
+                break;
+            case BTN_ID_PLAY_PAUSE:
+                g_current_track = g_browse_index;
+                playlist_set_index(g_current_track);
+                g_seek_on_play_position = 0;
+                g_app_state = g_state_before_browse;
+                play_current_track();
+                break;
+            case BTN_ID_STOP:
+                g_app_state = g_state_before_browse;
+                break;
+            default:
+                break;
             }
             continue;
         }
@@ -252,7 +292,12 @@ static void handle_button_events(void)
                     ESP_LOGI(TAG, "Bookmark added at %ds (slot %d)", pos, bm);
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
-                ESP_LOGI(TAG, "Folder browse (stub - V1.1)");
+                if (playlist_count() > 0) {
+                    g_state_before_browse = g_app_state;
+                    g_browse_index = g_current_track;
+                    g_app_state = APP_STATE_BROWSING;
+                    ESP_LOGI(TAG, "Enter browse mode, selected track %d", g_browse_index);
+                }
             }
             break;
 
@@ -361,6 +406,11 @@ static void update_display(void)
     uint64_t now = esp_timer_get_time();
     if ((now - g_last_display_update) < 200000) return;
     g_last_display_update = now;
+
+    if (g_app_state == APP_STATE_BROWSING) {
+        display_show_browse(g_browse_index, playlist_count(), browse_get_name);
+        return;
+    }
 
     player_state_t disp_state;
     switch (g_app_state) {

@@ -213,6 +213,43 @@ void display_update(player_state_t state,
     u8g2_SendBuffer(&u8g2);
 }
 
+#define BROWSE_VISIBLE_LINES 6
+#define BROWSE_HEADER_Y      8
+#define BROWSE_LINE_HEIGHT   8
+#define BROWSE_FIRST_Y       16
+
+void display_show_browse(int selected, int total, display_name_getter_t get_name)
+{
+    if (total <= 0) return;
+
+    int scroll = selected - (BROWSE_VISIBLE_LINES / 2);
+    if (scroll < 0) scroll = 0;
+    if (scroll > total - BROWSE_VISIBLE_LINES)
+        scroll = total - BROWSE_VISIBLE_LINES;
+
+    u8g2_ClearBuffer(&u8g2);
+    u8g2_SetFont(&u8g2, u8g2_font_5x8_tf);
+
+    char header[24];
+    snprintf(header, sizeof(header), "> Browse [%d/%d]", selected + 1, total);
+    u8g2_DrawStr(&u8g2, 0, BROWSE_HEADER_Y, header);
+
+    int shown = total - scroll;
+    if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
+
+    for (int i = 0; i < shown; i++) {
+        int idx = scroll + i;
+        const char *name = get_name(idx);
+        if (!name) name = "";
+        char line[24];
+        snprintf(line, sizeof(line), "%s%.21s",
+                 (idx == selected) ? ">" : " ", name);
+        u8g2_DrawStr(&u8g2, 0, BROWSE_FIRST_Y + i * BROWSE_LINE_HEIGHT, line);
+    }
+
+    u8g2_SendBuffer(&u8g2);
+}
+
 #else // CONFIG_USE_U8G2 未启用时的空实现
 
 #include "esp_log.h"
@@ -233,6 +270,10 @@ void display_show_no_files(void) {
 
 void display_show_no_card(void) {
     ESP_LOGI(TAG, "No SD card inserted!");
+}
+
+void display_show_browse(int selected, int total, display_name_getter_t get_name) {
+    ESP_LOGI(TAG, "[Browse %d/%d]", selected + 1, total);
 }
 
 void display_update(player_state_t state,

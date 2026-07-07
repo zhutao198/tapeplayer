@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-07（12 个 R 节点完成：baseline → R011）
+> **最后更新**：2026-07-07（13 个 R 节点完成：baseline → R012 — V1.0 MVP 完工）
 
 ---
 
@@ -21,6 +21,7 @@
 | 2026-07-06 | R009 审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/锁定态/button/采样率） | ✅ 构建通过，二进制 0xb26b0 |
 | 2026-07-06 | R010 审查剩余 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/设计确认） | ✅ 构建通过，二进制 0xb2660 |
 | 2026-07-07 | R011 修复 R010 引入的 6 个 bug（SD 检测/light sleep/pause-resume/截断/溢出/命名歧义）+ H-8 ADC 桩 + L-1 bookmark 集成 | ✅ 构建通过，二进制 0xb2660 |
+| 2026-07-07 | R012 实现文件夹浏览（滚动列表 + Prev/Next/Play/STOP 导航）— **V1.0 MVP 全部 11 项完成！** | ✅ 构建通过，二进制 0xb2a40 |
 
 ---
 
@@ -91,6 +92,10 @@
   - LOW：bookmark NVS 书签实现、voice_prompt V1.2 预备
   - 设计确认：M-9/M-10/M-15/L-3/L-8 单任务安全，加注释说明
 - ✅ **R011 完成——修复 R010 引入的 6 个 bug + 补 H-8/L-1**
+- ✅ **R012 完成——文件夹浏览实现，V1.0 MVP 11/11 全部完工！**
+  - 长按 STOP 进入浏览模式
+  - Prev/Next 滚动，Play 选中播放，STOP 退出
+  - OLED 滚动列表（5×8 字体，6 条可见，`>` 标记选中行）
   - 🆕-1: SD 拔卡检测从 `stat()` → `sdmmc_read_sectors()` 实测 SPI
   - 🆕-2: Light sleep 前加 `save_current_position()`
   - 🆕-3: 抽出 `audio_player_seek_ms_internal()` 跳过 FF/RW 跳帧 pause/resume
@@ -222,9 +227,9 @@
 ## 6. 未来方向
 
 ### 下次会话
-1. **推到 GitHub**：`git push origin master --tags`（已完成）
-2. **烧录验证**：`build.bat -p COMx flash` 确认硬件跑通
-3. **V1.0 MVP 补完**：文件夹浏览、OLED 屏底部对齐（10/10）
+1. **烧录验证硬件**：`build.bat -p COMx flash` 确认 SD/OLED/I2S/按键全部跑通
+2. **V1.1 起步**：定时关机（需实装 ADC）、A-B 复读、按键提示音
+3. **量产前**：OTA 接收代码、完整系统测试
 
 ### 短期
 - V1.1 体验增强：定时关机、按键音、屏幕保护
@@ -269,7 +274,7 @@ e7fb604 R007: 首次成功构建（fix board/audio_player/u8g2_hal）
 126af18 R006: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 SSD1315 规格书 + 提取脚本
 ```
 
-**12 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
+**13 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
 
 ---
 

@@ -59,6 +59,15 @@ void display_show_no_files(void);
  */
 void display_show_no_card(void);
 
+/**
+ * @brief 文件夹浏览列表
+ * @param selected   当前选中索引 (0-based)
+ * @param total      总文件数
+ * @param get_name   按索引获取文件名的回调
+ */
+typedef const char* (*display_name_getter_t)(int index);
+void display_show_browse(int selected, int total, display_name_getter_t get_name);
+
 #ifdef __cplusplus
 }
 #endif

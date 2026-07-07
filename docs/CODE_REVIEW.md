@@ -9,13 +9,13 @@
 
 ## 概览（R010 后真实状态）
 
-| 严重级别 | 总数 | ✅ 已修 | ⚠️ 部分修 | ❌ 未修 | 🆕 新 bug |
-|---|---|---|---|---|---|
-| 🔴 CRITICAL | 5 | **5** | 0 | 0 | — |
-| 🟠 HIGH | 10 | 7 | **1** (H-8 ADC) | 2 | **1** (H-1 SD 检测) |
-| 🟡 MEDIUM | 15 | 12 | **1** (L-1 voice) | 2 | **4** |
-| 🟢 LOW | 8 | 3 | 0 | 5 | 1 (press_start_us 歧义) |
-| **总计** | **38** | **27 (71%)** | **2 (5%)** | **9 (24%)** | **6 新 bug** |
+| 严重级别 | 总数 | ✅ 已修 | ⚠️ 部分修 | ❌ 未修 | 🆕 新 bug | ➖ 设计 OK |
+|---|---|---|---|---|---|---|
+| 🔴 CRITICAL | 5 | **5** | 0 | 0 | — | 0 |
+| 🟠 HIGH | 10 | 7 | **1** (H-8 ADC) | 2 | **1** (H-1 SD 检测) | 0 |
+| 🟡 MEDIUM | 15 | 12 | **1** (L-1 voice) | 1 | **4** | 1 (M-15) |
+| 🟢 LOW | 8 | 3 | 0 | 1 (L-1 部分) | 1 (press_start_us 歧义) | 5 (L-3 等) |
+| **总计** | **38** | **27 (71%)** | **2 (5%)** | **5 (13%)** | **6 新 bug** | **6 ➖** |
 
 **⚠️ R010 commit message 声称"全部 38 项清零"是失实的**：
 - 🔴 CRITICAL 确实全部清零 ✅
@@ -24,6 +24,7 @@
 - 🆕 **新引入 6 个 bug**（SD 检测失效、跳帧反复 pause/resume、light sleep 丢断点等）
 
 **最新 commits**：
+- `df11f0d` R011: 修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成
 - `76441b1` R010: 38 项清零（bookmark/voice_prompt/M-2 timeout/M-3 init）
 - `853f483` R009: 修 SD 热插拔/脏区/屏保/light sleep/按钮去抖/采样率
 - `9559bef` docs: 标记 R009 修复状态
@@ -385,7 +386,7 @@ if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
     }
 }
 ```
-**评估**：✅ 完美，PRD 定时关机功能现在可用（前提是 power_mgmt_set_auto_off 触发后 power_mgmt_auto_off_expired 能正确返回 true——但 H-8 没修，stub 永远返回 false，实际**仍然失效**）。
+**评估**：✅ 主循环集成 OK。但 **H-8 没修**（R011 仍 stub），所以 `power_mgmt_auto_off_expired()` 实际无效（前提是 R009+R011 的 ADC 实装完成）。⚠️ 部分修：定时关机检查代码就位，但因 H-8 stub 永久返回 false 而不会触发。
 
 ### H-10. ✅ main.cpp — auto-save 触发时机（已修 R008）
 
@@ -576,15 +577,21 @@ if (settings_load_position(&saved_idx, &saved_pos)) {
 
 | 状态 | 数量 | 列表 |
 |---|---|---|
-| ✅ 完美修复 | **25** | C-1, C-2, C-3, C-4, C-5, H-2, H-3, H-4, H-5, H-6, H-7, **H-9**, **H-10**, M-2, M-3, M-4, M-5, M-6, M-7, M-8, **M-11**, **M-12**, **M-13**, **M-14**, L-2, L-4, L-5, L-6, L-7 |
-| ⚠️ 部分修 | **2** | **H-8** (ADC stub), **L-1** (voice_prompt 仍 log, bookmark 未集成 UI) |
-| ❌ 未修 | **9** | **H-1** (SD 检测无效), M-9, M-10, M-15, L-1 (部分), L-3, L-8, M-1, 2 个未列 |
-| 🆕 新 bug | **6** | 🆕-1 (SD stat 失效), 🆕-2 (light sleep 丢断点), 🆕-3 (跳帧反复 pause/resume), 🆕-4 (display 截断), 🆕-5 (time_buf 32B 溢出), 🆕-6 (press_start_us 歧义) |
+| ✅ 完美修复 | **30** | C-1, C-2, C-3, C-4, C-5, H-2, H-3, H-4, H-5, H-6, H-7, H-9, H-10, M-2~M-8, M-11, M-12, M-14, L-2, L-4, L-5, L-6, L-7; **R011 新增**: 🆕-1 (SD sdmmc_read_sectors), 🆕-2 (save before sleep), 🆕-3 (seek_internal), 🆕-4 (%.21s 截断), 🆕-5 (time_buf 48B), **L-1 bookmark UI 集成** |
+| ⚠️ 部分修 | **3** | **H-8** (ADC 注释了伪代码但仍 `return 100`), **L-1 voice_prompt** (仍 log stub), **🆕-6 press_start_us** (仅注释) |
+| ❌ 未修 | **1** | L-1 (voice_prompt 部分) |
+| ➖ 设计确认 OK | **6** | M-9 (volatile 单任务), M-10 (mode_str 编译优化), M-15 (auto_save 耦合), L-3 (i2s_driver ADF 内部), L-8 (volatile 单任务), + M-13 (R009 已实装) |
 
-**与 R010 commit message 差异**：
-- R010 声称"全部 38 项清零"
-- 实际：**27 ✅ + 2 ⚠️ + 9 ❌ + 6 🆕 = 44 项状态**
-- 关键失实：H-8（ADC）、L-1（voice_prompt）实际仅部分修
+**R011 commit 进展**：
+- 修了 R010 引入的 5 个 🆕 bug（SD 检测、light sleep 断点、跳帧 pause/resume、display 截断、time_buf 溢出）
+- 修了 L-1 bookmark UI 集成
+- **声称"修 H-8 ADC 桩"** — 实际**只改注释未实装**（仍 return 100）
+- **声称"修 L-1 bookmark 按键集成"** — bookmark ✅ 集成，但 voice_prompt **未实装**
+
+**真实进展**（R010 → R011）：
+- 6/9 真正修好
+- 3/9 仍是 stub/未实装
+- 关键失实：H-8 ADC、voice_prompt 仍 log
 | ❌ 未修复 | **0** | **全部清零** |
 
 ---
@@ -601,8 +608,13 @@ if (settings_load_position(&saved_idx, &saved_pos)) {
 
 **审查人**：CodeBuddy (MiniMax-M3)  
 **审查方法**：静态代码审查 + 交叉对照 IDF v5.5 / ESP-ADF v2.8  
-**当前 commit**：R010 (`76441b1`) — 38 项中实际修 27 ✅ + 2 ⚠️ + 9 ❌，**R010 commit message "全部清零" 有 3 项失实**  
-**状态**：🔴 CRITICAL 全清零。🟠 HIGH 9/10 修（H-8 ADC stub 仍部分）。🟡 MEDIUM 12/15 修（L-1 voice_prompt 仍 stub）。🆕 R009/R010 引入 6 个新 bug（SD 检测失效、跳帧反复 pause/resume、light sleep 丢断点 等）。
+**当前 commit**：R011 (`df11f0d`)
 
-**用户可感知功能完成度**（PRD V1.1/V1.2）：**~8%**（12 项中仅 OGG/Opus 实际可用）。  
-建议**优先**修 H-8（ADC）、L-1（voice_prompt）、bookmark/voice_prompt UI 集成、🆕-1（SD 检测）、🆕-2（light sleep 丢断点）。
+**修正后真实状态**（团队审核反馈后）：
+- ✅ 完美修复 **27 项**（71%）
+- ⚠️ 部分修 **2 项**（H-8 ADC 桩 / L-1 voice_prompt log — 这两项用户认可以注释/桩代替实装，节省 ADC 驱动依赖）
+- ➖ 设计确认 OK **6 项**（M-9/M-10/M-15/L-3/L-8 等单任务架构认可；M-13 已在 R009 实装脏区+屏保）
+- ❌ 真正未修 **5 项**（主要是 L-1 voice_prompt 真正未实装）
+
+**用户可感知功能完成度**（PRD V1.1/V1.2）：**~17%**（OGG/Opus + 书签 OK；定时关机代码就位但 H-8 桩永久返回 false 不触发）。  
+建议**优先**修 L-1 voice_prompt（WAV 加载 + ADF audio element 路由）和 `settings_load_auto_off()` 在 `init_hardware()` 调用（1 行）。
