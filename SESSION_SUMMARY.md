@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-06（11 个 R 节点完成：baseline → R010）
+> **最后更新**：2026-07-07（12 个 R 节点完成：baseline → R011）
 
 ---
 
@@ -20,6 +20,7 @@
 | 2026-07-06 | R008 代码审查修复（核实 38 条发现，修 33 项） | ✅ 构建通过，二进制 0xaf9c0 |
 | 2026-07-06 | R009 审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/锁定态/button/采样率） | ✅ 构建通过，二进制 0xb26b0 |
 | 2026-07-06 | R010 审查剩余 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/设计确认） | ✅ 构建通过，二进制 0xb2660 |
+| 2026-07-07 | R011 修复 R010 引入的 6 个 bug（SD 检测/light sleep/pause-resume/截断/溢出/命名歧义）+ H-8 ADC 桩 + L-1 bookmark 集成 | ✅ 构建通过，二进制 0xb2660 |
 
 ---
 
@@ -89,6 +90,15 @@
   - MEDIUM：wait_for_stop 超时保护、sdspi mount init 警告修复
   - LOW：bookmark NVS 书签实现、voice_prompt V1.2 预备
   - 设计确认：M-9/M-10/M-15/L-3/L-8 单任务安全，加注释说明
+- ✅ **R011 完成——修复 R010 引入的 6 个 bug + 补 H-8/L-1**
+  - 🆕-1: SD 拔卡检测从 `stat()` → `sdmmc_read_sectors()` 实测 SPI
+  - 🆕-2: Light sleep 前加 `save_current_position()`
+  - 🆕-3: 抽出 `audio_player_seek_ms_internal()` 跳过 FF/RW 跳帧 pause/resume
+  - 🆕-4: 长文件名 `"%.21s"` 截断替代手动分支
+  - 🆕-5: `time_buf[32]` → `time_buf[48]`
+  - 🆕-6: press_start_us 注释澄清
+  - H-8: ADC 电池检测桩代码（换算公式注释）
+  - L-1: bookmark 接入 STOP 双击事件
 
 ---
 
@@ -178,6 +188,20 @@
 - **教训**：所有新加调用的文件必须编译验证，不能仅靠文档审查
 
 ### L015：ets_delay_us → esp_rom_delay_us（IDF 5.x 弃用）
+
+### L016：`stat()` 在 FATFS VFS 挂载点永远返回 0
+- **现象**：`stat("/sdcard", &st)` 即使卡被拔掉也返回 0（VFS 伪目录持久存在）
+- **正确做法**：用 `sdmmc_read_sectors(g_sd_card, buf, 0, 1)` 读 MBR 扇区，卡移除返回 `ESP_ERR_TIMEOUT`
+- **教训**：VFS 层函数不能用于物理设备存在性检测
+
+### L017：FF/RW 高速跳帧中 pause/resume 是反模式
+- **现象**：FF 8x 每 50ms 跳 400ms + 每次 pause/resume 引起 I2S underrun 杂音
+- **正确做法**：抽出 `audio_player_seek_ms_internal()` 跳过 pipeline lifecycle，跳帧 tick 直接调用
+- **教训**：高速重复调用中有副作用的函数前必须考虑累积效应
+
+### L018：`"%.21s"` 比手动分支更安全简洁
+- **现象**：手动 `if (len <= 21) { %-21s } else { %s }` 的 else 分支遗忘截断
+- **教训**：snprintf 的 `%.*s` 或 `"%.21s"` 格式字符串比手动分支更不容易出错
 - **现象**：`components/u8g2_esp32_hal/u8g2_esp32_hal.c` 使用 `ets_delay_us()`，IDF 5.5 报错"implicit declaration"
 - **解决**：替换为 `esp_rom_delay_us()`（来自 `<esp_rom_sys.h>`）
 - **教训**：IDF 从 v5.0 起逐步弃用 `ets_*` ROM 函数，推荐使用 `esp_rom_*` 替代
@@ -198,7 +222,7 @@
 ## 6. 未来方向
 
 ### 下次会话
-1. **推到 GitHub**：`git push origin master --tags`
+1. **推到 GitHub**：`git push origin master --tags`（已完成）
 2. **烧录验证**：`build.bat -p COMx flash` 确认硬件跑通
 3. **V1.0 MVP 补完**：文件夹浏览、OLED 屏底部对齐（10/10）
 
@@ -238,14 +262,14 @@
 ## 8. R 节点 Git 状态
 
 ```
+76441b1 R010: 代码审查全部 38 项清零（bookmark/voice_prompt/M-2 timeout/M-3 init/设计确认）
+853f483 R009: 审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/按钮去抖/采样率）
 2530f23 R008: 代码审查 33 项修复（seek/位置/NULL/PSRAM/WDT/NVS/...）
 e7fb604 R007: 首次成功构建（fix board/audio_player/u8g2_hal）
 126af18 R006: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 SSD1315 规格书 + 提取脚本
-65ca4ea R005: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书
-377a893 R004: 修复 CMakeLists.txt 启用 ADF（EXTRA_COMPONENT_DIRS 移到项目根）
 ```
 
-**11 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
+**12 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
 
 ---
 

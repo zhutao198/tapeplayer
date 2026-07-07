@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-07-06（R010）
+> **最后更新**：2026-07-07（R011）
 
 ---
 
@@ -64,7 +64,8 @@ git status --short            # 未提交改动
 | **R007** | **2026-07-03** | **`e7fb604`** | **首次成功构建！修 board.h / audio_player.cpp API / u8g2_esp32_hal 兼容性** | **✅** |
 | **R008** | **2026-07-06** | **`2530f23`** | **代码审查 33 项修复（seek/位置/NULL/PSRAM/WDT/NVS/...）** | **✅** |
 | **R009** | **2026-07-06** | `853f483` | **审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/锁定态/button/采样率）** | **✅** |
-| **R010** | **2026-07-06** | 待 commit | **审查余下 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/M-9~L-8 设计确认）** | **✅** |
+| **R010** | **2026-07-06** | `76441b1` | **审查余下 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/设计确认）** | **✅** |
+| **R011** | **2026-07-07** | 待 commit | **修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成** | **✅** |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 

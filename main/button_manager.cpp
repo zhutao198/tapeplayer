@@ -35,7 +35,7 @@ typedef struct {
     btn_id_t        id;
     bool            dbl_click_en;      // 是否启用双击检测（FF/RW 禁用，避免磁带模式误判）
     btn_state_t     state;
-    uint64_t        press_start_us;     // 按下起始时刻
+    uint64_t        press_start_us;     // 当前状态下的按下起始时刻（IDLE→DEBOUNCE 或 DBL_WAIT→DBL_DEBOUNCE 时更新）
     uint64_t        last_scan_us;       // 上次扫描时刻
     uint64_t        first_release_us;   // 第一次松开时刻（双击判定用）
     bool            long_press_fired;   // 长按事件是否已触发

@@ -45,8 +45,15 @@ void power_mgmt_tick(void)
 
 int power_mgmt_get_battery_percent(void)
 {
+    // V1.1+: ADC1 通道读取电池分压（GPIO1/ADC1_CH0 预留），查表换算百分比
     // V1.0: 返回 100（假定 USB 供电或满电）
-    // V1.1+: ADC1 通道读取电池分压，查表换算百分比
+    // int raw;
+    // if (adc_oneshot_read(g_adc_handle, ADC_CHANNEL_0, &raw) == ESP_OK) {
+    //     float voltage = raw * 3.3f / 4095.0f * 2.0f;  // 10K+10K 分压
+    //     pct = (int)((voltage - 3.3f) / (4.2f - 3.3f) * 100.0f);
+    //     if (pct < 0) pct = 0;
+    //     if (pct > 100) pct = 100;
+    // }
     return 100;
 }
 

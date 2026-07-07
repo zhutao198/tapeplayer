@@ -179,12 +179,7 @@ void display_update(player_state_t state,
     /* --- Line 1: 文件名 (截断) --- */
     u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
     char fname[22];
-    int len = strlen(track_name);
-    if (len <= 21) {
-        snprintf(fname, sizeof(fname), "%-21s", track_name);
-    } else {
-        snprintf(fname, sizeof(fname), "%s", track_name);
-    }
+    snprintf(fname, sizeof(fname), "%.21s", track_name);
     u8g2_DrawStr(&u8g2, 0, 21, fname);
 
     /* --- Line 2: 进度条 --- */
@@ -198,7 +193,7 @@ void display_update(player_state_t state,
 
     /* --- Line 3: 时间 + 速度 --- */
     u8g2_SetFont(&u8g2, u8g2_font_5x8_tf);
-    char time_buf[32];
+    char time_buf[48];
     char cur[16], tot[16];
     format_time(current_sec, cur, sizeof(cur));
     format_time(total_sec, tot, sizeof(tot));

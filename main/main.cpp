@@ -246,7 +246,11 @@ static void handle_button_events(void)
             if (e->event == BTN_EVENT_SHORT_PRESS) {
                 stop_playback();
             } else if (e->event == BTN_EVENT_DOUBLE_CLICK) {
-                voice_prompt_status();
+                int pos = audio_player_get_position();
+                int bm = bookmark_add(g_current_track, pos);
+                if (bm >= 0) {
+                    ESP_LOGI(TAG, "Bookmark added at %ds (slot %d)", pos, bm);
+                }
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
                 ESP_LOGI(TAG, "Folder browse (stub - V1.1)");
             }
@@ -576,6 +580,7 @@ extern "C" void app_main(void)
         // 7c. 自动休眠（5 分钟无操作进入 light sleep，按键 GPIO 唤醒）
         if (power_mgmt_should_sleep()) {
             ESP_LOGI(TAG, "Idle timeout, entering light sleep");
+            save_current_position();
             audio_player_stop();
             g_app_state = APP_STATE_IDLE;
 
@@ -598,8 +603,9 @@ extern "C" void app_main(void)
             if ((now - g_last_sd_check_us) >= SD_CHECK_INTERVAL_US) {
                 g_last_sd_check_us = now;
                 if (g_sd_card != NULL) {
-                    struct stat st;
-                    if (stat(SD_MOUNT_POINT, &st) != 0) {
+                    uint32_t buf;
+                    esp_err_t ret = sdmmc_read_sectors(g_sd_card, (uint8_t *)&buf, 0, 1);
+                    if (ret != ESP_OK) {
                         ESP_LOGW(TAG, "SD card removed!");
                         audio_player_stop();
                         display_show_no_card();

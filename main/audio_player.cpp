@@ -282,27 +282,26 @@ void audio_player_seek(int seconds)
     audio_player_seek_ms(seconds * 1000);
 }
 
-void audio_player_seek_ms(int ms)
+static void audio_player_seek_ms_internal(int ms)
 {
     if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
 
-    audio_pipeline_pause(g_pipeline);
-
-    // 换算 毫秒 → 字节位置：byte_pos = (ms / total_ms) × total_bytes
     if (g_total_duration_ms > 0 && g_total_file_bytes > 0) {
         int byte_pos = (int)((int64_t)ms * g_total_file_bytes / g_total_duration_ms);
         audio_element_set_byte_pos(g_decoder, byte_pos);
-    }
-    // 无总时长时用近似值（128kbps ~16 字节/ms 作为粗略估计）
-    else if (g_total_file_bytes > 0) {
+    } else if (g_total_file_bytes > 0) {
         int byte_pos = (int)((int64_t)ms * g_total_file_bytes / 3600000);
         audio_element_set_byte_pos(g_decoder, byte_pos);
     }
 
-    // 调整时间戳跟踪，使 position_ms 返回新位置
     g_play_start_us = esp_timer_get_time();
     g_play_offset_us = (int64_t)ms * 1000;
+}
 
+void audio_player_seek_ms(int ms)
+{
+    audio_pipeline_pause(g_pipeline);
+    audio_player_seek_ms_internal(ms);
     audio_pipeline_resume(g_pipeline);
 }
 
@@ -433,7 +432,7 @@ void audio_player_tick(void)
         if (target_ms < 0) target_ms = 0;
     }
 
-    audio_player_seek_ms(target_ms);
+    audio_player_seek_ms_internal(target_ms);
 }
 
 void audio_player_set_callback(audio_status_cb_t cb, void *user_data)

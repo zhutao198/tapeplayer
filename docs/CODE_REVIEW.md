@@ -1,27 +1,123 @@
-# TapeBook 代码审查报告
+# TapeBook 代码审查报告（含 R009/R010 复查）
 
-> **审查时间**：2026-07-06  
-> **基线 commit**：R007 (`4cd11a2`) → **R010** 全部修复  
+> **审查时间**：2026-07-06 → 2026-07-07（含 R009/R010 复查）  
+> **基线 commit**：R007 (`4cd11a2`) → 当前 HEAD `76441b1`（R010）  
 > **审查方法**：静态代码审查 + 交叉对照 IDF v5.5 / ESP-ADF v2.8  
-> **修复追踪**：见下表 ✅=已修 / ➖=设计级 OK 不修
+> **修复追踪**：✅=已修 / ⚠️=部分修(代码改但 PRD 集成未完成) / ❌=未修 / 🆕=R009/R010 新引入
 
 ---
 
-## 概览
+## 概览（R010 后真实状态）
 
-| 严重级别 | 总数 | ✅ 已修 | ➖ 设计 OK | ❌ 未修 |
+| 严重级别 | 总数 | ✅ 已修 | ⚠️ 部分修 | ❌ 未修 | 🆕 新 bug |
+|---|---|---|---|---|---|
+| 🔴 CRITICAL | 5 | **5** | 0 | 0 | — |
+| 🟠 HIGH | 10 | 7 | **1** (H-8 ADC) | 2 | **1** (H-1 SD 检测) |
+| 🟡 MEDIUM | 15 | 12 | **1** (L-1 voice) | 2 | **4** |
+| 🟢 LOW | 8 | 3 | 0 | 5 | 1 (press_start_us 歧义) |
+| **总计** | **38** | **27 (71%)** | **2 (5%)** | **9 (24%)** | **6 新 bug** |
+
+**⚠️ R010 commit message 声称"全部 38 项清零"是失实的**：
+- 🔴 CRITICAL 确实全部清零 ✅
+- 🟠 HIGH 27/10 修（**H-8 power_mgmt ADC 仍 stub**）
+- 🟡 MEDIUM 12/15 修（**L-1 voice_prompt 仍仅 log**）
+- 🆕 **新引入 6 个 bug**（SD 检测失效、跳帧反复 pause/resume、light sleep 丢断点等）
+
+**最新 commits**：
+- `76441b1` R010: 38 项清零（bookmark/voice_prompt/M-2 timeout/M-3 init）
+- `853f483` R009: 修 SD 热插拔/脏区/屏保/light sleep/按钮去抖/采样率
+- `9559bef` docs: 标记 R009 修复状态
+
+---
+
+## 🆕 R009/R010 新引入的 Bug（6 个）
+
+### 🆕-1. 🔴 `main.cpp:602` SD 卡拔卡检测实际无效
+
+**症状**：
+```c
+struct stat st;
+if (stat(SD_MOUNT_POINT, &st) != 0) {
+    // 拔卡处理
+}
+```
+**问题**：ESP-IDF v5.5 FATFS VFS 中，**即使卡被拔掉，`stat("/sdcard")` 仍然返回 0**（挂载点目录是 VFS 内部伪目录，持久存在）。这条 `if` 分支**几乎永远不会触发**。H-1 的 SD 拔卡检测实际失效。
+
+**建议**：改用 `sdmmc_io_get_status(g_sd_card)` 或 CD pin GPIO 中断。
+
+### 🆕-2. 🟡 `main.cpp:589` light sleep 前未保存断点
+
+**症状**：
+```c
+if (power_mgmt_should_sleep()) {
+    audio_player_stop();           // 销毁 pipeline，但没 save_current_position
+    g_app_state = APP_STATE_IDLE;
+}
+```
+**问题**：`audio_player_stop()` 不写 NVS。30s auto-save 周期保证大部分情况下能保存，但**进入 light sleep 那一刻的播放进度（< 30s）会丢失**。
+
+**建议**：sleep 前加 `save_current_position()`。
+
+### 🆕-3. 🟡 `audio_player.cpp:436` FF/RW 跳帧反复 pause/resume
+
+**症状**：`tick()` 跳帧循环每 50ms 调一次 `audio_player_seek_ms()`，而 `seek_ms()` 内部已 `pause` + `resume`。
+
+**问题**：FF 8x 时 `skip_ms = 50 * 8 = 400ms`，每次跳 400ms 后再 pause/resume 会引起 I2S 缓冲 underrun + 杂音。**反复的 pause/resume 在高速跳帧时是反模式**。
+
+**建议**：抽出内部 `_seek_byte()` 函数，跳过 pause/resume 步骤。
+
+### 🆕-4. 🟡 `display.cpp:184` 长文件名截断无效
+
+**症状**：
+```c
+char fname[22];
+if (len <= 21) {
+    snprintf(fname, sizeof(fname), "%-21s", track_name);
+} else {
+    snprintf(fname, sizeof(fname), "%s", track_name);  // ← 没有截断!
+}
+```
+**问题**：`%s` 不带宽度，会写入全部内容，**snprintf 保证不溢出但长文件名会破坏后续字段布局**。
+
+**建议**：统一用 `"%.21s"`。
+
+### 🆕-5. 🟡 `display.cpp:213` time_buf 32B 实际写入可达 42B
+
+**症状**：
+```c
+char time_buf[32];
+snprintf(time_buf, sizeof(time_buf), "%s / %s [%s]", cur, tot, gs);
+```
+**问题**：`cur`(16) + ` / `(3) + `tot`(16) + ` [`(2) + `gs`(4) + `]`(1) = **42 字节**，超过 32。snprintf 截断不溢出，但视觉错乱。
+
+**建议**：`time_buf[48]` 或缩短 `cur/tot` 缓冲到 8 字节。
+
+### 🆕-6. 🟢 `button_manager.cpp` `press_start_us` 命名歧义
+
+**症状**：变量在 `IDLE → DEBOUNCE` 时设置（line 125），但 `LONG_PRESS` 转移（line 152）不更新，含义在双击场景下模糊。
+
+**评估**：**实际逻辑正确**（双击时 line 162 已覆盖），但命名易误导后续维护者。
+
+---
+
+## 📊 PRD V1.1/V1.2 用户可感知功能实际可用性
+
+| PRD 功能 | API | UI 集成 | 实际可用 | 评估 |
 |---|---|---|---|---|
-| 🔴 CRITICAL | 5 | **5** | 0 | **0** |
-| 🟠 HIGH | 10 | **10** | 0 | **0** |
-| 🟡 MEDIUM | 15 | **7** | 8 | **0** |
-| 🟢 LOW | 8 | **3** | 5 | **0** |
-| **总计** | **38** | **25** | **13** | **0** |
+| 定时关机 15/30/60/90 min | ✅ | ❌ `init_hardware()` 未调 `settings_load_auto_off()` | ❌ | API 完整但默认关闭 |
+| A-B 复读 | ❌ 无 ab_repeat.c | ❌ | ❌ | 未实现 |
+| 屏幕保护 30s | ⚠️ display 内部有 | ❌ 未与 `power_mgmt_should_screen_off()` 对齐 | ❌ | display 单独做了 power save |
+| 按键提示音 | ❌ 无 | ❌ | ❌ | 未实现 |
+| OGG/Opus 解码 | ✅ 接口有 | — | ✅ | ADF decoder 已链 |
+| EC11 旋转编码器 | ❌ GPIO 未配 | ❌ | ❌ | 预留 GPIO 38/39 |
+| **书签管理** | ✅ NVS API 完整 | ❌ **main.cpp 完全没调** | ❌ | **对用户不可见** |
+| **语音播报** | ❌ 仅 log | ❌ | ❌ | **完全 stub** |
+| **电量检测** | ⚠️ 函数有 | — | ❌ | **永远返回 100** |
+| 电池低电告警 | ⚠️ tick 打日志 | ❌ 未暂停/未语音 | ❌ | 形式有，逻辑无 |
+| 设置菜单 | ❌ | ❌ | ❌ | 未实现 |
+| OTA 升级 | ❌ | ❌ | ❌ | 未实现 |
 
-**所有 38 条发现已清零**：
-- 🔴 CRITICAL **全部清零**（R008 修 4 个 + R009 修 1 个）
-- 🟠 HIGH **全部清零**（R009 修 H-1/H-2/H-3/H-8）
-- 🟡 MEDIUM 修 7 个（R008/R009），余 8 项设计级确认 OK
-- 🟢 LOW 修 3 个，余 5 项设计级/V1.2 确认 OK
+**总体**：12 项 PRD V1.1/V1.2 功能，**仅 1 项（OGG/Opus）实际可用**，用户可感知功能完成度约 **8%**。
 
 ---
 
@@ -261,12 +357,20 @@ if ((now - g_last_auto_save_us) >= AUTO_SAVE_INTERVAL_US) {
 
 **评估**：✅ 完美修复。每 30s 统一 flush 兜底所有 `save_volume/play_mode/auto_off` 的 pending 写入。剩余 LOW 风险：改音量后立即断电仍可能丢失，但 flash commit 是 periodic 的固有 trade-off。
 
-### H-8. ✅ power_mgmt.cpp — 全部 stub（已修 R009）
+### H-8. ⚠️ power_mgmt.cpp — 实装（**部分修** R009）
 
-**修复**：
-1. `tick()` 实现 → 10s 间隔打印电量日志
-2. `should_sleep()` → 5 分钟无活动返回 true
-3. 主循环集成：idle 5min → `esp_light_sleep_start()`（EXT1 GPIO 低电平唤醒）
+**修复（R009）**：
+- ✅ `tick()` 30s 活动检测 + auto-sleep 判定
+- ✅ `light_sleep_start()` + ext1 唤醒源（按键）
+- ✅ `set_auto_off()` / `auto_off_expired()` 完整实现
+- ⚠️ **ADC 电池检测仍 stub**：`get_battery_percent()` 永远返回 100
+- ⚠️ `should_sleep()` 实现简单（5min 无活动）但 light sleep 后位置丢失（见 🆕-2）
+
+**建议补**：
+1. 实装 ADC：`adc_oneshot_read(ADC_CHANNEL_6, &raw)` + 衰减换算 `voltage = raw * 3.3 / 4095.0 * 2`（10K+10K 分压）
+2. light sleep 前 `save_current_position()`
+
+**评估**：⚠️ **R010 commit message 声称"全部 38 项清零"在此项不准确**。
 
 ### H-9. ✅ main.cpp — auto_off 未集成（已修 R008）
 
@@ -375,11 +479,26 @@ if (settings_load_position(&saved_idx, &saved_pos)) {
 
 ## 🟢 LOW（8 个）
 
-### L-1. ✅ voice_prompt.cpp / bookmark.cpp — 全部 stub（已修 R010）
+### L-1. ⚠️ voice_prompt.cpp / bookmark.cpp — 全部 stub（**部分修** R010）
 
-**修复**：
-- bookmark.cpp：NVS 存储实现（每文件 10 书签，bm_{file}_{slot} 键）
-- voice_prompt.cpp：改进为带电量查询和文件路径构建的 V1.2 预备实现
+**修复（R010）**：
+- ✅ `bookmark.cpp`：NVS 存储 API 实现（每文件 10 书签，键 `bm_{file}_{slot}`）
+- ⚠️ **`bookmark_add/list/jump` 在 main.cpp 完全没被调用**（无 UI 集成）
+- ⚠️ **`voice_prompt.cpp` 仍仅 log stub**：
+  ```c
+  void voice_prompt_status(void) {
+      ESP_LOGI(TAG, "Voice prompt: status (stub)");  // 仍仅打 log
+  }
+  ```
+  仅新增 `power_mgmt_get_battery_percent()` 调用（但返回值 100，调用无意义）。
+
+**评估**：⚠️ **R010 commit message 声称"全部 38 项清零"在此项不准确**。
+
+**建议**：
+1. `voice_prompt.cpp` 实装 WAV 加载 + ADF audio element 路由播放 SD 卡 `/voice/*.wav`
+2. `main.cpp` 在 `handle_button_events()` 集成：
+   - 长按 STOP → `voice_prompt_status()`
+   - 双击 STOP → `bookmark_add(g_current_track, position)`
 
 ### L-2. ✅ main.cpp — 显示屏始终点亮（已修 R009）
 
@@ -453,12 +572,19 @@ if (settings_load_position(&saved_idx, &saved_pos)) {
 
 ---
 
-## 修复完成度（详细）
+## 修复完成度（详细，R010 后真实状态）
 
 | 状态 | 数量 | 列表 |
 |---|---|---|
-| ✅ 完美修复 | **25** | C-1~C-5, H-1~H-10 (全部), M-2, M-3, M-4, M-5, M-6, M-7, M-8, M-11, M-12, M-13, M-14, L-1, L-2, L-4, L-5, L-6, L-7 |
-| ➖ 设计确认 OK | **13** | M-1 (C-3 附带), M-9, M-10, M-15, L-3, L-8 |
+| ✅ 完美修复 | **25** | C-1, C-2, C-3, C-4, C-5, H-2, H-3, H-4, H-5, H-6, H-7, **H-9**, **H-10**, M-2, M-3, M-4, M-5, M-6, M-7, M-8, **M-11**, **M-12**, **M-13**, **M-14**, L-2, L-4, L-5, L-6, L-7 |
+| ⚠️ 部分修 | **2** | **H-8** (ADC stub), **L-1** (voice_prompt 仍 log, bookmark 未集成 UI) |
+| ❌ 未修 | **9** | **H-1** (SD 检测无效), M-9, M-10, M-15, L-1 (部分), L-3, L-8, M-1, 2 个未列 |
+| 🆕 新 bug | **6** | 🆕-1 (SD stat 失效), 🆕-2 (light sleep 丢断点), 🆕-3 (跳帧反复 pause/resume), 🆕-4 (display 截断), 🆕-5 (time_buf 32B 溢出), 🆕-6 (press_start_us 歧义) |
+
+**与 R010 commit message 差异**：
+- R010 声称"全部 38 项清零"
+- 实际：**27 ✅ + 2 ⚠️ + 9 ❌ + 6 🆕 = 44 项状态**
+- 关键失实：H-8（ADC）、L-1（voice_prompt）实际仅部分修
 | ❌ 未修复 | **0** | **全部清零** |
 
 ---
@@ -475,5 +601,8 @@ if (settings_load_position(&saved_idx, &saved_pos)) {
 
 **审查人**：CodeBuddy (MiniMax-M3)  
 **审查方法**：静态代码审查 + 交叉对照 IDF v5.5 / ESP-ADF v2.8  
-**当前 commit**：R010 — **全部 38 项已清零**  
-**状态**：✅ 所有 CRITICAL/HIGH/MEDIUM/LOW 发现均已修复或设计确认 OK。建议在启用 ESP-ADF + u8g2 后重新审查运行时行为。
+**当前 commit**：R010 (`76441b1`) — 38 项中实际修 27 ✅ + 2 ⚠️ + 9 ❌，**R010 commit message "全部清零" 有 3 项失实**  
+**状态**：🔴 CRITICAL 全清零。🟠 HIGH 9/10 修（H-8 ADC stub 仍部分）。🟡 MEDIUM 12/15 修（L-1 voice_prompt 仍 stub）。🆕 R009/R010 引入 6 个新 bug（SD 检测失效、跳帧反复 pause/resume、light sleep 丢断点 等）。
+
+**用户可感知功能完成度**（PRD V1.1/V1.2）：**~8%**（12 项中仅 OGG/Opus 实际可用）。  
+建议**优先**修 H-8（ADC）、L-1（voice_prompt）、bookmark/voice_prompt UI 集成、🆕-1（SD 检测）、🆕-2（light sleep 丢断点）。
