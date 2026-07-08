@@ -1,21 +1,21 @@
-# TapeBook 代码审查报告（含 R009/R010 复查）
+# TapeBook 代码审查报告（含 R009/R010/R012 复查）
 
-> **审查时间**：2026-07-06 → 2026-07-07（含 R009/R010 复查）  
-> **基线 commit**：R007 (`4cd11a2`) → 当前 HEAD `76441b1`（R010）  
+> **审查时间**：2026-07-06 → 2026-07-08（含 R009/R010/R012 复查）  
+> **基线 commit**：R007 (`4cd11a2`) → 当前 HEAD `1d95d12`（R012）  
 > **审查方法**：静态代码审查 + 交叉对照 IDF v5.5 / ESP-ADF v2.8  
-> **修复追踪**：✅=已修 / ⚠️=部分修(代码改但 PRD 集成未完成) / ❌=未修 / 🆕=R009/R010 新引入
+> **修复追踪**：✅=已修 / ⚠️=部分修(代码改但 PRD 集成未完成) / ❌=未修 / 🆕=R009/R010/R012 新引入
 
 ---
 
-## 概览（R010 后真实状态）
+## 概览（R012 后真实状态）
 
 | 严重级别 | 总数 | ✅ 已修 | ⚠️ 部分修 | ❌ 未修 | 🆕 新 bug | ➖ 设计 OK |
-|---|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|---|
 | 🔴 CRITICAL | 5 | **5** | 0 | 0 | — | 0 |
 | 🟠 HIGH | 10 | 7 | **1** (H-8 ADC) | 2 | **1** (H-1 SD 检测) | 0 |
-| 🟡 MEDIUM | 15 | 12 | **1** (L-1 voice) | 1 | **4** | 1 (M-15) |
-| 🟢 LOW | 8 | 3 | 0 | 1 (L-1 部分) | 1 (press_start_us 歧义) | 5 (L-3 等) |
-| **总计** | **38** | **27 (71%)** | **2 (5%)** | **5 (13%)** | **6 新 bug** | **6 ➖** |
+| 🟡 MEDIUM | 15 | 12 | **1** (L-1 voice) | 1 | **5** (R012 BUG-1 scroll **已修**) | 1 (M-15) |
+| 🟢 LOW | 8 | 3 | 0 | 1 (L-1 部分) | 2 (press_start_us + R012 BUG-2 **static buf 已优化**) | 5 (L-3 等) |
+| **总计** | **38** | **27 (71%)** | **2 (5%)** | **5 (13%)** | **8 新 bug（2 已修）** | **6 ➖** |
 
 **⚠️ R010 commit message 声称"全部 38 项清零"是失实的**：
 - 🔴 CRITICAL 确实全部清零 ✅
@@ -24,6 +24,7 @@
 - 🆕 **新引入 6 个 bug**（SD 检测失效、跳帧反复 pause/resume、light sleep 丢断点等）
 
 **最新 commits**：
+- `1d95d12` R012: 文件夹浏览功能（`display.cpp` +41, `display.h` +9, `main.cpp` +54）
 - `df11f0d` R011: 修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成
 - `76441b1` R010: 38 项清零（bookmark/voice_prompt/M-2 timeout/M-3 init）
 - `853f483` R009: 修 SD 热插拔/脏区/屏保/light sleep/按钮去抖/采样率
@@ -101,7 +102,38 @@ snprintf(time_buf, sizeof(time_buf), "%s / %s [%s]", cur, tot, gs);
 
 ---
 
-## 📊 PRD V1.1/V1.2 用户可感知功能实际可用性
+## 🆕 R012 引入的潜在问题（2 个，均已修复）
+
+### R012 BUG-1. 🟡 `main.cpp` — scroll 溢出（total < BROWSE_VISIBLE_LINES 时数组越界）
+
+**症状**：当总文件数 `total < 6`（如仅 3 个文件），scroll 计算逻辑：
+```c
+if (scroll > total - BROWSE_VISIBLE_LINES)  // total=3 → total-6 = -3
+    scroll = total - BROWSE_VISIBLE_LINES;   // scroll = -3  ← 负数！
+```
+随后 `playlist_get_name(scroll + i, ...)` → `playlist_get_name(-3, ...)` → **数组下界越界，返回 garbage 甚至 crash**。
+
+**根因**：`max_scroll = total - BROWSE_VISIBLE_LINES` 未做 `max(0, ...)` 保护。
+
+**修复**（post-review）：加 `if (max_scroll < 0) max_scroll = 0;`。
+
+**状态**：✅ **已修**。
+
+### R012 BUG-2. 🟠 `main.cpp + display.cpp` — 浏览模式屏保误触发 + static buf 共享
+
+**症状**（两问题合一）：
+
+(a) **屏保**：浏览模式停留 30s 无操作，怀疑脏区检查触发屏保关 OLED。  
+**分析**：实际**不是 bug** — `update_display()` 在 `APP_STATE_BROWSING` 时直接调 `display_show_browse()` 后 `return`，不走 `display_update()` 脏区/屏保路径。
+
+(b) **static buf**：`browse_get_name()` 用 `static char buf[128]`，6 行回调共享指针。  
+**分析**：实际**不是运行时 bug** — `snprintf(line, ...)` 立即拷贝到局部 `line[24]`。但回调 + static buf 是 code smell。
+
+**修复**（post-review）：去掉回调，改为 `update_display()` 预构建字符串数组，`display_show_browse()` 直接画传入行。
+
+**状态**：✅ **static buf 已优化消除**；**屏保无需修改**。
+
+---
 
 | PRD 功能 | API | UI 集成 | 实际可用 | 评估 |
 |---|---|---|---|---|
@@ -551,6 +583,7 @@ if (settings_load_position(&saved_idx, &saved_pos)) {
 | **2.5** | M-5 DBL_DEBOUNCE 加去抖时间窗 | `button_manager.cpp` | ~5 行 |
 | **2.6** | M-6 按键 chip ID 错误检查 + retry | `main.cpp` | ~10 行 |
 | **2.7** | L-5 `g_i2s_writer` 跨曲目复用 + 变速 sample rate 切换 | `audio_player.cpp` | ~20 行 |
+| **2.8** | 浏览模式显示"正在播放"指示（行尾 `♪` 标记当前曲目，后台播放时可见） | `main.cpp` + `display.cpp` | ~10 行 |
 
 ### 💡 阶段 3 — PRD 完整化
 

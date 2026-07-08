@@ -193,15 +193,6 @@ static void on_track_finished(int state, void *user_data)
     }
 }
 
-static const char* browse_get_name(int index)
-{
-    static char buf[FILENAME_MAX_LEN];
-    if (playlist_get_name(index, buf, sizeof(buf))) {
-        return buf;
-    }
-    return NULL;
-}
-
 /* ============================================================
  * 处理按键事件
  * ============================================================ */
@@ -408,7 +399,25 @@ static void update_display(void)
     g_last_display_update = now;
 
     if (g_app_state == APP_STATE_BROWSING) {
-        display_show_browse(g_browse_index, playlist_count(), browse_get_name);
+        int total = playlist_count();
+        int scroll = g_browse_index - (BROWSE_VISIBLE_LINES / 2);
+        if (scroll < 0) scroll = 0;
+        int max_scroll = total - BROWSE_VISIBLE_LINES;
+        if (max_scroll < 0) max_scroll = 0;
+        if (scroll > max_scroll) scroll = max_scroll;
+
+        char lines[BROWSE_VISIBLE_LINES][24];
+        int count = total - scroll;
+        if (count > BROWSE_VISIBLE_LINES) count = BROWSE_VISIBLE_LINES;
+
+        for (int i = 0; i < count; i++) {
+            int idx = scroll + i;
+            char name[FILENAME_MAX_LEN];
+            playlist_get_name(idx, name, sizeof(name));
+            snprintf(lines[i], sizeof(lines[i]), "%s%.21s",
+                     (idx == g_browse_index) ? ">" : " ", name);
+        }
+        display_show_browse(g_browse_index, total, lines, count);
         return;
     }
 
