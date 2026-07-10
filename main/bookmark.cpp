@@ -28,22 +28,42 @@ int bookmark_add(int file_idx, int position_s)
 {
     if (!g_bm_handle || file_idx < 0 || position_s < 0) return -1;
 
-    // 找第一个空位
+    // 找第一个空位；满则覆盖最旧（slot 0），其余向前移位
     int slot = -1;
+    int32_t slots[BOOKMARK_MAX_PER_FILE];
+    int occupied = 0;
     for (int i = 0; i < BOOKMARK_MAX_PER_FILE; i++) {
         char key[24];
         make_key(file_idx, i, key, sizeof(key));
         int32_t val = 0;
         esp_err_t err = nvs_get_i32(g_bm_handle, key, &val);
-        if (err != ESP_OK) {
+        if (err == ESP_OK) {
+            slots[occupied++] = val;
+        } else if (slot < 0) {
             slot = i;
-            break;
         }
     }
+
     if (slot < 0) {
-        ESP_LOGW(TAG, "Bookmark full for file %d", file_idx);
-        return -1;
+        // 满：擦除最旧（slot 0），向前移位，新书签放末尾
+        esp_err_t err;
+        for (int i = 0; i < BOOKMARK_MAX_PER_FILE - 1; i++) {
+            char key_old[24], key_new[24];
+            make_key(file_idx, i, key_old, sizeof(key_old));
+            make_key(file_idx, i + 1, key_new, sizeof(key_new));
+            err = nvs_set_i32(g_bm_handle, key_old, slots[i + 1]);
+            if (err != ESP_OK) break;
+        }
+        slot = BOOKMARK_MAX_PER_FILE - 1;
+        char key[24];
+        make_key(file_idx, slot, key, sizeof(key));
+        err = nvs_set_i32(g_bm_handle, key, (int32_t)position_s);
+        if (err != ESP_OK) return -1;
+        nvs_commit(g_bm_handle);
+        ESP_LOGI(TAG, "Bookmark circular overwrite: file=%d slot=%d pos=%ds", file_idx, slot, position_s);
+        return slot;
     }
+
     char key[24];
     make_key(file_idx, slot, key, sizeof(key));
     esp_err_t err = nvs_set_i32(g_bm_handle, key, (int32_t)position_s);

@@ -46,6 +46,12 @@ __pycache__/
 # 第三方 component 源码（用 idf.py add-dependency 拉取，不入仓）
 components/u8g2/
 
+# macOS 元数据（解压参考设计时引入）
+__MACOSX/
+
+# 本地工具脚本
+poller.ps1
+
 # 本地敏感（按 CLAUDE.md 规范：禁止硬编码密钥/路径入仓）
 .env
 .env.local

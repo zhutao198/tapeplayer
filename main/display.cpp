@@ -55,9 +55,9 @@ static uint32_t calc_fingerprint(player_state_t state,
 
 void display_init(void)
 {
-    u8g2_esp32_hal_t u8g2_esp32_hal = U8G2_ESP32_HAL_DEFAULT;
-    u8g2_esp32_hal.bus.i2c.sda = DISPLAY_SDA_IO;
-    u8g2_esp32_hal.bus.i2c.scl = DISPLAY_SCL_IO;
+    u8g2_esp32_hal_t u8g2_esp32_hal;
+    u8g2_esp32_hal.sda = DISPLAY_SDA_IO;
+    u8g2_esp32_hal.scl = DISPLAY_SCL_IO;
     u8g2_esp32_hal_init(u8g2_esp32_hal);
 
     u8g2_Setup_ssd1306_i2c_128x64_noname_f(
@@ -224,7 +224,7 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_5x8_tf);
 
-    char header[24];
+    char header[32];
     snprintf(header, sizeof(header), "> Browse [%d/%d]", selected + 1, total);
     u8g2_DrawStr(&u8g2, 0, BROWSE_HEADER_Y, header);
 

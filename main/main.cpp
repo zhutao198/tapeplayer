@@ -633,12 +633,22 @@ extern "C" void app_main(void)
             if ((now - last_power_tick) >= 1000000) {
                 last_power_tick = now;
                 power_mgmt_tick();
+
+                // 电量极低时保存状态并深度休眠
+                if (power_mgmt_should_shutdown()) {
+                    ESP_LOGE(TAG, "Battery critical, saving state and shutting down");
+                    save_current_position();
+                    settings_flush();
+                    audio_player_stop();
+                    esp_deep_sleep_start();
+                }
             }
         }
 
         // 7c. 自动休眠（5 分钟无操作进入 light sleep，按键 GPIO 唤醒）
         if (power_mgmt_should_sleep()) {
             ESP_LOGI(TAG, "Idle timeout, entering light sleep");
+
             save_current_position();
             audio_player_stop();
             g_app_state = APP_STATE_IDLE;
@@ -653,6 +663,9 @@ extern "C" void app_main(void)
             esp_light_sleep_start();
 
             ESP_LOGI(TAG, "Woke from light sleep");
+
+            // 唤醒后恢复为 STOPPED 状态（保持曲目选中，用户按 Play 继续）
+            g_app_state = APP_STATE_STOPPED;
             power_mgmt_record_activity();
         }
 

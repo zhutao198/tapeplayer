@@ -204,6 +204,9 @@ bool audio_player_play(const char *filepath)
     // 10. 总时长初始未知（通过事件回调更新）
     g_total_duration_ms = 0;
 
+    // 11. 应用当前音量
+    audio_player_set_volume(g_volume);
+
     return true;
 }
 
@@ -365,8 +368,19 @@ void audio_player_set_volume(int volume)
     if (volume > 100) volume = 100;
     g_volume = volume;
 
-    // MAX98357A 无数字音量控制；音频增益由硬件电阻决定
-    // 未来可在应用层做软件音量（缩放 PCM 样本）
+    // MAX98357A 无硬件音量控制；通过 I2S ALC 软件音量实现
+    // 映射：vol=0→-96dB(mute), vol=50→0dB(默认), vol=100→+12dB
+    if (g_i2s_writer) {
+        int alc_vol;
+        if (volume <= 0) {
+            alc_vol = -96;
+        } else if (volume <= 50) {
+            alc_vol = (volume - 50) * 48 / 50;  // -48..0 dB
+        } else {
+            alc_vol = (volume - 50) * 12 / 50;  // 0..+12 dB
+        }
+        i2s_alc_volume_set(g_i2s_writer, alc_vol);
+    }
 }
 
 int audio_player_get_volume(void)

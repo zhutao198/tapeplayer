@@ -85,4 +85,12 @@ config USE_ESP_ADF
         Requires ADF_PATH environment variable pointing to your ESP-ADF install
         (e.g. D:\esp\esp-adf).
 
+config USE_U8G2
+    bool "Enable u8g2 OLED display library"
+    default y
+    help
+        Enable u8g2 library for SSD1306/SSD1315 OLED display via I2C.
+        When disabled, display output goes to serial log only.
+        Requires u8g2 and u8g2_esp32_hal components (included in components/).
+
 endmenu

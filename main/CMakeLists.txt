@@ -10,8 +10,12 @@ idf_component_register(
         "bookmark.cpp"
         "power_mgmt.cpp"
         "voice_prompt.cpp"
+        # R014: 直接把 u8g2_esp32_hal.c 编译进 main 组件（避免静态库链接顺序问题）
+        "${CMAKE_CURRENT_LIST_DIR}/../components/u8g2_esp32_hal/u8g2_esp32_hal.c"
     INCLUDE_DIRS
         "."
+        # R014: u8g2_esp32_hal.h 头文件路径
+        "${CMAKE_CURRENT_LIST_DIR}/../components/u8g2_esp32_hal/include"
     REQUIRES
         driver
         nvs_flash
@@ -21,6 +25,8 @@ idf_component_register(
         audio_pipeline
         audio_stream
         esp-adf-libs
+        # R014: u8g2 OLED 显示（display.cpp #ifdef CONFIG_USE_U8G2 路径需要）
+        u8g2
 )
 
 # 传递目标模块选择为编译宏
