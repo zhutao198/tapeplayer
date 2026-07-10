@@ -2,9 +2,9 @@
 
 > **项目**: TapeBook — 磁带机风格听书机  
 > **主控**: ESP32-S3-WROOM-1 N16R8 (16MB Quad Flash + 8MB Octal PSRAM)  
-> **文档版本**: 1.0  
-> **创建日期**: 2026-07-09  
-> **对应硬件版本**: HARDWARE_PIN_WIRING.md v1.1  
+> **文档版本**: 1.2  
+> **创建日期**: 2026-07-10  
+> **对应硬件版本**: HARDWARE_PIN_WIRING.md v1.2  
 > **关联文件**: `SCH_TapeBook_V1.0.net`（Protel 网表）, `SCH_TapeBook_V1.0_BOM.csv`（BOM）
 
 ---
@@ -13,9 +13,9 @@
 
 | 页码 | 标题 | 内容 |
 |------|------|------|
-| 1 | 电源系统 | USB Type-C、TP4056 充电、AMS1117-3.3 稳压、电源开关、电池保护 |
+| 1 | 电源系统 | USB Type-C、TP4056 充电、ME6211C33 稳压、电源开关、电池保护 |
 | 2 | ESP32-S3 最小系统 | WROOM-1 模组、USB Serial/JTAG、EN 复位、BOOT 模式、去耦 |
-| 3 | I2S 音频功放 | MAX98357A、喇叭输出、耳机座 |
+| 3 | I2S 音频功放 | MAX98357A、喇叭输出、蓝牙耳机规划(V1.1) |
 | 4 | MicroSD 卡 (SPI) | MicroSD 座、SPI 上拉、信号完整性 |
 | 5 | OLED 显示屏 (I2C) | SSD1306/SSD1315 OLED、I2C 上拉 |
 | 6 | 用户输入 | 6 按键、EC11 编码器(可选)、电池 ADC(可选) |
@@ -36,12 +36,11 @@ USB 5V (Type-C VBUS)
    │
    ├──→ 电源开关 SS12D00 (总电源 ON/OFF)
    │        │
-   │        └──→ AMS1117-3.3 VIN
+   │        └──→ ME6211C33 VIN
    │                │
-   │                ├──→ 3.3V 主电源轨
-   │                └──→ MAX98357 VIN (可选从 USB 5V 取电以获得更大功率)
+   │                └──→ 3.3V 主电源轨
    │
-   └──→ [可选] MAX98357 VIN (从 5V 取电 → 3W 输出)
+   └──→ BAT ──→ MAX98357 VIN (电池直供 3.0-4.2V，功放宽压 2.5-5.5V)
 ```
 
 ### 1.2 TP4056 锂电池充电电路
@@ -96,26 +95,31 @@ PACK- ───→ GND
 ### 1.4 电源开关 & LDO
 
 ```
-         SS12D00 (拨动开关, SPDT)
-    PACK+ ────┬── COM
-              │
-              └── ON ────→ AMS1117-3.3 VIN(3)
-                           │
-      AMS1117-3.3        1kΩ
-      ┌────────────┐       │  (下拉到 GND 防止浮空)
-      │ VIN(3) OUT(2)├─┬───┴── GND
-      │ TAB/GND(4) │  │
-      │ VOUT(1) NC │  │
-      └────────────┘  │
-           │          │
-          GND        ┌┴┐
-                     │ │ 10kΩ (EN 上拉到 3.3V)
-                     └┬┤
-                      │ 3.3V
-                      │
-                      ▼
-             3.3V 主电源轨
+          SS12D00 (拨动开关, SPDT)
+     PACK+ ────┬── COM
+               │
+               └── ON ────→ ME6211C33 VIN(1)
+                            │
+     ME6211C33M5G-N        ┌┴┐
+     (SOT-23-5)            │ │ 100kΩ (输出端对地泄放)
+     ┌─────────────┐      └┬┘
+     │ VIN(1)      │       │
+     │ CE(2)       │      GND
+     │ VOUT(3)───┼──┬───
+     │ NC(4)      │  │
+     │ GND(5)     │  │
+     └─────────────┘ │
+           │         │
+          GND       ┌┴┐
+                    │ │ 10kΩ (CE 上拉到 PACK+)
+                    └┬┤
+                     │ PACK+
+                     │
+                     ▼
+            3.3V 主电源轨
 ```
+
+**MAX98357 VIN 供电**：从 PACK+ 直供（电池电压 3.0-4.2V），不经过 LDO。MAX98357 支持 2.5-5.5V 宽压输入，电池供电时输出功率约 1W @ 4Ω（3.6V 典型值）。
 
 **去耦电容配置**:
 
@@ -123,8 +127,9 @@ PACK- ───→ GND
 |------|--------|------|
 | TP4056 VCC → GND | 100µF/10V 电解 + 100nF 陶瓷 | 各1 |
 | TP4056 BAT → GND | 100µF/10V 电解 | 1 |
-| AMS1117-3.3 VIN → GND | 10µF/16V 钽 + 100nF 陶瓷 | 各1 |
-| AMS1117-3.3 OUT → GND | 10µF/16V 钽 + 100nF 陶瓷 | 各1 |
+| ME6211C33 VIN → GND | 10µF/16V 钽 + 100nF 陶瓷 | 各1 |
+| ME6211C33 OUT → GND | 10µF/16V 钽 + 100nF 陶瓷 | 各1 |
+| MAX98357 VIN → GND | 47µF/16V 电解 + 100nF 陶瓷 | 各1 |
 | 3.3V 轨 每 2 个 IC 一组 | 100nF 陶瓷 × 每组 | 每组 |
 
 ---
@@ -133,100 +138,106 @@ PACK- ───→ GND
 
 ### 2.1 ESP32-S3-WROOM-1 模组
 
-> 模组引脚编号基于官方参考设计 `SCH_ESP32-S3-WROOM-1_V1.3`
-
 ```
                   ESP32-S3-WROOM-1 (SMD 41-pin + EPAD)
                   ┌─────────────────────────────────────┐
-                  │                                     │
-                  │  Pin 1 (右上角标记点)                │
-                  │  ┌───┬──────┬───────┬──────┬───┐    │
-                  │  │  1│ GND  │ GND   │ 41   │   │    │
-                  │  │  2│ 3V3  │ GPIO4 │ 40   │   │    │
-                  │  │  3│ EN   │ GPIO5 │ 39   │   │    │
-                  │  │  4│ GPIO0│ GPIO6 │ 38   │   │    │
-                  │  │  5│ GPIO1│ GPIO7 │ 37   │   │    │  ← Pin numbering
-                  │  │  6│ GPIO2│ GPIO8 │ 36   │   │    │     (counterclockwise)
-                  │  │  7│ GPIO3│ GPIO9 │ 35   │   │    │
-                  │  │  8│ GPIO8│ GPIO10│ 34   │   │    │
-                  │  │  9│ GPIO9│ GPIO11│ 33   │   │    │
-                  │  │ 10│ GPIO10│GPIO12│ 32   │   │    │
-                  │  │ 11│ GPIO11│GPIO13│ 31   │   │    │
-                  │  │ 12│ GPIO12│GPIO14│ 30   │   │    │
-                  │  │ 13│ GPIO13│GPIO15│ 29   │   │    │
-                  │  │ 14│ GPIO14│GPIO16│ 28   │   │    │
-                  │  │ 15│ GPIO15│GPIO17│ 27   │   │    │
-                  │  │ 16│ GPIO16│GPIO18│ 26   │   │    │
-                  │  │ 17│ GPIO17│GPIO19│ 25   │   │    │
-                  │  │ 18│ GPIO18│GPIO20│ 24   │   │    │
-                  │  │ 19│ GPIO21│ GPIO45│ 23  │   │    │
-                  │  │ 20│ GPIO38│ GPIO46│ 22  │   │    │
-                  │  │ 21│ GPIO39│ GPIO48│ 21  │   │    │
-                  │  └───┴──────┴───────┴──────┴───┘    │
-                  │                                     │
-                  │              EPAD (GND)              │
+                  │              Top View                │
+                  │   (counterclockwise, Pin 1 = ●)     │
+                  │  ┌─────┬──────┬──────┬──────┬───┐   │
+                  │  │ 1   │ 2    │ 3    │ 4    │ 5 │   │
+                  │  │ GND │ 3V3  │ EN   │ IO4  │ IO5│   │
+                  │  ├─────┼──────┼──────┼──────┼───┤   │
+                  │  │ 6   │ 7    │ 8    │ 9    │ 10│   │
+                  │  │ IO6 │ IO7  │ IO15 │ IO16 │IO17│   │
+                  │  ├─────┼──────┼──────┼──────┼───┤   │
+                  │  │ 11  │ 12   │ 13   │ 14   │ 15│   │
+                  │  │ IO18│ IO8  │ IO19 │ IO20 │ IO3│   │
+                  │  ├─────┼──────┼──────┼──────┼───┤   │
+                  │  │ 16  │ 17   │ 18   │ 19   │ 20│   │
+                  │  │ IO46│ IO9  │ IO10 │ IO11 │IO12│   │
+                  │  ├─────┼──────┼──────┼──────┼───┤   │
+                  │  │ 21  │ 22   │ 23   │ 24   │ 25│   │
+                  │  │ IO13│ IO14 │ IO21 │ IO47 │IO48│   │
+                  │  ├─────┼──────┼──────┼──────┼───┤   │
+                  │  │ 26  │ 27   │ 28   │ 29   │ 30│   │
+                  │  │ IO45│ IO0  │ IO35 │ IO36 │IO37│   │
+                  │  ├─────┼──────┼──────┼──────┼───┤   │
+                  │  │ 31  │ 32   │ 33   │ 34   │ 35│   │
+                  │  │ IO38│ IO39 │ IO40 │ IO41 │IO42│   │
+                  │  ├─────┼──────┼──────┼──────┼───┤   │
+                  │  │ 36  │ 37   │ 38   │ 39   │ 40│   │
+                  │  │ IO44│ IO43 │ IO2  │ IO1  │GND│   │
+                  │  └─────┴──────┴──────┴──────┴───┘   │
+                  │           41: EPAD(GND)              │
                   └─────────────────────────────────────┘
-                  
-注：上图引脚编号为逻辑示意。实际 WROOM-1 N16R8 的物理引脚布局请参考乐鑫官方数据手册。
+
+注：上图引脚编号为 WROOM-1 数据手册 v1.8 Table 2-1 物理引脚号，
+     与 §2.2 GPIO 分配表"物理"列完全一致。
 ```
 
 ### 2.2 GPIO 分配表（Sheet 2 连接总览）
 
-| 模组引脚# | 信号 | 接至 | 备注 |
-|----------|------|------|------|
-| Pin 2 | 3V3 | 3.3V 电源轨 | 模组主供电 |
-| Pin 3 | EN | R=10kΩ → 3.3V + C=100nF → GND | RC 复位 |
-| Pin 4 | GPIO0 | R=10kΩ → 3.3V + SW_BOOT → GND | 烧录模式 |
-| Pin 5 | GPIO1 | SW_PLAY → GND | 内部上拉 |
-| Pin 6 | GPIO2 | SW_STOP → GND | 内部上拉 |
-| Pin 7 | GPIO3 | ADC 分压网络 → BAT+ / 悬空 | 可选电池检测 |
-| Pin 8 | GPIO8 | SW_PREV → GND | 内部上拉 |
-| Pin 9 | GPIO9 | SW_NEXT → GND | 内部上拉 |
-| Pin 10 | GPIO10 | SD_CS | MicroSD 片选 |
-| Pin 11 | GPIO11 | SD_MOSI | MicroSD MOSI |
-| Pin 12 | GPIO12 | SD_MISO | MicroSD MISO |
-| Pin 13 | GPIO13 | SD_SCLK | MicroSD SCK |
-| Pin 14 | GPIO14 | SW_REW → GND | 内部上拉，快退 |
-| Pin 15 | GPIO15 | SW_FF → GND | 内部上拉，快进 |
-| Pin 16 | GPIO16 | **N/C** | 未使用，悬空 |
-| Pin 17 | GPIO17 | OLED_SDA | I2C 数据 |
-| Pin 18 | GPIO18 | OLED_SCL | I2C 时钟 |
-| Pin 19 | GPIO21 | **N/C** | 未使用，悬空 |
-| Pin 20 | GPIO38 | ENC_A (可选) | 编码器 A 相 |
-| Pin 21 | GPIO39 | ENC_B (可选) | 编码器 B 相 |
-| Pin 22 | GPIO48 | **N/C** | 1.8V 域，悬空 |
-| Pin 23 | GPIO46 | **N/C** | Strapping，内部默认 |
-| Pin 24 | GPIO20 | USB_D+ (Type-C D+) | USB Serial/JTAG |
-| Pin 25 | GPIO19 | USB_D- (Type-C D-) | USB Serial/JTAG |
-| Pin 26 | GPIO18 | (见 Pin 18) | — |
-| Pin 27 | GPIO17 | (见 Pin 17) | — |
-| Pin 28 | GPIO16 | N/C | — |
-| Pin 29 | GPIO15 | (见 Pin 15) | — |
-| Pin 30 | GPIO14 | (见 Pin 14) | — |
-| Pin 31 | GPIO13 | (见 Pin 13) | — |
-| Pin 32 | GPIO12 | (见 Pin 12) | — |
-| Pin 33 | GPIO11 | (见 Pin 11) | — |
-| Pin 34 | GPIO10 | (见 Pin 10) | — |
-| Pin 35 | GPIO9 | (见 Pin 9) | — |
-| Pin 36 | GPIO8 | (见 Pin 8) | — |
-| Pin 37 | GPIO7 | I2S_MCLK / N/C | MAX98357 可选 MCLK |
-| Pin 38 | GPIO6 | I2S_DOUT | MAX98357 DIN |
-| Pin 39 | GPIO5 | I2S_WS | MAX98357 LRC |
-| Pin 40 | GPIO4 | I2S_BCK | MAX98357 BCLK |
-| Pin 41 | GND | GND | — |
-| EPAD | GND | GND | 散热片 |
+> 物理引脚编号参考 WROOM-1 数据手册 v1.8 Table 2-1。原理图逻辑引脚编号仅供本图内部指引用。
+
+| 原理图 | 物理 | 信号 | 接至 | 备注 |
+|:------:|:---:|------|------|------|
+| Pin 2 | 2 | 3V3 | 3.3V 电源轨 | 模组主供电 |
+| Pin 3 | 3 | EN | R=10kΩ → 3.3V + C=1µF → GND | RC 复位 |
+| Pin 4 | 27 | GPIO0 | R=10kΩ → 3.3V + SW_BOOT → GND | 烧录模式 |
+| Pin 5 | 39 | GPIO1 | SW_PLAY → GND | 内部上拉 |
+| Pin 6 | 38 | GPIO2 | SW_STOP → GND | 内部上拉 |
+| Pin 7 | 15 | GPIO3 | ADC 分压网络 → BAT+ / 悬空 | 可选电池检测 ⚠️ Strapping |
+| Pin 8 | 12 | GPIO8 | SW_PREV → GND | 内部上拉 |
+| Pin 9 | 17 | GPIO9 | SW_NEXT → GND | 内部上拉 |
+| Pin 10 | 18 | GPIO10 | SD_CS | MicroSD 片选 |
+| Pin 11 | 19 | GPIO11 | SD_MOSI | MicroSD MOSI |
+| Pin 12 | 20 | GPIO12 | SD_MISO | MicroSD MISO |
+| Pin 13 | 21 | GPIO13 | SD_SCLK | MicroSD SCK |
+| Pin 14 | 22 | GPIO14 | SW_REW → GND | 内部上拉，快退 |
+| Pin 15 | 8 | GPIO15 | SW_FF → GND | 内部上拉，快进 |
+| Pin 16 | 9 | GPIO16 | **N/C** | 未使用，悬空 |
+| Pin 17 | 10 | GPIO17 | OLED_SDA | I2C 数据 |
+| Pin 18 | 11 | GPIO18 | OLED_SCL | I2C 时钟 |
+| Pin 19 | 23 | GPIO21 | **N/C** | 未使用，悬空 |
+| Pin 20 | 31 | GPIO38 | ENC_A (可选) | 编码器 A 相 |
+| Pin 21 | 32 | GPIO39 | ENC_B (可选) | 编码器 B 相 |
+| Pin 22 | 25 | GPIO48 | **N/C** | VDD_SPI 域，N16R8=3.3V / N16R16V=1.8V |
+| Pin 23 | 24 | GPIO47 | **N/C** | VDD_SPI 域，N16R8=3.3V / N16R16V=1.8V |
+| Pin 24 | 16 | GPIO46 | **N/C** | Strapping（ROM log），悬空 |
+| Pin 25 | 26 | GPIO45 | **N/C** | Strapping（VDD_SPI），N16R8 悬空 |
+| Pin 26 | 14 | GPIO20 | USB_D+ (Type-C D+) | USB Serial/JTAG |
+| Pin 27 | 13 | GPIO19 | USB_D- (Type-C D-) | USB Serial/JTAG |
+| Pin 28 | 9 | GPIO16 | (见 Pin 16) | — |
+| Pin 29 | 8 | GPIO15 | (见 Pin 15) | — |
+| Pin 30 | 22 | GPIO14 | (见 Pin 14) | — |
+| Pin 31 | 21 | GPIO13 | (见 Pin 13) | — |
+| Pin 32 | 20 | GPIO12 | (见 Pin 12) | — |
+| Pin 33 | 19 | GPIO11 | (见 Pin 11) | — |
+| Pin 34 | 18 | GPIO10 | (见 Pin 10) | — |
+| Pin 35 | 17 | GPIO9 | (见 Pin 9) | — |
+| Pin 36 | 12 | GPIO8 | (见 Pin 8) | — |
+| Pin 37 | 7 | GPIO7 | I2S_MCLK / N/C | MAX98357 可选 MCLK |
+| Pin 38 | 6 | GPIO6 | I2S_DOUT | MAX98357 DIN |
+| Pin 39 | 5 | GPIO5 | I2S_WS | MAX98357 LRC |
+| Pin 40 | 4 | GPIO4 | I2S_BCK | MAX98357 BCLK |
+| Pin 41 | 40 | GND | GND | — |
+| EPAD | 41 | GND | GND | 散热片 |
+
+> **VDD_SPI 域引脚 PCB 净空**：GPIO45/46/47/48 属于 VDD_SPI 电源域（驱动 Octal PSRAM），
+> 在 PCB Layout 中应确保上述引脚周边 **≥5mm 区域内无其他走线或元件**，
+> 避免 PSRAM 高速通信受数字噪声干扰。
 
 ### 2.3 EN 复位电路
 
 ```
-    3.3V ────┬── 10kΩ ──── EN (模组 Pin 3)
+     3.3V ────┬── 10kΩ ──── EN (模组 Pin 3)
              │
-            100nF
+             1µF
              │
             GND
 ```
 
-> RC 时间常数 ≈ 1ms，确保上电后 VDD 稳定再释放 EN。
+> RC 时间常数 ≈ 10ms，确保上电后 VDD 稳定再释放 EN。电池供电缓启动场景下留有充分余量。
 
 ### 2.4 BOOT 模式选择
 
@@ -256,13 +267,13 @@ PACK- ───→ GND
     CC1 ─── 5.1kΩ ─── GND  (告诉源端是 5V 3A 模式)
     CC2 ─── 5.1kΩ ─── GND
 
-    D+ ───┬───→ GPIO20 (模组 Pin 24, USB_DP)
+    D+ ───┬───→ GPIO20 (逻辑 Pin 26 / 物理 Pin 14, USB_DP)
           │
          27Ω (串联阻抗匹配)
           │
          ESD 保护 (TPD4E05U06 or similar)
 
-    D- ───┬───→ GPIO19 (模组 Pin 25, USB_DN)
+    D- ───┬───→ GPIO19 (逻辑 Pin 27 / 物理 Pin 13, USB_DN)
           │
          27Ω (串联阻抗匹配)
           │
@@ -296,7 +307,7 @@ PACK- ───→ GND
   │     │                                     │
   │     │ MCLK(1) ── N/C (不需外部 MCLK)      │
   │     │                                     │
-  │     │ VIN(9)──┬── 3.3V (或 5V 直连)       │
+    │     │ VIN(9)──┬── BAT (3.0-4.2V 直供)     │
   │     │         │                           │
   │     │        4.7µF                        │
   │     │         │                           │
@@ -345,27 +356,11 @@ PACK- ───→ GND
     OUT-(13)──┴─── 喇叭黑色线 (-)
 ```
 
-### 3.4 [可选] 3.5mm 耳机座
+### 3.4 蓝牙耳机（V1.1 规划）
 
-```
-              3.5mm 耳机座 (PJ-342)
-              ┌──────────────┐
-MAX98357      │               │
-OUT+ ─┬──────┤ TIP (L)       │
-      │      │ RING (R)      │
-      │  ┌───┤ SLEEVE (GND)  │
-      │  │   └──────────────┘
-      │  │      │
-      ┌┴┐┌┴┐   GND
-      │ ││ │   (插入时 Tip/Ring 断开喇叭)
-      │100Ω │
-      └┬┘└┬┘
-       │   │
-MAX98357   │
-OUT- ──────┘
-```
-
-> 注：耳机座可选用带机械开关的型号（插入时断开喇叭）。串联 100Ω 电阻保护耳机。
+> V1.0 无有线耳机接口。MAX98357A 为 BTL 功放仅驱动内置喇叭。
+> V1.1 规划通过 **ESP32-S3 内置蓝牙 + LE Audio** 实现蓝牙耳机音频输出。
+> 详见 `docs/BT_AUDIO_PLAN.md`。
 
 ---
 
@@ -573,7 +568,7 @@ OUT- ──────┘
 
 | 器件 | 选型理由 | 替代方案 |
 |------|---------|---------|
-| AMS1117-3.3 | 800mA 够用，低成本 | XC6206P332MR (300mA，更省电) |
+| ME6211C33M5G-N | SOT-23-5，dropout 100mV@300mA，适合单节锂电池 | MCP1802-C33 (兼容，pin-to-pin) |
 | TP4056 | 标准 1A 充电，ESOP-8 散热好 | IP2312 (更小，带 NTC) |
 | MAX98357A | I2S 输入，无需 MCU 配置，3W 输出 | MAX98357B (GAIN=GND 为 12dB，基准状态一致) |
 | SSD1306 | 128×64 I2C，u8g2 广泛支持 | SSD1315 (兼容，略贵) |
@@ -610,3 +605,6 @@ OUT- ──────┘
 | 版本 | 日期 | 变更内容 |
 |------|------|---------|
 | 1.0 | 2026-07-09 | 初始版本，基于 HARDWARE_PIN_WIRING.md v1.1 + config.h |
+| 1.0 | 2026-07-09 | 初始版本，基于 HARDWARE_PIN_WIRING.md v1.1 + config.h |
+| 1.1 | 2026-07-10 | B1: AMS1117→ME6211C33 + MAX98357 改 BAT 直供；I1: GPIO 表加物理引脚列 + USB 修正 + 引脚图注记；I2: GPIO48/47 电压域+N16R8 一致性修正；I3: 耳机座移除，改蓝牙耳机规划(V1.1)；I4: EN 电容 100nF→1µF；M2: 补 GPIO45；M3: 电源树 MAX98357 BAT 直供明确 |
+| **1.2** | **2026-07-10** | **B2: ASCII 引脚图重画为 WROOM-1 物理编号，与 §2.2 完全一致；N1: ME6211C33 封装 SOT-89→SOT-23-5 引脚编号修正；N2: 1kΩ→100kΩ 泄放电阻；N3: §2.2 追加 VDD_SPI PCB 净空注释；I3: A2DP→LE Audio；附录 A AMS1117→ME6211C33** |

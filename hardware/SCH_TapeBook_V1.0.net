@@ -1,6 +1,6 @@
 * TapeBook V1.0 Protel Netlist
 * 主控: ESP32-S3-WROOM-1 N16R8
-* 生成日期: 2026-07-09
+* 生成日期: 2026-07-10 (R015: 同步 V1.2 原理图)
 * 关联文档: SCH_TapeBook_V1.0.md
 * 格式: Protel ASCII (.net) / 兼容 Altium Designer, PADS
 
@@ -18,8 +18,8 @@ MAX98357A
 
 [
 U3
-AMS1117-3.3
-AMS1117-3.3
+ME6211C33
+ME6211C33
 ]
 
 [
@@ -103,10 +103,11 @@ EC11_Encoder
 [
 C1
 C_0603
-100nF
+1uF
 ]
 
 [
+
 C2
 C_0603
 100nF
@@ -239,9 +240,15 @@ Green_LED
 ]
 
 [
-J5
-PJ342
-3.5mm_Jack
+C11
+C_0603
+1uF
+]
+
+[
+C12
+CE_1210
+47uF_16V
 ]
 
 * === NETLIST ===
@@ -249,7 +256,7 @@ PJ342
 [
 N_3V3
 U1-2
-U3-2
+U3-3
 U2-9
 J2-4
 J3-1
@@ -276,7 +283,7 @@ U2-15
 U2-16
 U2-17
 U2-18
-U3-4
+U3-5
 U4-3
 U4-8
 J1-A1
@@ -318,16 +325,13 @@ C8-1
 ]
 
 [
-N_VIN_3V3
-U3-3
-SW_BOOT-1
+N_POWER_EN
+R1-2
 ]
 
 [
-N_POWER_EN
-R1-2
+N_SWITCHED_PWR
 U3-1
-U3-3
 ]
 
 [
@@ -456,14 +460,12 @@ J1-B3
 N_SPEAKER_OUT
 U2-12
 J4-1
-J5-1
 ]
 
 [
 N_SPEAKER_OUTN
 U2-13
 J4-2
-J5-2
 ]
 
 [

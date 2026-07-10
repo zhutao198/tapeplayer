@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-07-09（R014 — PRD 审查 5 项修复 + 原理图设计）
+> **最后更新**：2026-07-10（R015 — 硬件设计修复 6 项 + LE Audio 方案文档）
 
 ---
 
@@ -69,6 +69,7 @@ git status --short            # 未提交改动
 | **R012** | **2026-07-07** | `1d95d12` | **文件夹浏览（V1.0 MVP 最后功能）** | **✅** |
 | **R013** | **2026-07-07** | `4f3b25e` | **R012 review 修复（scroll clamp + API cleanup）** | **✅** |
 | **R014** | **2026-07-09** | `eca38cc` | **PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计** | **✅** |
+| **R015** | **2026-07-10** | *待提交* | **硬件设计修复（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档** | **✅** |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 
@@ -134,6 +135,7 @@ git clean -fdx
 | `HARDWARE_MODULE_MIGRATION.md` | 模组迁移指南 |
 | `docs/HARDWARE_PIN_WIRING.md` | 硬件引脚接线图（V1.2，R006 修正）|
 | `docs/HARDWARE_PIN_WIRING_REVIEW.md` | 上述文档的评审报告（V1.0，7/10）|
+| `docs/BT_AUDIO_PLAN.md` | LE Audio 蓝牙耳机支持方案（V1.1 规划）|
 | `SESSION_SUMMARY.md` | 关键决策 / 教训 |
 | `开发日志.md` | R 节点详细记录 |
 
