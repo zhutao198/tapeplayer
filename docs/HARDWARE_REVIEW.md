@@ -2,7 +2,7 @@
 
 | 评审信息 | |
 |:---------|---|
-| 评审对象 | `hardware/SCH_TapeBook_V1.2.md` (6 页原理图设计规格书 v1.0) |
+| 评审对象 | `hardware/SCH_TapeBook_V1.3.md` (6 页原理图设计规格书 v1.0) |
 | 关联文档 | `main/config.h`, `docs/HARDWARE_PIN_WIRING.md` (v1.1) |
 | 主控 | ESP32-S3-WROOM-1 N16R8 (16MB Quad Flash + 8MB Octal PSRAM) |
 | 评审日期 | 2026-07-10 |
@@ -183,7 +183,7 @@ Top View (counterclockwise):
 
 ## 五、GPIO 功能分配交叉验证 ✅
 
-以下是对 `config.h`、`HARDWARE_PIN_WIRING.md`、`SCH_TapeBook_V1.2.md` 三份文档的 GPIO 功能一致性检查：
+以下是对 `config.h`、`HARDWARE_PIN_WIRING.md`、`SCH_TapeBook_V1.3.md` 三份文档的 GPIO 功能一致性检查：
 
 | 功能 | GPIO | WROOM-1 物理 Pin | Strapping | 三文档一致 | 结论 |
 |------|:---:|:---:|:---:|:---:|:---:|
@@ -301,7 +301,7 @@ Top View (counterclockwise):
 4. **EC11 编码器去抖设计**：10nF 电容 + 中断触发，标准方案
 5. **电池 ADC 分压比例合理**：1:1 分压 + 100nF 去耦，量程安全
 6. **Type-C CC 电阻正确**：5.1kΩ × 2 请求 5V/3A
-7. **三文档一致性**：`config.h` ↔ `HARDWARE_PIN_WIRING.md` ↔ `SCH_TapeBook_V1.2.md` GPIO 功能分配完全一致
+7. **三文档一致性**：`config.h` ↔ `HARDWARE_PIN_WIRING.md` ↔ `SCH_TapeBook_V1.3.md` GPIO 功能分配完全一致
 
 ---
 

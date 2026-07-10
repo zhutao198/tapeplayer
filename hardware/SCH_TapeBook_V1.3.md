@@ -5,7 +5,7 @@
 > **文档版本**: 1.3  
 > **创建日期**: 2026-07-10  
 > **对应硬件版本**: HARDWARE_PIN_WIRING.md v1.2  
-> **关联文件**: `SCH_TapeBook_V1.2.net`（Protel 网表）, `SCH_TapeBook_V1.2_BOM.csv`（BOM）
+> **关联文件**: `SCH_TapeBook_V1.3.net`（Protel 网表）, `SCH_TapeBook_V1.3_BOM.csv`（BOM）
 
 ---
 

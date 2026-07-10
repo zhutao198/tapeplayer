@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-$pid_target = 18888
-$out_log = 'D:\zhutao\audio_player\build_v3.out'
-$err_log = 'D:\zhutao\audio_player\build_v3.err'
+$pid_target = 56080
+$out_log = 'D:\zhutao\audio_player\build_v5.out'
+$err_log = 'D:\zhutao\audio_player\build_v5.err'
 $build_log = 'D:\zhutao\audio_player\build_adf.log'
 $prog_log = 'D:\zhutao\audio_player\progress.log'
 $interval_sec = 120

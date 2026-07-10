@@ -87,7 +87,7 @@ git status --short            # 未提交改动
 | 音量控制 | I2S ALC (i2s_alc_volume_set) | ADF 内置 ALC 音量，-96~+12dB 范围 | audio_player.cpp |
 | OLED 驱动 | u8g2_esp32_hal（源码编入 main 组件）| 避免静态库链接顺序问题 | CMakeLists.txt |
 | 蓝牙方案 | LE Audio（LC3，无需额外 BOM）| ESP32-S3 仅有 BLE 5.0，无 BT Classic；LE Audio 通过 `esp-ble-audio` 组件实现 | BT_AUDIO_PLAN.md |
-| ME6211C33 封装 | SOT-23-5（M5G-N）| 实际采购型号带 CE 使能引脚；非 SOT-89 | SCH_TapeBook_V1.2.md |
+| ME6211C33 封装 | SOT-23-5（M5G-N）| 实际采购型号带 CE 使能引脚；非 SOT-89 | SCH_TapeBook_V1.3.md |
 
 ---
 

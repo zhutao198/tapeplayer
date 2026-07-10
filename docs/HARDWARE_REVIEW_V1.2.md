@@ -2,7 +2,7 @@
 
 > **项目**：TapeBook — 磁带机风格听书机  
 > **主控**：ESP32-S3-WROOM-1 N16R8 (16MB Quad Flash + 8MB Octal PSRAM)  
-> **评审对象**：`hardware/SCH_TapeBook_V1.2.md`（文档版本 1.2，对应硬件 v1.2）  
+> **评审对象**：`hardware/SCH_TapeBook_V1.3.md`（文档版本 1.3，对应硬件 v1.3）  
 > **评审日期**：2026-07-10  
 > **评审类型**：V1.1 → V1.2 增量复审（投板前最终检查）  
 > **对比基线**：`docs/HARDWARE_REVIEW_V1.1.md`（V1.1 评审）
@@ -262,7 +262,7 @@ GPIO_CTRL 默认低电平（上电 = 断开 = 不测量）
 7. **去耦电容规范化**：完整电容配置表覆盖所有 IC 节点
 8. **MAX98357 BAT 直供**：充分利用功放宽压特性，避免 LDO 承担额外负载
 9. **Type-C CC 电阻**：5.1kΩ × 2 请求 5V/3A，标准配置
-10. **三文档一致性**：`config.h` ↔ `HARDWARE_PIN_WIRING.md` ↔ `SCH_TapeBook_V1.2.md` GPIO 完全一致
+10. **三文档一致性**：`config.h` ↔ `HARDWARE_PIN_WIRING.md` ↔ `SCH_TapeBook_V1.3.md` GPIO 完全一致
 
 ---
 
@@ -271,7 +271,7 @@ GPIO_CTRL 默认低电平（上电 = 断开 = 不测量）
 ### 8.1 文档层面
 
 - **附录 D 建议**：新增 "PCB Layout 检查清单" 章节，集中 V1.2 已明确的各项 PCB 规则（5mm 净空、22Ω 串联、阻抗匹配等）
-- **文档结构**：原理图 v1.2 已升级，但文件名仍为 `SCH_TapeBook_V1.2.md`。**强烈建议同步改为 `SCH_TapeBook_V1.2.md` 避免混淆**
+- **文档结构**：原理图已由 v1.2 升级到 v1.3，文件名已同步为 `SCH_TapeBook_V1.3.md` ✅
 - **封装库一致性**：ME6211C33 (SOT-23-5) 封装脚位（VIN/CE/VOUT/NC/GND 顺序）应与 PCB 封装库逐一校对
 - **GPIO 分配表精简**：见 M4
 
@@ -299,7 +299,7 @@ GPIO_CTRL 默认低电平（上电 = 断开 = 不测量）
 **行动建议**：
 
 1. **可立即投板**：V1.2 无阻塞/重要级问题，4 项轻微改进可在 V1.3 处理
-2. **文件命名**：`SCH_TapeBook_V1.0.md` 已改名为 `SCH_TapeBook_V1.2.md`，与文档版本号一致 ✅
+2. **文件命名**：`SCH_TapeBook_V1.0.md` → `SCH_TapeBook_V1.2.md` → `SCH_TapeBook_V1.3.md`，与文档版本号一致 ✅
 3. **持续跟踪**：量产前完成 §6.2 强烈建议清单的 9 项实测验证
 
 **总体评价**：V1.2 在 V1.1 基础上修复了所有遗留问题，电源设计、引脚准确性、蓝牙规划三方面均有显著提升。**V1.2 达到投板就绪状态，建议立即进入 PCB Layout 阶段**。
