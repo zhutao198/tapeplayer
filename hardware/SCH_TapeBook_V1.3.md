@@ -1,4 +1,4 @@
-# TapeBook V1.2 原理图设计规格书
+# TapeBook V1.3 原理图设计规格书
 
 > **项目**: TapeBook — 磁带机风格听书机  
 > **主控**: ESP32-S3-WROOM-1 N16R8 (16MB Quad Flash + 8MB Octal PSRAM)  
@@ -607,4 +607,4 @@ PACK- ───→ GND
 | 1.0 | 2026-07-09 | 初始版本，基于 HARDWARE_PIN_WIRING.md v1.1 + config.h |
 | 1.1 | 2026-07-10 | B1: AMS1117→ME6211C33 + MAX98357 改 BAT 直供；I1: GPIO 表加物理引脚列 + USB 修正 + 引脚图注记；I2: GPIO48/47 电压域+N16R8 一致性修正；I3: 耳机座移除，改蓝牙耳机规划(V1.1)；I4: EN 电容 100nF→1µF；M2: 补 GPIO45；M3: 电源树 MAX98357 BAT 直供明确 |
 | **1.2** | **2026-07-10** | **B2: ASCII 引脚图重画为 WROOM-1 物理编号，与 §2.2 完全一致；N1: ME6211C33 封装 SOT-89→SOT-23-5 引脚编号修正；N2: 1kΩ→100kΩ 泄放电阻；N3: §2.2 追加 VDD_SPI PCB 净空注释；I3: A2DP→LE Audio；附录 A AMS1117→ME6211C33** |
-| **1.3** | **2026-07-10** | **M4: §2.2 去除 Pin 28-36 镜像行保留有效行，加表头注释避免混淆；M5: §2.2 表首补物理 Pin 1 (GND) 行；M6: §6.3 补充 P-MOSFET 时序（默认断开/1ms 稳定/≥1s 间隔）；M7: §2.1 ASCII 图 EPAD 底部加 EPAD=41 标识；文件同步重命名 SCH_TapeBook_V1.0→V1.2** |
+| **1.3** | **2026-07-10** | **M4: §2.2 去除 Pin 28-36 镜像行保留有效行，加表头注释避免混淆；M5: §2.2 表首补物理 Pin 1 (GND) 行；M6: §6.3 补充 P-MOSFET 时序（默认断开/1ms 稳定/≥1s 间隔）；M7: §2.1 ASCII 图 EPAD 底部加 EPAD=41 标识；文件同步重命名 SCH_TapeBook_V1.0→V1.3** |

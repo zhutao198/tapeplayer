@@ -1,4 +1,4 @@
-# BT_AUDIO_PLAN.md — LE Audio 蓝牙耳机支持方案（V1.1）
+# BT_AUDIO_PLAN.md — LE Audio 蓝牙耳机支持方案（V1.0）
 
 > **状态**：规划阶段（待实施）
 > **目标**：ESP32-S3 作为 LE Audio Source，将音频流式传输到 LE Audio 蓝牙耳机
