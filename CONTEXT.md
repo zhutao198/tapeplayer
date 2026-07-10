@@ -69,7 +69,7 @@ git status --short            # 未提交改动
 | **R012** | **2026-07-07** | `1d95d12` | **文件夹浏览（V1.0 MVP 最后功能）** | **✅** |
 | **R013** | **2026-07-07** | `4f3b25e` | **R012 review 修复（scroll clamp + API cleanup）** | **✅** |
 | **R014** | **2026-07-09** | `eca38cc` | **PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计** | **✅** |
-| **R015** | **2026-07-10** | *待提交* | **硬件设计修复（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档** | **✅** |
+| **R015** | **2026-07-10** | **`d54d0ed`** | **硬件设计修复（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档** | **✅** |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 
@@ -86,6 +86,8 @@ git status --short            # 未提交改动
 | 断点续播 | NVS 命名空间 `tapebook` | 不占 SD 写寿命 | DETAILED_DESIGN.md |
 | 音量控制 | I2S ALC (i2s_alc_volume_set) | ADF 内置 ALC 音量，-96~+12dB 范围 | audio_player.cpp |
 | OLED 驱动 | u8g2_esp32_hal（源码编入 main 组件）| 避免静态库链接顺序问题 | CMakeLists.txt |
+| 蓝牙方案 | LE Audio（LC3，无需额外 BOM）| ESP32-S3 仅有 BLE 5.0，无 BT Classic；LE Audio 通过 `esp-ble-audio` 组件实现 | BT_AUDIO_PLAN.md |
+| ME6211C33 封装 | SOT-23-5（M5G-N）| 实际采购型号带 CE 使能引脚；非 SOT-89 | SCH_TapeBook_V1.0.md |
 
 ---
 

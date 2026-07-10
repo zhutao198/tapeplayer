@@ -109,6 +109,16 @@
   - 原理图：6 页规格书 + Protel 网表 + CSV BOM（30 种物料）
   - H-8: ADC 电池检测桩代码（换算公式注释）
   - L-1: bookmark 接入 STOP 双击事件
+- ✅ **R015 完成——硬件设计修复 6 项闭环（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档**
+  - B2：ASCII 引脚图重画为 WROOM-1 物理编号（消除 Pin 22-27 冲突）
+  - N1：ME6211C33 SOT-89→SOT-23-5（M5G-N，带 CE 使能引脚）
+  - N2：泄放电阻 1kΩ→100kΩ
+  - N3：GPIO45/46/47/48 ≥5mm PCB 净空注释
+  - N4：HARDWARE_PIN_WIRING.md 电源树同步（AMS1117→ME6211C33 + BAT直供）
+  - N5：附录 A AMS1117→ME6211C33M5G-N
+  - I3：§3.4 "A2DP"→"LE Audio"
+  - BOM/网表同步更新
+  - 新建 `docs/BT_AUDIO_PLAN.md`——LE Audio 蓝牙耳机方案（11 节，含 IDF 升级前提/API 流程/12 步实施计划）
 
 ---
 
@@ -227,13 +237,23 @@
 - **修复**：`u8g2_esp32_hal.h` 加 `extern "C" { }` 包裹
 - **教训**：所有可能被 C++ 引用的 C 头文件必须加 `extern "C"` 守卫（即使现在不用，将来可能被 C++ 调用）
 
-### L020：静态库链接顺序——依赖库必须出现在使用者之后
+### L020：ESP32-S3 仅支持 BLE 5.0（无 BT Classic），LE Audio 是唯一蓝牙音频方案
+- **现象**：用户期望 A2DP 蓝牙耳机，但 ESP32-S3 硬件不支持 BT Classic（无 BR/EDR 控制器）
+- **解决**：LE Audio（LC3 编解码，BLE ISO 等时通道），通过 `esp-ble-audio` 组件实现
+- **教训**：ESP32 系列双模（BT Classic + BLE）仅限 ESP32、ESP32-C3；ESP32-S3、C6、H2 只有 BLE 5.0
+
+### L021：ME6211C33 实际封装为 SOT-23-5（非 SOT-89）
+- **现象**：早期设计假定 SOT-89，但实际采购 ME6211C33M5G-N 为 SOT-23-5（带 CE 使能引脚）
+- **引脚**：1=VIN, 2=CE, 3=VOUT, 4=NC, 5=GND
+- **教训**：相同型号不同后缀封装不同，必须根据实际采购后缀确定封装
+
+### L022：静态库链接顺序——依赖库必须出现在使用者之后
 - **现象**：`libu8g2_esp32_hal.a` 定义了符号，`libmain.a` 引用这些符号，但链接失败
 - **根因**：GNU ld 从左到右处理静态库；如果库在前面，且前面没有对象引用其符号，库里的 .o 被丢弃
 - **解决**：把 `u8g2_esp32_hal.c` 源码直接编入 `main` 组件，避免静态库链接
 - **教训**：ESP-IDF 中组件 `REQUIRES` 不一定保证正确链接顺序；把强依赖源的源码直接放到使用组件是最确定的做法
 
-### L021：Kconfig 符号必须配套 CMake 条件才生效
+### L023：Kconfig 符号必须配套 CMake 条件才生效
 - **现象**：`sdkconfig.defaults` 中有 `CONFIG_USE_U8G2=y`，但 cmake 未`#ifdef`使用，实际被静默忽略
 - **修复**：在 `Kconfig.projbuild` 中定义 `config USE_U8G2` + `main/CMakeLists.txt REQUIRES u8g2`
 - **教训**：menuconfig 符号要生效需要 3 步：① Kconfig 定义 ② CMake 引用 ③ C 代码 `#ifdef`
@@ -258,17 +278,19 @@
 1. **烧录验证硬件**：`build.bat -p COMx flash` 确认 SD/OLED/I2S/按键全部跑通
 2. **V1.1 起步**：定时关机（ADC 实装）、A-B 复读、按键提示音
 3. **提交原理图到 KiCad/Altium**：手工输入 SCH_TapeBook_V1.0.md → PCB layout
-4. **量产前**：OTA 接收代码、完整系统测试
+4. **LE Audio 实施**：按 BT_AUDIO_PLAN.md 12 步计划——先验证 IDF master 构建
 
 ### 短期
 - V1.1 体验增强：定时关机、按键音、屏幕保护
+- LE Audio 可行性验证（IDF master + esp-ble-audio 编译）
 
 ### 中期
 - 量产前：OTA 接收代码（HTTP/HTTPS）
 - V1.2 进阶：书签、语音、电量、设置菜单
+- LE Audio CIS 连接 + LC3 编解码集成
 
 ### 长期
-- V2.0 远期：蓝牙 A2DP、EQ、速度微调
+- V2.0 远期：蓝牙音频（LE Audio）、EQ、速度微调
 
 ---
 
@@ -296,16 +318,16 @@
 ## 8. R 节点 Git 状态
 
 ```
+d54d0ed R015: 硬件设计修复 6 项（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档
 eca38cc R014: PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计
 4f3b25e R013: post-R012 review fixes （scroll clamp + API cleanup + CODE_REVIEW.md sync）
 1d95d12 R012: 实现文件夹浏览（V1.0 MVP 最后功能补齐）
 df11f0d R011: 修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成
-76441b1 R010: 代码审查全部 38 项清零（bookmark/voice_prompt/M-2 timeout/M-3 init/设计确认）
 ```
 
-**16 个 R 节点**（含 baseline + R001-R014）全部 committed + tagged（annotated）。
+**17 个 R 节点**（含 baseline + R001-R015）全部 committed + tagged（annotated）。
 
 ---
 
-**作者**：Claude（5 R 节点完成：R010 → R014）  
+**作者**：Claude（6 R 节点完成：R010 → R015）  
 **更新规则**：每次 R 节点 commit 后同步更新
