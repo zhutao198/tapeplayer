@@ -1,11 +1,11 @@
-# TapeBook V1.0 原理图设计规格书
+# TapeBook V1.2 原理图设计规格书
 
 > **项目**: TapeBook — 磁带机风格听书机  
 > **主控**: ESP32-S3-WROOM-1 N16R8 (16MB Quad Flash + 8MB Octal PSRAM)  
-> **文档版本**: 1.2  
+> **文档版本**: 1.3  
 > **创建日期**: 2026-07-10  
 > **对应硬件版本**: HARDWARE_PIN_WIRING.md v1.2  
-> **关联文件**: `SCH_TapeBook_V1.0.net`（Protel 网表）, `SCH_TapeBook_V1.0_BOM.csv`（BOM）
+> **关联文件**: `SCH_TapeBook_V1.2.net`（Protel 网表）, `SCH_TapeBook_V1.2_BOM.csv`（BOM）
 
 ---
 
@@ -168,8 +168,8 @@ PACK- ───→ GND
                   │  │ 36  │ 37   │ 38   │ 39   │ 40│   │
                   │  │ IO44│ IO43 │ IO2  │ IO1  │GND│   │
                   │  └─────┴──────┴──────┴──────┴───┘   │
-                  │           41: EPAD(GND)              │
-                  └─────────────────────────────────────┘
+                   │          EPAD=41 (GND)                │
+                   └─────────────────────────────────────┘
 
 注：上图引脚编号为 WROOM-1 数据手册 v1.8 Table 2-1 物理引脚号，
      与 §2.2 GPIO 分配表"物理"列完全一致。
@@ -177,10 +177,12 @@ PACK- ───→ GND
 
 ### 2.2 GPIO 分配表（Sheet 2 连接总览）
 
-> 物理引脚编号参考 WROOM-1 数据手册 v1.8 Table 2-1。原理图逻辑引脚编号仅供本图内部指引用。
+> 物理引脚编号参考 WROOM-1 数据手册 v1.8 Table 2-1。原理图逻辑引脚编号仅供本图内部指引用。  
+> 本表仅列出有效 GPIO（已删除 V1.1 中 Pin 28-36 镜像行，避免混淆）。
 
 | 原理图 | 物理 | 信号 | 接至 | 备注 |
 |:------:|:---:|------|------|------|
+| — | 1 | GND | GND | 模组公共地，详见 §2.1 ASCII 图 |
 | Pin 2 | 2 | 3V3 | 3.3V 电源轨 | 模组主供电 |
 | Pin 3 | 3 | EN | R=10kΩ → 3.3V + C=1µF → GND | RC 复位 |
 | Pin 4 | 27 | GPIO0 | R=10kΩ → 3.3V + SW_BOOT → GND | 烧录模式 |
@@ -207,15 +209,6 @@ PACK- ───→ GND
 | Pin 25 | 26 | GPIO45 | **N/C** | Strapping（VDD_SPI），N16R8 悬空 |
 | Pin 26 | 14 | GPIO20 | USB_D+ (Type-C D+) | USB Serial/JTAG |
 | Pin 27 | 13 | GPIO19 | USB_D- (Type-C D-) | USB Serial/JTAG |
-| Pin 28 | 9 | GPIO16 | (见 Pin 16) | — |
-| Pin 29 | 8 | GPIO15 | (见 Pin 15) | — |
-| Pin 30 | 22 | GPIO14 | (见 Pin 14) | — |
-| Pin 31 | 21 | GPIO13 | (见 Pin 13) | — |
-| Pin 32 | 20 | GPIO12 | (见 Pin 12) | — |
-| Pin 33 | 19 | GPIO11 | (见 Pin 11) | — |
-| Pin 34 | 18 | GPIO10 | (见 Pin 10) | — |
-| Pin 35 | 17 | GPIO9 | (见 Pin 9) | — |
-| Pin 36 | 12 | GPIO8 | (见 Pin 8) | — |
 | Pin 37 | 7 | GPIO7 | I2S_MCLK / N/C | MAX98357 可选 MCLK |
 | Pin 38 | 6 | GPIO6 | I2S_DOUT | MAX98357 DIN |
 | Pin 39 | 5 | GPIO5 | I2S_WS | MAX98357 LRC |
@@ -555,11 +548,18 @@ PACK- ───→ GND
 
 ```
     改进方案：P-MOSFET 隔离
-    BAT+ ──── R1 ─┬── P-MOSFET (Si2301) ──── GPIO3
-                  │       G=GPIO_CTRL (高=断开)
-                  R2      S=D, D=S
-                  │
-                 GND
+    BAT+ ──── R1(100k) ─┬── P-MOSFET (Si2301) ──── GPIO3 (ADC1_CH2)
+                        │       G=GPIO_CTRL, S→R1, D→R2
+                        R2(100k)  S/D 互换（PMOS 无方向）
+                        │
+                       GND
+
+    GPIO_CTRL 默认低电平（上电 = 断开 = 不测量）。
+    固件测量电池电压时序：
+      1. GPIO_CTRL 置高 → MOSFET 导通 → 分压网络连通
+      2. 等待 1ms 稳定 → ADC 读取 GPIO3 电压
+      3. GPIO_CTRL 置低 → MOSFET 关断 → 降低漏电流
+      4. 测量间隔 ≥ 1s，避免频繁切换
 ```
 
 ---
@@ -605,6 +605,6 @@ PACK- ───→ GND
 | 版本 | 日期 | 变更内容 |
 |------|------|---------|
 | 1.0 | 2026-07-09 | 初始版本，基于 HARDWARE_PIN_WIRING.md v1.1 + config.h |
-| 1.0 | 2026-07-09 | 初始版本，基于 HARDWARE_PIN_WIRING.md v1.1 + config.h |
 | 1.1 | 2026-07-10 | B1: AMS1117→ME6211C33 + MAX98357 改 BAT 直供；I1: GPIO 表加物理引脚列 + USB 修正 + 引脚图注记；I2: GPIO48/47 电压域+N16R8 一致性修正；I3: 耳机座移除，改蓝牙耳机规划(V1.1)；I4: EN 电容 100nF→1µF；M2: 补 GPIO45；M3: 电源树 MAX98357 BAT 直供明确 |
 | **1.2** | **2026-07-10** | **B2: ASCII 引脚图重画为 WROOM-1 物理编号，与 §2.2 完全一致；N1: ME6211C33 封装 SOT-89→SOT-23-5 引脚编号修正；N2: 1kΩ→100kΩ 泄放电阻；N3: §2.2 追加 VDD_SPI PCB 净空注释；I3: A2DP→LE Audio；附录 A AMS1117→ME6211C33** |
+| **1.3** | **2026-07-10** | **M4: §2.2 去除 Pin 28-36 镜像行保留有效行，加表头注释避免混淆；M5: §2.2 表首补物理 Pin 1 (GND) 行；M6: §6.3 补充 P-MOSFET 时序（默认断开/1ms 稳定/≥1s 间隔）；M7: §2.1 ASCII 图 EPAD 底部加 EPAD=41 标识；文件同步重命名 SCH_TapeBook_V1.0→V1.2** |

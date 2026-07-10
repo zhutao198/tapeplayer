@@ -277,7 +277,7 @@
 ### 下次会话
 1. **烧录验证硬件**：`build.bat -p COMx flash` 确认 SD/OLED/I2S/按键全部跑通
 2. **V1.1 起步**：定时关机（ADC 实装）、A-B 复读、按键提示音
-3. **提交原理图到 KiCad/Altium**：手工输入 SCH_TapeBook_V1.0.md → PCB layout
+3. **提交原理图到 KiCad/Altium**：手工输入 SCH_TapeBook_V1.2.md → PCB layout
 4. **LE Audio 实施**：按 BT_AUDIO_PLAN.md 12 步计划——先验证 IDF master 构建
 
 ### 短期

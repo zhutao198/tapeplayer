@@ -2,7 +2,7 @@
 
 | 评审信息 | |
 |:---------|---|
-| 评审对象 | `hardware/SCH_TapeBook_V1.0.md` (文档版本 V1.1，6 页原理图设计规格书) |
+| 评审对象 | `hardware/SCH_TapeBook_V1.2.md` (文档版本 V1.1，6 页原理图设计规格书) |
 | 对比基线 | `docs/HARDWARE_REVIEW.md` (V1.0 评审) |
 | 关联文档 | `main/config.h`, `docs/HARDWARE_PIN_WIRING.md` (v1.1) |
 | 主控 | ESP32-S3-WROOM-1 N16R8 (16MB Quad Flash + 8MB Octal PSRAM) |
@@ -204,9 +204,9 @@ AMS1117-3.3 LDO (800mA)    ← 错误，应改为 ME6211C33
 
 ---
 
-### N5. SCH_TapeBook_V1.0.md 附录 A 仍列 AMS1117
+### N5. SCH_TapeBook_V1.2.md 附录 A 仍列 AMS1117
 
-**位置**：`hardware/SCH_TapeBook_V1.0.md` 附录 A
+**位置**：`hardware/SCH_TapeBook_V1.2.md` 附录 A
 
 **问题**：
 
@@ -266,7 +266,7 @@ AMS1117-3.3 LDO (800mA)    ← 错误，应改为 ME6211C33
 | GND | — | 40 | — | 接地 ✅ |
 | EPAD | — | 41 | — | 散热片接地 ✅ |
 
-**结论**：GPIO 功能分配零冲突，三文档（`config.h` ↔ `HARDWARE_PIN_WIRING.md` ↔ `SCH_TapeBook_V1.0.md`）完全一致。
+**结论**：GPIO 功能分配零冲突，三文档（`config.h` ↔ `HARDWARE_PIN_WIRING.md` ↔ `SCH_TapeBook_V1.2.md`）完全一致。
 
 ---
 
@@ -339,7 +339,7 @@ AMS1117-3.3 LDO (800mA)    ← 错误，应改为 ME6211C33
 | **N2** | 🟡 重要 | Sheet 1 §1.4 | 1kΩ 泄放电阻持续消耗 3.3mA | 🆕 新发 | 低（改 100kΩ） |
 | **N3** | 🟢 轻微 | Sheet 2 §2.2 | VDD_SPI 域 GPIO 缺 PCB 净空规则 | 🆕 新发 | 低（加注释） |
 | **N4** | 🟡 重要 | `HARDWARE_PIN_WIRING.md` §4 | 电源树仍写 AMS1117，未同步 V1.1 原理图 | 🆕 新发 | 低（同步更新） |
-| **N5** | 🟢 轻微 | `SCH_TapeBook_V1.0.md` 附录 A | AMS1117 仍列为选型 | 🆕 新发 | 低（改文字） |
+| **N5** | 🟢 轻微 | `SCH_TapeBook_V1.2.md` 附录 A | AMS1117 仍列为选型 | 🆕 新发 | 低（改文字） |
 | B1 | 🔴 | Sheet 1 §1.4 | AMS1117 dropout 过高 | ✅ 已修 | — |
 | I1 | 🟡 | Sheet 2 §2.2 | Pin# 与物理引脚不匹配 | ✅ 已修 | — |
 | I2 | 🟡 | Sheet 2 §2.2 | GPIO47/48 电压域错误 | ✅ 已修 | — |
@@ -362,7 +362,7 @@ AMS1117-3.3 LDO (800mA)    ← 错误，应改为 ME6211C33
 | 3 | §1.4 输出端 1kΩ 泄放电阻改为 100kΩ 或删除 | N2 | 已修复 V1.2 ✅ |
 | 4 | §2.2 末尾添加 GPIO45/46/47/48 周边 PCB 净空规则注释 | N3 | 已修复 V1.2 ✅ |
 | 5 | 同步更新 `HARDWARE_PIN_WIRING.md` §4 电源树（AMS1117→ME6211C33 + BAT直供）| N4 | 已修复 V1.2 ✅ |
-| 6 | 修复 `SCH_TapeBook_V1.0.md` 附录 A 的 AMS1117 引用 | N5 | 已修复 V1.2 ✅ |
+| 6 | 修复 `SCH_TapeBook_V1.2.md` 附录 A 的 AMS1117 引用 | N5 | 已修复 V1.2 ✅ |
 
 ### 7.2 强烈建议（量产前）
 
@@ -394,7 +394,7 @@ AMS1117-3.3 LDO (800mA)    ← 错误，应改为 ME6211C33
 7. **EC11 编码器去抖**：10nF 电容 + 中断触发，标准方案
 8. **电池 ADC 分压合理**：1:1 分压 + 100nF 去耦，量程安全
 9. **Type-C CC 电阻**：5.1kΩ × 2 请求 5V/3A，标准配置
-10. **三文档一致性**：`config.h` ↔ `HARDWARE_PIN_WIRING.md` ↔ `SCH_TapeBook_V1.0.md` GPIO 完全一致
+10. **三文档一致性**：`config.h` ↔ `HARDWARE_PIN_WIRING.md` ↔ `SCH_TapeBook_V1.2.md` GPIO 完全一致
 
 ---
 
@@ -403,7 +403,7 @@ AMS1117-3.3 LDO (800mA)    ← 错误，应改为 ME6211C33
 ### 9.1 文档层面
 
 - **附录 C 建议**：新增 "PCB 布局规范" 章节，集中规定模组净空、电源去耦、ESD 防护、3W 喇叭走线等规则
-- **版本号管理**：原理图文档已升级到 V1.1，但文件名仍为 `SCH_TapeBook_V1.0.md`，建议同步改为 `SCH_TapeBook_V1.1.md` 避免混淆
+- **版本号管理**：原理图文档已升级到 V1.1，但文件名仍为 `SCH_TapeBook_V1.2.md`，建议同步改为 `SCH_TapeBook_V1.1.md` 避免混淆
 - **封装库一致性**：ME6211C33 封装脚位（CE/VIN/VOUT/GND 顺序）应与 Altium Designer PCB 封装库逐一校对
 
 ### 9.2 工程实践
@@ -437,7 +437,7 @@ AMS1117-3.3 LDO (800mA)    ← 错误，应改为 ME6211C33
    - N4 HARDWARE_PIN_WIRING.md 电源树已同步
    - N5 附录 A AMS1117 已去除
 
-2. **文件命名建议**：将 `SCH_TapeBook_V1.0.md` 改名为 `SCH_TapeBook_V1.2.md`，与文档版本号保持一致
+2. **文件命名**：`SCH_TapeBook_V1.0.md` 已改名为 `SCH_TapeBook_V1.2.md`，与文档版本号一致 ✅
 
 3. **持续跟踪**：量产前完成 §7.2 强烈建议清单的 7 项实测验证
 

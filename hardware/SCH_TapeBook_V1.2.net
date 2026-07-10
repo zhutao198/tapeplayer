@@ -1,7 +1,7 @@
-* TapeBook V1.0 Protel Netlist
+* TapeBook V1.2 Protel Netlist
 * 主控: ESP32-S3-WROOM-1 N16R8
-* 生成日期: 2026-07-10 (R015: 同步 V1.2 原理图)
-* 关联文档: SCH_TapeBook_V1.0.md
+* 生成日期: 2026-07-10 (R016: 同步 V1.3 原理图)
+* 关联文档: SCH_TapeBook_V1.2.md
 * 格式: Protel ASCII (.net) / 兼容 Altium Designer, PADS
 
 [
