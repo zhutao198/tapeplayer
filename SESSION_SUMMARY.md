@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-07（13 个 R 节点完成：baseline → R012 — V1.0 MVP 完工）
+> **最后更新**：2026-07-09（16 个 R 节点完成：baseline → R014 — PRD 审查修复 + 原理图）
 
 ---
 
@@ -22,6 +22,8 @@
 | 2026-07-06 | R010 审查剩余 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/设计确认） | ✅ 构建通过，二进制 0xb2660 |
 | 2026-07-07 | R011 修复 R010 引入的 6 个 bug（SD 检测/light sleep/pause-resume/截断/溢出/命名歧义）+ H-8 ADC 桩 + L-1 bookmark 集成 | ✅ 构建通过，二进制 0xb2660 |
 | 2026-07-07 | R012 实现文件夹浏览（滚动列表 + Prev/Next/Play/STOP 导航）— **V1.0 MVP 全部 11 项完成！** | ✅ 构建通过，二进制 0xb2a40 |
+| 2026-07-07 | R013 R012 review 修复（scroll clamp + API cleanup） | ✅ 构建通过 |
+| 2026-07-09 | R014 PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计 | ✅ 构建通过，二进制 0xb9b70 |
 
 ---
 
@@ -96,12 +98,14 @@
   - 长按 STOP 进入浏览模式
   - Prev/Next 滚动，Play 选中播放，STOP 退出
   - OLED 滚动列表（5×8 字体，6 条可见，`>` 标记选中行）
-  - 🆕-1: SD 拔卡检测从 `stat()` → `sdmmc_read_sectors()` 实测 SPI
-  - 🆕-2: Light sleep 前加 `save_current_position()`
-  - 🆕-3: 抽出 `audio_player_seek_ms_internal()` 跳过 FF/RW 跳帧 pause/resume
-  - 🆕-4: 长文件名 `"%.21s"` 截断替代手动分支
-  - 🆕-5: `time_buf[32]` → `time_buf[48]`
-  - 🆕-6: press_start_us 注释澄清
+- ✅ **R013 完成——R012 review 修复：scroll overflow clamp + API cleanup**
+- ✅ **R014 完成——PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计**
+  - OLED：根因分析 3 层（Kconfig 符号缺失 → CMake 无 REQUIRES → C++ name mangling）
+  - 音量：ADF 的 `audio_element_set_volume()` 不存在，改用 `i2s_alc_volume_set()`
+  - Bookmark：满 10 时环形覆盖（slot 0 丢弃，前移，新值写末尾）
+  - 定时关机：`power_mgmt_tick()` 内轮询 `power_mgmt_should_shutdown()`
+  - Light sleep：唤醒后统一 `APP_STATE_STOPPED`
+  - 原理图：6 页规格书 + Protel 网表 + CSV BOM（30 种物料）
   - H-8: ADC 电池检测桩代码（换算公式注释）
   - L-1: bookmark 接入 STOP 双击事件
 
@@ -216,11 +220,34 @@
 - **现象**：SD_MODE 不是简单的 GND/VDD 二值，而是 **Shutdown(0V) / Mono(0.16-0.77V) / Right(0.77-1.4V) / Left(>1.4V)** 四级
 - **教训**：必须用电阻分压获得 Mono 模式，直连 VDD 只输出 Left channel
 
+### L019：C++ 代码调用 C 函数必须加 extern "C"（R014 关键教训）
+- **现象**：`display.cpp`（C++）调用 `u8g2_esp32_hal_init()`（C 实现），链接器报 undefined reference
+- **根因**：C++ name mangling 使编译器寻找 `_Z19u8g2_esp32_hal_init...`（mangled），但 C 编译产生 `u8g2_esp32_hal_init`（unmangled）
+- **修复**：`u8g2_esp32_hal.h` 加 `extern "C" { }` 包裹
+- **教训**：所有可能被 C++ 引用的 C 头文件必须加 `extern "C"` 守卫（即使现在不用，将来可能被 C++ 调用）
+
+### L020：静态库链接顺序——依赖库必须出现在使用者之后
+- **现象**：`libu8g2_esp32_hal.a` 定义了符号，`libmain.a` 引用这些符号，但链接失败
+- **根因**：GNU ld 从左到右处理静态库；如果库在前面，且前面没有对象引用其符号，库里的 .o 被丢弃
+- **解决**：把 `u8g2_esp32_hal.c` 源码直接编入 `main` 组件，避免静态库链接
+- **教训**：ESP-IDF 中组件 `REQUIRES` 不一定保证正确链接顺序；把强依赖源的源码直接放到使用组件是最确定的做法
+
+### L021：Kconfig 符号必须配套 CMake 条件才生效
+- **现象**：`sdkconfig.defaults` 中有 `CONFIG_USE_U8G2=y`，但 cmake 未`#ifdef`使用，实际被静默忽略
+- **修复**：在 `Kconfig.projbuild` 中定义 `config USE_U8G2` + `main/CMakeLists.txt REQUIRES u8g2`
+- **教训**：menuconfig 符号要生效需要 3 步：① Kconfig 定义 ② CMake 引用 ③ C 代码 `#ifdef`
+
 ---
 
 ## 5. 性能指标
 
-暂无（首次建档，未跑 benchmark）。
+| 指标 | R013 (MVP) | R014 (PRD fix + OLED) |
+|---|---|---|
+| Build 错误 | 0 | 0 |
+| Binary 大小 | 0xb2a40 (731 MB) | 0xb9b70 (762 MB) |
+| 分区空闲 | 77% | 76% |
+| OLED 驱动 | ❌ 黑屏 | ✅ u8g2 + I2C |
+| 音量控制 | ⚠️ 存值无效 | ✅ i2s_alc_volume_set |
 
 ---
 
@@ -228,8 +255,9 @@
 
 ### 下次会话
 1. **烧录验证硬件**：`build.bat -p COMx flash` 确认 SD/OLED/I2S/按键全部跑通
-2. **V1.1 起步**：定时关机（需实装 ADC）、A-B 复读、按键提示音
-3. **量产前**：OTA 接收代码、完整系统测试
+2. **V1.1 起步**：定时关机（ADC 实装）、A-B 复读、按键提示音
+3. **提交原理图到 KiCad/Altium**：手工输入 SCH_TapeBook_V1.0.md → PCB layout
+4. **量产前**：OTA 接收代码、完整系统测试
 
 ### 短期
 - V1.1 体验增强：定时关机、按键音、屏幕保护
@@ -267,16 +295,16 @@
 ## 8. R 节点 Git 状态
 
 ```
+eca38cc R014: PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计
+4f3b25e R013: post-R012 review fixes （scroll clamp + API cleanup + CODE_REVIEW.md sync）
+1d95d12 R012: 实现文件夹浏览（V1.0 MVP 最后功能补齐）
+df11f0d R011: 修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成
 76441b1 R010: 代码审查全部 38 项清零（bookmark/voice_prompt/M-2 timeout/M-3 init/设计确认）
-853f483 R009: 审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/按钮去抖/采样率）
-2530f23 R008: 代码审查 33 项修复（seek/位置/NULL/PSRAM/WDT/NVS/...）
-e7fb604 R007: 首次成功构建（fix board/audio_player/u8g2_hal）
-126af18 R006: 修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 SSD1315 规格书 + 提取脚本
 ```
 
-**13 个 R 节点**（含 baseline）全部 committed + tagged（annotated）。
+**16 个 R 节点**（含 baseline + R001-R014）全部 committed + tagged（annotated）。
 
 ---
 
-**作者**：Claude（4 R 节点完成）  
+**作者**：Claude（5 R 节点完成：R010 → R014）  
 **更新规则**：每次 R 节点 commit 后同步更新

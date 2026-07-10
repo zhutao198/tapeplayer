@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-07-07（R012 — V1.0 MVP 完成）
+> **最后更新**：2026-07-09（R014 — PRD 审查 5 项修复 + 原理图设计）
 
 ---
 
@@ -66,7 +66,9 @@ git status --short            # 未提交改动
 | **R009** | **2026-07-06** | `853f483` | **审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/锁定态/button/采样率）** | **✅** |
 | **R010** | **2026-07-06** | `76441b1` | **审查余下 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/设计确认）** | **✅** |
 | **R011** | **2026-07-07** | `df11f0d` | **修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成** | **✅** |
-| **R012** | **2026-07-07** | 待 commit | **文件夹浏览（V1.0 MVP 最后功能）** | **✅** |
+| **R012** | **2026-07-07** | `1d95d12` | **文件夹浏览（V1.0 MVP 最后功能）** | **✅** |
+| **R013** | **2026-07-07** | `4f3b25e` | **R012 review 修复（scroll clamp + API cleanup）** | **✅** |
+| **R014** | **2026-07-09** | `eca38cc` | **PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计** | **✅** |
 
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`
 
@@ -81,6 +83,8 @@ git status --short            # 未提交改动
 | 存储 | MicroSD SPI | 简单可靠 | README.md |
 | 显示 | SSD1306 0.96寸 OLED I2C | 便宜、低功耗 | README.md |
 | 断点续播 | NVS 命名空间 `tapebook` | 不占 SD 写寿命 | DETAILED_DESIGN.md |
+| 音量控制 | I2S ALC (i2s_alc_volume_set) | ADF 内置 ALC 音量，-96~+12dB 范围 | audio_player.cpp |
+| OLED 驱动 | u8g2_esp32_hal（源码编入 main 组件）| 避免静态库链接顺序问题 | CMakeLists.txt |
 
 ---
 
