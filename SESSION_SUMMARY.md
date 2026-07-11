@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-11（R019 — R018 build 验证通过 + 3 个编译副作用修复）
+> **最后更新**：2026-07-11（R020 — R018 评审闭环 + H-3 整数四舍五入修复，19/19 全闭环）
 
 ---
 
@@ -28,6 +28,7 @@
 | 2026-07-11 | 用户要求代码审计（仅汇总，不改动） | ✅ 报告 docs/CODE_AUDIT_R018.md（6C+7H+11M+15L） |
 | 2026-07-11 | 用户授权"帮我修复" → R018 节点框架已存在，按其 19 项清单实施 | ✅ commit `8a90513`；19 项全部落地 |
 | 2026-07-11 | 用户指出本机已配 ESP-IDF/ESP-ADF → 跑本地 build 验证，发现 3 个编译错误，R019 修复闭环 | ✅ commit `06f9be9`；`audiobook_player.bin` 762KB（0xb9f50），分区 76% 空闲 |
+| 2026-07-11 | 用户评审 R018 发现 H-3 实际修复失败（截断 vs 四舍五入）；按建议方案 C 采纳整数四舍五入 trick；评审报告入仓 | ✅ commit `06bb8d0`；R018 修复成功率 100%（19/19） |
 
 ---
 
@@ -130,6 +131,25 @@
   - **Low（1/15）**：L-8 playlist 加 `$RECYCLE.BIN` 目录过滤
   - **未修（含理由）**：C-5 HAL 实现核实后风险低（静态结构体已 OK）/ M-1 全局 `-Wno-error` 待精确 ADF target / M-3/M-6/M-7 影响有限 / L-1~L-15 大多为性能优化 / dead code，留待 V1.1
   - **影响**：12 文件 +608 / -45；2026-07-11 commit `8a90513` + tag `R018`（annotated）
+- ✅ **R019 完成——R018 build 验证 + 修复 3 个编译副作用**
+  - fix-1：`audio_player.cpp` 删除 R018 遗留的 `g_pause_start_us` 未用变量（dead code）
+  - fix-2：`main.cpp` H-2 断言数组 `int[]` → `gpio_num_t[]`（适配 `esp_sleep_is_valid_wakeup_gpio` 签名）
+  - fix-3：`u8g2_esp32_hal/CMakeLists.txt` `PRIV_REQUIRES driver`（C-4 自含组件化时漏）
+  - **build 验证通过**：`audiobook_player.bin` 762KB（0xb9f50）；分区 76% 空闲
+  - 2026-07-11 commit `06f9be9` + tag `R019`（annotated）
+- ✅ **R020 完成——R018 评审闭环 + H-3 用户重做（整数四舍五入 trick）**
+  - H-3 用户评审发现：我用 `(int)((x*12.0f)/50)` 是**截断**而非四舍五入，结果与原整数除法相同
+  - **用户修复（采纳方案 C）**：纯整数 + `+25` 四舍五入
+    ```cpp
+    alc_vol = ((volume - 50) * 12 + 25) / 50;  // 低音量段
+    alc_vol = ((volume - 50) * 48 + 25) / 50;  // 高音量段
+    ```
+  - **对比验证**：vol=54 原 0dB → 新 1dB（贴近真实 0.96）；vol=58 原 1dB → 新 2dB（贴近 1.92）
+  - **附加优势**：无 FPU 调用，code size 更小，嵌入式友好
+  - **已知 quirk**：`+25/50` 对负数不对称向 0 偏向 +1dB；vol=1..49 极低音量档听感无差异
+  - 评审报告入仓：`docs/CODE_REVIEW_R018.md`（644 行，综合 4.3/5，4 项新发现 N1-N4）
+  - **总体 100% 闭环**：R018+R019+R020 累计修复 19/19、build 通过、可投板
+  - 2026-07-11 commit `06bb8d0` + tag `R020`（annotated）
 
 ---
 
