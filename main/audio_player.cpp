@@ -52,9 +52,8 @@ static float        g_current_speed = TAPE_SPEED_NORMAL;
 static int          g_total_duration_ms = 0;
 static int          g_total_file_bytes = 0;
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采样率缓存
-static uint64_t     g_play_start_us = 0;               // 本次播放起始（或 resume 时重置）
-static uint64_t     g_pause_start_us = 0;              // 暂停起始时间
-static int64_t      g_play_offset_us = 0;              // 暂停前已累计播放时间（不含暂停）
+static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
+static int64_t      g_play_offset_us = 0;              // pause 时锁存的已播放时长，resume 时叠加
 
 static audio_status_cb_t g_status_cb = NULL;
 static void              *g_user_data = NULL;

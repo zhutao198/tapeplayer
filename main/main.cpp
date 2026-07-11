@@ -542,7 +542,7 @@ static void init_hardware(void)
     g_play_mode = (play_mode_t)settings_load_play_mode();
 
     // 11. 验证所有按键 GPIO 可唤醒（RTC IO 范围检查）
-    const int wakeup_gpios[] = {
+    const gpio_num_t wakeup_gpios[] = {
         BTN_PLAY_PAUSE, BTN_STOP, BTN_PREV, BTN_NEXT, BTN_REWIND, BTN_FAST_FORWARD
     };
     for (size_t i = 0; i < sizeof(wakeup_gpios) / sizeof(wakeup_gpios[0]); i++) {
