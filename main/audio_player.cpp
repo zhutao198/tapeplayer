@@ -375,9 +375,11 @@ void audio_player_set_volume(int volume)
         if (volume <= 0) {
             alc_vol = -96;
         } else if (volume <= 50) {
-            alc_vol = (int)((volume - 50) * 48.0f / 50.0f);
+            // 低音量段：vol=0→-48dB, vol=50→0dB；整数四舍五入避免截断（H-3 修复）
+            alc_vol = ((volume - 50) * 48 + 25) / 50;
         } else {
-            alc_vol = (int)((volume - 50) * 12.0f / 50.0f);
+            // 高音量段：vol=50→0dB, vol=100→+12dB；整数四舍五入避免截断（H-3 修复）
+            alc_vol = ((volume - 50) * 12 + 25) / 50;
         }
         i2s_alc_volume_set(g_i2s_writer, alc_vol);
     }
