@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-11（R018 — 代码审计修复 19 项：6C+7H+5M+1L）
+> **最后更新**：2026-07-11（R019 — R018 build 验证通过 + 3 个编译副作用修复）
 
 ---
 
@@ -26,7 +26,8 @@
 | 2026-07-09 | R014 PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计 | ✅ 构建通过，二进制 0xb9b70 |
 | 2026-07-10 | R015 硬件设计修复（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档 | ✅ 全部闭环；新建 BT_AUDIO_PLAN.md |
 | 2026-07-11 | 用户要求代码审计（仅汇总，不改动） | ✅ 报告 docs/CODE_AUDIT_R018.md（6C+7H+11M+15L） |
-| 2026-07-11 | 用户授权"帮我修复" → R018 节点框架已存在，按其 19 项清单实施 | ✅ commit `8be38adb`；19 项全部落地 |
+| 2026-07-11 | 用户授权"帮我修复" → R018 节点框架已存在，按其 19 项清单实施 | ✅ commit `8a90513`；19 项全部落地 |
+| 2026-07-11 | 用户指出本机已配 ESP-IDF/ESP-ADF → 跑本地 build 验证，发现 3 个编译错误，R019 修复闭环 | ✅ commit `06f9be9`；`audiobook_player.bin` 762KB（0xb9f50），分区 76% 空闲 |
 
 ---
 
@@ -128,7 +129,7 @@
   - **Medium（5/11）**：M-2 LONG_PRESS→IDLE 发 RELEASE 补全 / M-4 i2s_stream_init NULL 检查 / M-8 settings_flush 仅在 PLAYING/PAUSED 执行 / M-9 on_track_finished 回调 NVS 写异步化 / M-10 bookmark_add 失败 ESP_LOGW
   - **Low（1/15）**：L-8 playlist 加 `$RECYCLE.BIN` 目录过滤
   - **未修（含理由）**：C-5 HAL 实现核实后风险低（静态结构体已 OK）/ M-1 全局 `-Wno-error` 待精确 ADF target / M-3/M-6/M-7 影响有限 / L-1~L-15 大多为性能优化 / dead code，留待 V1.1
-  - **影响**：12 文件 +608 / -45；2026-07-11 commit `8be38adb` + tag `R018`（annotated）
+  - **影响**：12 文件 +608 / -45；2026-07-11 commit `8a90513` + tag `R018`（annotated）
 
 ---
 
