@@ -30,7 +30,7 @@ esp_err_t get_i2s_pins(int port, board_i2s_pin_t *i2s_config)
         i2s_config->ws_io_num = GPIO_NUM_5;
         i2s_config->data_out_num = GPIO_NUM_6;
         i2s_config->data_in_num = GPIO_NUM_NC;
-        i2s_config->mck_io_num = GPIO_NUM_7;
+        i2s_config->mck_io_num = GPIO_NUM_NC;
     } else {
         memset(i2s_config, -1, sizeof(board_i2s_pin_t));
         ESP_LOGE(TAG, "i2s port %d is not supported", port);

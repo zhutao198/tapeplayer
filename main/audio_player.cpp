@@ -111,6 +111,10 @@ void audio_player_init(void)
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
     i2s_cfg.type = AUDIO_STREAM_WRITER;
     g_i2s_writer = i2s_stream_init(&i2s_cfg);
+    if (!g_i2s_writer) {
+        ESP_LOGE(TAG, "Failed to create I2S writer stream");
+        return;
+    }
 
     ESP_LOGI(TAG, "Audio subsystem initialized (I2S writer ready)");
 }
@@ -214,8 +218,8 @@ void audio_player_pause(void)
 {
     if (g_is_playing && !g_is_paused && g_pipeline) {
         audio_pipeline_pause(g_pipeline);
+        g_play_offset_us += (int64_t)(esp_timer_get_time() - g_play_start_us);
         g_is_paused = true;
-        g_pause_start_us = esp_timer_get_time();
         ESP_LOGI(TAG, "Paused");
     }
 }
@@ -223,9 +227,6 @@ void audio_player_pause(void)
 void audio_player_resume(void)
 {
     if (g_is_playing && g_is_paused && g_pipeline) {
-        // 累计暂停前的播放时间
-        g_play_offset_us += (int64_t)(esp_timer_get_time() - g_pause_start_us);
-        // 重置起始时间（抵消暂停区间）
         g_play_start_us = esp_timer_get_time();
         audio_pipeline_resume(g_pipeline);
         g_is_paused = false;
@@ -375,9 +376,9 @@ void audio_player_set_volume(int volume)
         if (volume <= 0) {
             alc_vol = -96;
         } else if (volume <= 50) {
-            alc_vol = (volume - 50) * 48 / 50;  // -48..0 dB
+            alc_vol = (int)((volume - 50) * 48.0f / 50.0f);
         } else {
-            alc_vol = (volume - 50) * 12 / 50;  // 0..+12 dB
+            alc_vol = (int)((volume - 50) * 12.0f / 50.0f);
         }
         i2s_alc_volume_set(g_i2s_writer, alc_vol);
     }

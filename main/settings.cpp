@@ -44,16 +44,25 @@ void settings_save_position(int track_idx, int position_s, const char *file_name
     esp_err_t err;
 
     err = nvs_set_u16(g_nvs_handle, NVS_KEY_TRACK, (uint16_t)track_idx);
-    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u16(%s) failed: 0x%x", NVS_KEY_TRACK, err);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_u16(%s) failed: 0x%x", NVS_KEY_TRACK, err);
+        return;
+    }
 
     err = nvs_set_u32(g_nvs_handle, NVS_KEY_POSITION, (uint32_t)position_s);
-    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u32(%s) failed: 0x%x", NVS_KEY_POSITION, err);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_u32(%s) failed: 0x%x", NVS_KEY_POSITION, err);
+        return;
+    }
 
     /* 保存文件名，恢复时校验文件是否仍存在 */
     char key[32];
     snprintf(key, sizeof(key), "book_%d_name", track_idx);
     err = nvs_set_str(g_nvs_handle, key, file_name ? file_name : "");
-    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_str(%s) failed: 0x%x", key, err);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_str(%s) failed: 0x%x", key, err);
+        return;
+    }
 
     nvs_commit(g_nvs_handle);
     ESP_LOGD(TAG, "Saved: track=%d pos=%ds name='%s'", track_idx, position_s, file_name);

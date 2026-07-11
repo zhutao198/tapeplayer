@@ -39,13 +39,14 @@ static bool     g_display_sleep = false;
 static uint32_t calc_fingerprint(player_state_t state,
                                   int track_idx, int total,
                                   int current_sec, int total_sec,
-                                  int gear, int volume)
+                                  float speed, int gear, int volume)
 {
     uint32_t h = (uint32_t)state;
     h = h * 31 + (uint32_t)track_idx;
     h = h * 31 + (uint32_t)total;
     h = h * 31 + (uint32_t)current_sec;
     h = h * 31 + (uint32_t)total_sec;
+    h = h * 31 + (uint32_t)(int)(speed * 10);
     h = h * 31 + (uint32_t)gear;
     h = h * 31 + (uint32_t)volume;
     return h;
@@ -53,12 +54,13 @@ static uint32_t calc_fingerprint(player_state_t state,
 
 #define SCREEN_SAVER_TIMEOUT_US  (30 * 1000000ULL)  // 30s 无变化进入屏保
 
+static u8g2_esp32_hal_t s_u8g2_hal;
+
 void display_init(void)
 {
-    u8g2_esp32_hal_t u8g2_esp32_hal;
-    u8g2_esp32_hal.sda = DISPLAY_SDA_IO;
-    u8g2_esp32_hal.scl = DISPLAY_SCL_IO;
-    u8g2_esp32_hal_init(u8g2_esp32_hal);
+    s_u8g2_hal.sda = DISPLAY_SDA_IO;
+    s_u8g2_hal.scl = DISPLAY_SCL_IO;
+    u8g2_esp32_hal_init(s_u8g2_hal);
 
     u8g2_Setup_ssd1306_i2c_128x64_noname_f(
         &u8g2, U8G2_R0, u8g2_esp32_i2c_byte_cb, u8g2_esp32_gpio_and_delay_cb);
@@ -148,7 +150,7 @@ void display_update(player_state_t state,
 
     /* 脏区检查：帧内容无变化则跳过 I2C 刷新 */
     uint32_t fp = calc_fingerprint(state, track_idx, total,
-                                    current_sec, total_sec, gear, volume);
+                                    current_sec, total_sec, speed, gear, volume);
     if (fp == g_display_fp) {
         /* 屏保：如果内容持续不变超过 30s，关闭显示 */
         if (!g_display_sleep &&

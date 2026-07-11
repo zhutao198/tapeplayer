@@ -194,6 +194,7 @@ int button_manager_scan(btn_event_info_t *events, int max_events)
         case BTN_STATE_LONG_PRESS:
             if (!pressed) {
                 btn->state = BTN_STATE_IDLE;
+                event = BTN_EVENT_RELEASE;
             } else {
                 btn->state = BTN_STATE_HOLD;
             }

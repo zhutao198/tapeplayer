@@ -46,14 +46,28 @@ int bookmark_add(int file_idx, int position_s)
 
     if (slot < 0) {
         // 满：擦除最旧（slot 0），向前移位，新书签放末尾
-        esp_err_t err;
-        for (int i = 0; i < BOOKMARK_MAX_PER_FILE - 1; i++) {
-            char key_old[24], key_new[24];
-            make_key(file_idx, i, key_old, sizeof(key_old));
-            make_key(file_idx, i + 1, key_new, sizeof(key_new));
-            err = nvs_set_i32(g_bm_handle, key_old, slots[i + 1]);
-            if (err != ESP_OK) break;
+        esp_err_t err = ESP_OK;
+        {
+            char key0[24];
+            make_key(file_idx, 0, key0, sizeof(key0));
+            err = nvs_erase_key(g_bm_handle, key0);
         }
+        if (err == ESP_OK) {
+            for (int i = 1; i < BOOKMARK_MAX_PER_FILE; i++) {
+                char key_old[24], key_new[24];
+                make_key(file_idx, i, key_old, sizeof(key_old));
+                make_key(file_idx, i - 1, key_new, sizeof(key_new));
+                int32_t val = 0;
+                esp_err_t r = nvs_get_i32(g_bm_handle, key_old, &val);
+                if (r == ESP_OK) {
+                    r = nvs_set_i32(g_bm_handle, key_new, val);
+                } else {
+                    r = nvs_erase_key(g_bm_handle, key_new);
+                }
+                if (r != ESP_OK) err = r;
+            }
+        }
+        if (err != ESP_OK) return -1;
         slot = BOOKMARK_MAX_PER_FILE - 1;
         char key[24];
         make_key(file_idx, slot, key, sizeof(key));

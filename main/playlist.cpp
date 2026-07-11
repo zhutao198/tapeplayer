@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <sys/stat.h>
 
 // GCC 14 的 -Wformat-truncation 静态分析 snprintf 会截断，
 // 这里 buffer 是有意做大，但 GCC 看不到边界。
@@ -93,10 +94,24 @@ static void scan_dir_recursive(const char *path, const char *prefix, int depth)
             continue;
         /* 跳过隐藏文件和系统目录 */
         if (entry->d_name[0] == '.' ||
-            strcmp(entry->d_name, "System Volume Information") == 0)
+            strcmp(entry->d_name, "System Volume Information") == 0 ||
+            strcasecmp(entry->d_name, "$RECYCLE.BIN") == 0)
             continue;
 
-        if (entry->d_type == DT_REG && playlist_is_audio_file(entry->d_name)) {
+        char full_entry_path[FILENAME_MAX_LEN * 2];
+        snprintf(full_entry_path, sizeof(full_entry_path), "%s/%s", path, entry->d_name);
+
+        bool is_reg = (entry->d_type == DT_REG);
+        bool is_dir = (entry->d_type == DT_DIR);
+        if (!is_reg && !is_dir && entry->d_type == DT_UNKNOWN) {
+            struct stat st;
+            if (stat(full_entry_path, &st) == 0) {
+                is_reg = S_ISREG(st.st_mode);
+                is_dir = S_ISDIR(st.st_mode);
+            }
+        }
+
+        if (is_reg && playlist_is_audio_file(entry->d_name)) {
             if (g_count < PLAYLIST_TRACK_MAX) {
                 /* display_name：如有前缀则加前缀 */
                 if (prefix && *prefix) {
@@ -108,13 +123,12 @@ static void scan_dir_recursive(const char *path, const char *prefix, int depth)
                     g_items[g_count].display_name[FILENAME_MAX_LEN - 1] = '\0';
                 }
                 /* full_path：完整路径 */
-                snprintf(g_items[g_count].full_path, sizeof(g_items[0].full_path),
-                         "%s/%s", path, entry->d_name);
+                strncpy(g_items[g_count].full_path, full_entry_path,
+                        sizeof(g_items[0].full_path) - 1);
+                g_items[g_count].full_path[sizeof(g_items[0].full_path) - 1] = '\0';
                 g_count++;
             }
-        } else if (entry->d_type == DT_DIR) {
-            char sub_path[FILENAME_MAX_LEN * 2];
-            snprintf(sub_path, sizeof(sub_path), "%s/%s", path, entry->d_name);
+        } else if (is_dir) {
             char sub_prefix[FILENAME_MAX_LEN];
             if (prefix && *prefix) {
                 snprintf(sub_prefix, sizeof(sub_prefix), "%s/%s", prefix, entry->d_name);
@@ -122,7 +136,7 @@ static void scan_dir_recursive(const char *path, const char *prefix, int depth)
                 strncpy(sub_prefix, entry->d_name, FILENAME_MAX_LEN - 1);
                 sub_prefix[FILENAME_MAX_LEN - 1] = '\0';
             }
-            scan_dir_recursive(sub_path, sub_prefix, depth + 1);
+            scan_dir_recursive(full_entry_path, sub_prefix, depth + 1);
         }
     }
     closedir(dir);

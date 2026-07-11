@@ -68,6 +68,7 @@ static int            g_current_track = 0;
 static bool           g_key_locked = false;
 static app_state_t    g_state_before_lock = APP_STATE_STOPPED;
 static uint64_t       g_last_display_update = 0;
+static int64_t        g_next_loop_deadline = 0;
 static int            g_vol_hold_counter = 0;  // 音量长按计数器（每 5 步=100ms 调 1 级）
 static int            g_seek_on_play_position = 0;  // 断点恢复 seek 目标（秒）
 // g_last_auto_save_us: 与 auto_save/settings_flush/power_mgmt 耦合，单任务下 OK（M-15: 设计级，可接受）
@@ -78,6 +79,10 @@ static play_mode_t    g_play_mode = PLAY_MODE_SEQUENCE;
 static bool           g_pending_track_finished = false;
 static int            g_pending_track_next = -1;
 static int            g_pending_track_seek = 0;
+
+// 延迟 NVS 保存（避免回调内同步写 NVS）
+static int            g_pending_save_track = -1;
+static int            g_pending_save_position = 0;
 
 static int            g_browse_index = 0;              // 浏览模式选中索引
 static app_state_t    g_state_before_browse = APP_STATE_STOPPED;
@@ -163,10 +168,9 @@ static void on_track_finished(int state, void *user_data)
 {
     ESP_LOGI(TAG, "Track finished naturally");
 
-    // 保存并归零（已听完），仅保存，不在这里调 play（异步到主循环处理）
-    char name[FILENAME_MAX_LEN] = "";
-    playlist_get_name(g_current_track, name, sizeof(name));
-    settings_save_position(g_current_track, 0, name);
+    // 异步：仅记下需要保存的位置和下一曲，主循环中执行
+    g_pending_save_track = g_current_track;
+    g_pending_save_position = 0;
 
     // 根据播放模式决定下一首（仅记下目标，主循环中执行跳转）
     switch (g_play_mode) {
@@ -281,6 +285,8 @@ static void handle_button_events(void)
                 int bm = bookmark_add(g_current_track, pos);
                 if (bm >= 0) {
                     ESP_LOGI(TAG, "Bookmark added at %ds (slot %d)", pos, bm);
+                } else {
+                    ESP_LOGW(TAG, "Bookmark add failed at %ds", pos);
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
                 if (playlist_count() > 0) {
@@ -534,6 +540,14 @@ static void init_hardware(void)
     int vol = settings_load_volume();
     audio_player_set_volume(vol);
     g_play_mode = (play_mode_t)settings_load_play_mode();
+
+    // 11. 验证所有按键 GPIO 可唤醒（RTC IO 范围检查）
+    const int wakeup_gpios[] = {
+        BTN_PLAY_PAUSE, BTN_STOP, BTN_PREV, BTN_NEXT, BTN_REWIND, BTN_FAST_FORWARD
+    };
+    for (size_t i = 0; i < sizeof(wakeup_gpios) / sizeof(wakeup_gpios[0]); i++) {
+        assert(esp_sleep_is_valid_wakeup_gpio(wakeup_gpios[i]));
+    }
 }
 
 /* ============================================================
@@ -580,6 +594,8 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "System ready. Waiting for user input...");
 
+    g_next_loop_deadline = esp_timer_get_time();
+
     while (1) {
         // 1. 处理按键事件
         handle_button_events();
@@ -605,15 +621,23 @@ extern "C" void app_main(void)
             play_current_track();
         }
 
-        // 6. 每 30 秒自动保存断点 + 批量 flush NVS
+        // 5b. 异步 NVS 保存（避免在回调内同步写 NVS）
+        if (g_pending_save_track >= 0) {
+            char name[FILENAME_MAX_LEN] = "";
+            playlist_get_name(g_pending_save_track, name, sizeof(name));
+            settings_save_position(g_pending_save_track, g_pending_save_position, name);
+            g_pending_save_track = -1;
+        }
+
+        // 6. 每 30 秒自动保存断点 + 批量 flush NVS（仅在播放/暂停时写入）
         {
             uint64_t now = esp_timer_get_time();
             if ((now - g_last_auto_save_us) >= AUTO_SAVE_INTERVAL_US) {
                 g_last_auto_save_us = now;
                 if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
                     save_current_position();
+                    settings_flush();
                 }
-                settings_flush();  // 统一提交音量/模式/定时关机等 pending 写入
             }
         }
 
@@ -640,6 +664,13 @@ extern "C" void app_main(void)
                     save_current_position();
                     settings_flush();
                     audio_player_stop();
+                    {
+                        uint64_t wakeup_mask = 0;
+                        wakeup_mask |= (1ULL << BTN_PLAY_PAUSE) | (1ULL << BTN_STOP);
+                        wakeup_mask |= (1ULL << BTN_PREV) | (1ULL << BTN_NEXT);
+                        wakeup_mask |= (1ULL << BTN_REWIND) | (1ULL << BTN_FAST_FORWARD);
+                        esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+                    }
                     esp_deep_sleep_start();
                 }
             }
@@ -694,7 +725,13 @@ extern "C" void app_main(void)
         // 10. 更新显示屏
         update_display();
 
-        // 11. 休眠，控制循环频率
-        vTaskDelay(pdMS_TO_TICKS(BTN_SCAN_INTERVAL));
+        // 11. 休眠，控制循环频率（基于绝对时间对齐，补偿前序耗时）
+        {
+            int64_t now = esp_timer_get_time();
+            if (now < g_next_loop_deadline) {
+                vTaskDelay(pdMS_TO_TICKS((g_next_loop_deadline - now) / 1000));
+            }
+            g_next_loop_deadline += BTN_SCAN_INTERVAL * 1000;
+        }
     }
 }

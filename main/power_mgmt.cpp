@@ -6,6 +6,7 @@
  */
 
 #include "power_mgmt.h"
+#include "settings.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_sleep.h"
@@ -24,6 +25,11 @@ static int      g_tick_count = 0;
 void power_mgmt_init(void)
 {
     g_last_activity_us = esp_timer_get_time();
+    g_auto_off_min = settings_load_auto_off();
+    if (g_auto_off_min > 0) {
+        g_auto_off_start_us = esp_timer_get_time();
+        ESP_LOGI(TAG, "Auto-off restored: %d min", g_auto_off_min);
+    }
     ESP_LOGI(TAG, "Power management initialized (sleep timeout: 5min)");
 }
 
