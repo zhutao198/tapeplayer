@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-10（R015 — 硬件设计修复 6 项 + LE Audio 方案文档）
+> **最后更新**：2026-07-11（R018 — 代码审计修复 19 项：6C+7H+5M+1L）
 
 ---
 
@@ -25,6 +25,8 @@
 | 2026-07-07 | R013 R012 review 修复（scroll clamp + API cleanup） | ✅ 构建通过 |
 | 2026-07-09 | R014 PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计 | ✅ 构建通过，二进制 0xb9b70 |
 | 2026-07-10 | R015 硬件设计修复（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档 | ✅ 全部闭环；新建 BT_AUDIO_PLAN.md |
+| 2026-07-11 | 用户要求代码审计（仅汇总，不改动） | ✅ 报告 docs/CODE_AUDIT_R018.md（6C+7H+11M+15L） |
+| 2026-07-11 | 用户授权"帮我修复" → R018 节点框架已存在，按其 19 项清单实施 | ✅ commit `8be38adb`；19 项全部落地 |
 
 ---
 
@@ -119,6 +121,14 @@
   - I3：§3.4 "A2DP"→"LE Audio"
   - BOM/网表同步更新
   - 新建 `docs/BT_AUDIO_PLAN.md`——LE Audio 蓝牙耳机方案（11 节，含 IDF 升级前提/API 流程/12 步实施计划）
+- ✅ **R018 完成——代码审计修复 19 项（6 Critical + 7 High + 5 Medium + 1 Low）**
+  - **新增交付物**：`docs/CODE_AUDIT_R018.md`（审计报告，145 行）
+  - **Critical（6/6）**：C-1 deep_sleep 加 EXT1 wakeup mask / C-2 pause-resume offset 累加语义 / C-3 书签环形覆盖重写（erase + shift）/ C-4 u8g2_esp32_hal 独立化组件 / C-5 display HAL 形参改 static 全局 / C-6 board_pins_config MCLK=GPIO_NUM_NC（避 Strapping Pin 冲突）
+  - **High（7/7）**：H-1 fingerprint 加 speed 维度 / H-2 init_hardware 加 esp_sleep_is_valid_wakeup_gpio 断言 / H-3 音量映射改浮点除法 / H-4 settings 失败即 return / H-5 主循环 vTaskDelay 改绝对时间对齐 / H-6 playlist DT_REG/DIR 加 stat() 回退 / H-7 power_mgmt_init 从 NVS 恢复 auto_off
+  - **Medium（5/11）**：M-2 LONG_PRESS→IDLE 发 RELEASE 补全 / M-4 i2s_stream_init NULL 检查 / M-8 settings_flush 仅在 PLAYING/PAUSED 执行 / M-9 on_track_finished 回调 NVS 写异步化 / M-10 bookmark_add 失败 ESP_LOGW
+  - **Low（1/15）**：L-8 playlist 加 `$RECYCLE.BIN` 目录过滤
+  - **未修（含理由）**：C-5 HAL 实现核实后风险低（静态结构体已 OK）/ M-1 全局 `-Wno-error` 待精确 ADF target / M-3/M-6/M-7 影响有限 / L-1~L-15 大多为性能优化 / dead code，留待 V1.1
+  - **影响**：12 文件 +608 / -45；2026-07-11 commit `8be38adb` + tag `R018`（annotated）
 
 ---
 
