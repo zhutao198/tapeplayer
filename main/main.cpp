@@ -269,9 +269,15 @@ static void handle_button_events(void)
             } else if (e->event == BTN_EVENT_DOUBLE_CLICK) {
                 cycle_play_mode();
             } else if (e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
-                // R028/H1: 锁定前退出磁带模式，避免 light sleep 唤醒后状态泄漏
-                if (g_app_state == APP_STATE_FAST_FORWARD) tape_control_ff_release();
-                else if (g_app_state == APP_STATE_REWIND) tape_control_rewind_release();
+                // R029/H1: 锁定前退出磁带模式 + 同步 g_app_state=PLAYING
+                // （防 light sleep 唤醒后 g_state_before_lock=FAST_FORWARD 残留图标）
+                if (g_app_state == APP_STATE_FAST_FORWARD) {
+                    tape_control_ff_release();
+                    g_app_state = APP_STATE_PLAYING;
+                } else if (g_app_state == APP_STATE_REWIND) {
+                    tape_control_rewind_release();
+                    g_app_state = APP_STATE_PLAYING;
+                }
                 g_state_before_lock = g_app_state;
                 g_key_locked = true;
                 g_app_state = APP_STATE_LOCKED;
