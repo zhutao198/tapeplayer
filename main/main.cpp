@@ -269,6 +269,9 @@ static void handle_button_events(void)
             } else if (e->event == BTN_EVENT_DOUBLE_CLICK) {
                 cycle_play_mode();
             } else if (e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                // R028/H1: 锁定前退出磁带模式，避免 light sleep 唤醒后状态泄漏
+                if (g_app_state == APP_STATE_FAST_FORWARD) tape_control_ff_release();
+                else if (g_app_state == APP_STATE_REWIND) tape_control_rewind_release();
                 g_state_before_lock = g_app_state;
                 g_key_locked = true;
                 g_app_state = APP_STATE_LOCKED;
@@ -467,12 +470,11 @@ static bool mount_sd_card(void)
         .max_files = 5,
         .allocation_unit_size = 16 * 1024,
         .disk_status_check_enable = true,
-        .use_one_fat = false,
+        .use_one_fat = true,  // R028/M1: 单 FAT 节省内存（嵌入式单用户）
     };
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = SD_SPI_HOST;
-    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+    host.slot = SD_SPI_HOST;  // 显式确认（SDSPI_HOST_DEFAULT 已设但保留显式）
 
     sdspi_device_config_t device_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
     device_cfg.host_id = SD_SPI_HOST;

@@ -297,11 +297,12 @@ static void audio_player_seek_ms_internal(int ms)
     if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
 
     if (g_total_duration_ms > 0 && g_total_file_bytes > 0) {
-        int byte_pos = (int)((int64_t)ms * g_total_file_bytes / g_total_duration_ms);
-        audio_element_set_byte_pos(g_fatfs_reader, byte_pos);  // C1: seek reader, not decoder
+        // R028/L1: int64_t 中转避免 uint64 隐式截断
+        int64_t byte_pos = (int64_t)ms * g_total_file_bytes / g_total_duration_ms;
+        audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);  // C1: seek reader, not decoder
     } else if (g_total_file_bytes > 0) {
-        int byte_pos = (int)((int64_t)ms * g_total_file_bytes / 3600000);
-        audio_element_set_byte_pos(g_fatfs_reader, byte_pos);  // C1: seek reader, not decoder
+        int64_t byte_pos = (int64_t)ms * g_total_file_bytes / 3600000;
+        audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);  // C1: seek reader, not decoder
     }
 
     // C1: 重置 decoder byte_pos，使其从 reader 新位置重新开始解码
