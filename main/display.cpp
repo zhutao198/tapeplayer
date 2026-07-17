@@ -121,9 +121,9 @@ static const char *gear_str(int gear)
     switch (gear) {
     case 0: return "";
     case 1: return "1.5x";
-    case 2: return "2.5x";
-    case 3: return "4x";
-    case 4: return "8x";
+    case 2: return "2.0x";
+    case 3: return "3.0x";
+    case 4: return "4x";
     default: return "";
     }
 }

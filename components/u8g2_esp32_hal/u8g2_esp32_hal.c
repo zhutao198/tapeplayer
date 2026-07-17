@@ -30,15 +30,24 @@ void u8g2_esp32_hal_init(u8g2_esp32_hal_t cfg) {
 
 uint8_t u8g2_esp32_i2c_byte_cb(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
     static uint8_t buf[128]; static uint8_t buf_idx; static uint8_t data;
+    uint8_t addr = u8x8_GetI2CAddress(u8x8) >> 1;
     switch(msg) {
         case U8X8_MSG_BYTE_INIT: buf_idx = 0; break;
-        case U8X8_MSG_BYTE_SEND: buf[buf_idx++] = arg_int; break;
+        case U8X8_MSG_BYTE_SEND:
+            buf[buf_idx++] = arg_int;
+            if (buf_idx >= 128) {
+                i2c_master_write_to_device(I2C_PORT, addr, buf, buf_idx, 1000/portTICK_PERIOD_MS);
+                buf_idx = 0;
+            }
+            break;
         case U8X8_MSG_BYTE_SET_DC: data = arg_int; break;
         case U8X8_MSG_BYTE_START_TRANSFER:
-            buf_idx = 0; i2c_master_write_to_device(I2C_PORT, u8x8_GetI2CAddress(u8x8)>>1, NULL, 0, 1000/portTICK_PERIOD_MS);
+            buf_idx = 0; i2c_master_write_to_device(I2C_PORT, addr, NULL, 0, 1000/portTICK_PERIOD_MS);
             break;
         case U8X8_MSG_BYTE_END_TRANSFER:
-            i2c_master_write_to_device(I2C_PORT, u8x8_GetI2CAddress(u8x8)>>1, buf, buf_idx, 1000/portTICK_PERIOD_MS);
+            if (buf_idx > 0) {
+                i2c_master_write_to_device(I2C_PORT, addr, buf, buf_idx, 1000/portTICK_PERIOD_MS);
+            }
             break;
         default: return 0;
     }

@@ -64,7 +64,6 @@ void settings_save_position(int track_idx, int position_s, const char *file_name
         return;
     }
 
-    nvs_commit(g_nvs_handle);
     ESP_LOGD(TAG, "Saved: track=%d pos=%ds name='%s'", track_idx, position_s, file_name);
 }
 

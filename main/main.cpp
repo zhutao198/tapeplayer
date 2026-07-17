@@ -440,7 +440,9 @@ static void update_display(void)
     }
 
     char track_name[FILENAME_MAX_LEN] = "";
-    playlist_get_name(g_current_track, track_name, sizeof(track_name));
+    if (!playlist_get_name(g_current_track, track_name, sizeof(track_name))) {
+        snprintf(track_name, sizeof(track_name), "Track %d", g_current_track + 1);
+    }
 
     int position = audio_player_get_position();
     int duration = audio_player_get_duration();
@@ -464,7 +466,7 @@ static bool mount_sd_card(void)
         .format_if_mount_failed = false,
         .max_files = 5,
         .allocation_unit_size = 16 * 1024,
-        .disk_status_check_enable = false,
+        .disk_status_check_enable = true,
         .use_one_fat = false,
     };
 
@@ -697,6 +699,17 @@ extern "C" void app_main(void)
 
             // 唤醒后恢复为 STOPPED 状态（保持曲目选中，用户按 Play 继续）
             g_app_state = APP_STATE_STOPPED;
+
+            // L4: 唤醒后恢复断点位置（仅当 saved_track == g_current_track）
+            {
+                int saved_idx = 0, saved_pos = 0;
+                if (settings_load_position(&saved_idx, &saved_pos) &&
+                    saved_idx == g_current_track) {
+                    g_seek_on_play_position = saved_pos;
+                    ESP_LOGI(TAG, "Wakeup resume: track %d at %ds", saved_idx, saved_pos);
+                }
+            }
+
             power_mgmt_record_activity();
         }
 

@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-11（R020 — R018 评审闭环 + H-3 整数四舍五入修复，19/19 全闭环）
+> **最后更新**：2026-07-17（R021 — Batch 1 深度评审修复 10 项，build 通过）
 
 ---
 
@@ -29,6 +29,7 @@
 | 2026-07-11 | 用户授权"帮我修复" → R018 节点框架已存在，按其 19 项清单实施 | ✅ commit `8a90513`；19 项全部落地 |
 | 2026-07-11 | 用户指出本机已配 ESP-IDF/ESP-ADF → 跑本地 build 验证，发现 3 个编译错误，R019 修复闭环 | ✅ commit `06f9be9`；`audiobook_player.bin` 762KB（0xb9f50），分区 76% 空闲 |
 | 2026-07-11 | 用户评审 R018 发现 H-3 实际修复失败（截断 vs 四舍五入）；按建议方案 C 采纳整数四舍五入 trick；评审报告入仓 | ✅ commit `06bb8d0`；R018 修复成功率 100%（19/19） |
+| 2026-07-17 | R021 深度评审 Batch 1 修复 10 项（C2/C3/H1/H2/H3/M4/M5/L1/L3/L4） | ✅ build 通过，bin 0xba080，76% 空闲 |
 
 ---
 
@@ -150,6 +151,19 @@
   - 评审报告入仓：`docs/CODE_REVIEW_R018.md`（644 行，综合 4.3/5，4 项新发现 N1-N4）
   - **总体 100% 闭环**：R018+R019+R020 累计修复 19/19、build 通过、可投板
   - 2026-07-11 commit `06bb8d0` + tag `R020`（annotated）
+- ✅ **R021 完成——Batch 1 深度评审修复 10 项（build 通过）**
+  - C2：`g_total_duration_ms` 从恒为 0 改为文件大小回退估计（128kbps）
+  - C3：I2S sample rate clamp 96000→176400；档位重设计 1.5/2.0/3.0/4.0x（原 1.5/2.5/4.0/8.0）
+  - H1：u8g2 I2C byte_cb 分段发送（每 128B flush），根治 1024B 帧溢出
+  - H2：stop() wait retries 100→20（超时 1000ms→200ms）
+  - H3：`audio_player_seek_ms()` 加 NULL guard
+  - M4：`save_position()` 移除 `nvs_commit()`，由 `settings_flush()` 统一提交
+  - M5：SD mount `disk_status_check_enable = true`（VFS 层自动检测）
+  - L1：`audio_board_deinit()` 参数 NULL 检查
+  - L3：`playlist_get_name()` 返回值检查 + "Track N" 回退
+  - L4：light sleep 唤醒从 NVS 恢复断点位置（saved_track 一致性检查）
+  - **学习**：`audio_element_get_duration()` 在 ESP-ADF v2.7 中**不存在**（仅 `set_duration`），只能用文件大小估计
+  - 2026-07-17 commit `ec7be8d` + tag `R021`（annotated）
 
 ---
 
@@ -306,9 +320,9 @@
 ## 6. 未来方向
 
 ### 下次会话
-1. **烧录验证硬件**：`build.bat -p COMx flash` 确认 SD/OLED/I2S/按键全部跑通
-2. **V1.1 起步**：定时关机（ADC 实装）、A-B 复读、按键提示音
-3. **提交原理图到 KiCad/Altium**：手工输入 SCH_TapeBook_V1.3.md → PCB layout
+1. **Batch 2 实施**：C1（seek 方案：play 前对 fatfs_reader 设 byte_pos）+ C3 跳帧模式 + M1/M2/M6（需真机验证 seek 生效）
+2. **烧录验证硬件**：`build.bat -p COMx flash` 确认 SD/OLED/I2S/按键全部跑通
+3. **V1.1 起步**：定时关机（ADC 实装）、A-B 复读、按键提示音
 4. **LE Audio 实施**：按 BT_AUDIO_PLAN.md 12 步计划——先验证 IDF master 构建
 
 ### 短期
@@ -349,14 +363,14 @@
 ## 8. R 节点 Git 状态
 
 ```
+ec7be8d R021: Batch 1 深度评审修复（10 项）
+06bb8d0 R020: H-3 用户重做（整数四舍五入）+ 评审报告入仓
+06f9be9 R019: R018 build 验证 + 修复 3 个编译副作用
+8a90513 R018: 代码审计修复 19 项（6C + 7H + 5M + 1L）
 d54d0ed R015: 硬件设计修复 6 项（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档
-eca38cc R014: PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计
-4f3b25e R013: post-R012 review fixes （scroll clamp + API cleanup + CODE_REVIEW.md sync）
-1d95d12 R012: 实现文件夹浏览（V1.0 MVP 最后功能补齐）
-df11f0d R011: 修复 R010 引入的 6 个 bug + H-8 ADC 桩 + L-1 bookmark 按键集成
 ```
 
-**17 个 R 节点**（含 baseline + R001-R015）全部 committed + tagged（annotated）。
+**18 个 R 节点**（含 baseline + R001-R021）全部 committed + tagged（annotated）。
 
 ---
 

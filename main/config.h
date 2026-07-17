@@ -53,8 +53,8 @@
  * ============================================================ */
 #define TAPE_SPEED_NORMAL   1.0f          // 正常速度
 #define TAPE_SPEED_1        1.5f          // 第一档加速
-#define TAPE_SPEED_2        2.5f          // 第二档加速
-#define TAPE_SPEED_3        4.0f          // 第三档加速
+#define TAPE_SPEED_2        2.0f          // 第二档加速（C3: 2.5→2.0）
+#define TAPE_SPEED_3        3.0f          // 第三档加速（C3: 4.0→3.0）
 #define TAPE_SPEED_4        8.0f          // 最高加速
 
 // 加速档位切换时间阈值 (按住时长)

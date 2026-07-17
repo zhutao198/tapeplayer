@@ -6,7 +6,7 @@
  * 1. 每次 play() 重建 pipeline，避免 terminate 后复用失败 (S-09)
  * 2. WAV 使用 wav_decoder，不回退到 mp3_decoder (M-09)
  * 3. seek/tick 使用毫秒级精度 (M-03/M-04)
- * 4. 跳帧仅在 ≥4x 高档位执行，1.5x/2.5x 仅变速不跳帧 (M-10)
+ * 4. 跳帧仅在 ≥4x 高档位执行，1.5x/2.0x/3.0x 仅变速不跳帧 (M-10)
  * 5. 移除未使用的 opus_decoder.h (L-01)
  */
 
@@ -204,7 +204,7 @@ bool audio_player_play(const char *filepath)
         g_total_file_bytes = 0;
     }
 
-    // 10. 总时长初始未知（通过事件回调更新）
+    // 10. 总时长初始未知（通过 decoder total_bytes 或文件大小回退估计）
     g_total_duration_ms = 0;
 
     // 11. 应用当前音量
@@ -238,7 +238,7 @@ void audio_player_stop(void)
     if (g_pipeline) {
         audio_pipeline_stop(g_pipeline);
         {
-            int retries = 100;
+            int retries = 20;
             while (retries > 0) {
                 audio_element_state_t st = audio_element_get_state(g_i2s_writer);
                 if (st == AEL_STATE_FINISHED || st == AEL_STATE_STOPPED || st == AEL_STATE_INIT) break;
@@ -303,6 +303,7 @@ static void audio_player_seek_ms_internal(int ms)
 
 void audio_player_seek_ms(int ms)
 {
+    if (!g_pipeline || !g_is_playing) return;
     audio_pipeline_pause(g_pipeline);
     audio_player_seek_ms_internal(ms);
     audio_pipeline_resume(g_pipeline);
@@ -350,7 +351,7 @@ void audio_player_set_speed(float speed)
     if (speed > 0) {
         sample_rate = (int)(AUDIO_SAMPLE_RATE * speed);
         if (sample_rate < 8000) sample_rate = 8000;
-        if (sample_rate > 96000) sample_rate = 96000;
+        if (sample_rate > 176400) sample_rate = 176400;
     } else {
         sample_rate = AUDIO_SAMPLE_RATE;
     }
@@ -393,9 +394,9 @@ int audio_player_get_volume(void)
 /* ============================================================
  * Tick — 处理管道状态 + 快进/快退跳帧
  *
- * 跳帧策略（与 DESIGN 5.2.3 一致）：
- * - 1.5x / 2.5x：仅变速（I2S 采样率），不跳帧
- * - 4.0x / 8.0x：变速 + 每 50ms seek 跳帧
+ * 跳帧策略（C3: 档位重设计 1.5/2.0/3.0/4.0x）：
+ * - 1.5x / 2.0x / 3.0x：仅变速（I2S 采样率），不跳帧
+ * - ≥4.0x：变速 + 每 50ms seek 跳帧
  * - 快退：所有档位都通过向后 seek 模拟
  * ============================================================ */
 void audio_player_tick(void)
@@ -412,6 +413,13 @@ void audio_player_tick(void)
         }
     }
 
+    // C2: duration fallback — 从文件大小估计（ADF 无 direct duration API）
+    if (g_total_duration_ms <= 0 && g_total_file_bytes > 0) {
+        // 128kbps 估计：文件字节 / 16 ≈ 毫秒
+        g_total_duration_ms = g_total_file_bytes / 16;
+        ESP_LOGD(TAG, "Duration estimated from file size: %d ms", g_total_duration_ms);
+    }
+
     // 快进/快退跳帧处理
     tape_mode_t mode = tape_control_get_mode();
     if (mode == TAPE_MODE_NORMAL) return;
@@ -419,7 +427,7 @@ void audio_player_tick(void)
     float speed = tape_control_get_speed();
     float abs_speed = (speed > 0) ? speed : -speed;
 
-    // 仅高档位（≥4x）执行跳帧；1.5x/2.5x 仅靠 I2S 变速
+    // 仅高档位（≥4x）执行跳帧；1.5x/2.0x/3.0x 仅靠 I2S 变速
     // 快退所有档位都跳帧（因为没有"倒放"能力，只能断续 seek）
     bool need_seek = (abs_speed >= 4.0f) || (mode == TAPE_MODE_REWIND);
 

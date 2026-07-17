@@ -47,6 +47,7 @@ audio_board_handle_t audio_board_get_handle(void)
 
 esp_err_t audio_board_deinit(audio_board_handle_t audio_board)
 {
+    if (!audio_board) return ESP_ERR_INVALID_ARG;
     esp_err_t ret = ESP_OK;
     if (audio_board->audio_hal) {
         ret |= audio_hal_deinit(audio_board->audio_hal);
