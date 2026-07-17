@@ -32,7 +32,7 @@
 | 2026-07-17 | Batch 2（R022）深度评审修复 5 项（依赖项：C1/C3跳帧/M1/M2/M6）| ✅ commit `584cf67`；build 通过 0 错误 |
 | 2026-07-11 | 用户评审 R018 发现 H-3 实际修复失败（截断 vs 四舍五入）；按建议方案 C 采纳整数四舍五入 trick；评审报告入仓 | ✅ commit `06bb8d0`；R018 修复成功率 100%（19/19） |
 | 2026-07-17 | R021 深度评审 Batch 1 修复 10 项（C2/C3/H1/H2/H3/M4/M5/L1/L3/L4） | ✅ build 通过，bin 0xba080，76% 空闲 |
-| 2026-07-17 | Claude 审核 R021/R022 发现 3 处文档问题 + 1 项 M3 缺失；R023 补正 + 同步 3 类 | ✅ commit （待定）；修复 + 文档同步 |
+| 2026-07-17 | Claude 审核 R021/R022 发现 3 处文档问题 + 1 项 M3 缺失；R023 补正 + 同步 3 类 | ✅ commit `3655ff3`；修复 + 文档同步 |
 
 ---
 
@@ -167,6 +167,20 @@
   - L4：light sleep 唤醒从 NVS 恢复断点位置（saved_track 一致性检查）
   - **学习**：`audio_element_get_duration()` 在 ESP-ADF v2.7 中**不存在**（仅 `set_duration`），只能用文件大小估计
   - 2026-07-17 commit `ec7be8d` + tag `R021`（annotated）
+- ✅ **R022 完成——Batch 2 深度评审修复 5 项（C1/C3 跳帧/M1/M2/M6）**
+  - **C1**：seek 改对 `g_fatfs_reader` 设 byte_pos（非 decoder），并把 `g_decoder` byte_pos 重置为 0 — 让 reader 的 seek 真正生效
+  - **C3 跳帧档**：Gear 4 走"正常 I2S 44100 + tick 每 50ms seek 350ms"（跳 7/8 音频），替代原 8x 不可达的高 I2S 采样率
+  - **M1**：`g_last_scrub_us` 从函数 static 改为模块级全局，play/stop 时清零
+  - **M2**：tick seek 路径包裹 `audio_pipeline_pause`/`resume`，避免运行中改 decoder byte_pos
+  - **M6**：play() 内立即用文件大小估算 duration（128kbps：`file_bytes / 16`），seek 走精确分支
+  - build 通过：`audiobook_player.bin` 0xba120（+160B vs R021）
+  - 2026-07-17 commit `584cf67` + tag `R022`（annotated）
+- ✅ **R023 完成——R021/R022 文档补正 + M3 ALC 注释落地**
+  - **doc-fix-1**：开发日志 R021 修改记录填 commit hash `1d03d03`
+  - **doc-fix-2**：删除 R021 修改记录矛盾行（"10 个" vs "8 个"）
+  - **code-fix-1**：`audio_player_set_volume` 加 ALC 范围说明注释（M3 文档化）— vol=51..58 实测合并到 alc_vol=0..2 dB 是 ALC 硬件限制
+  - 同步 3 类核心文件：CONTEXT.md / SESSION_SUMMARY.md / 开发日志.md
+  - 2026-07-17 commit `3655ff3` + tag `R023`（annotated）
 
 ---
 
