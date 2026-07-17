@@ -251,6 +251,8 @@ u8x8_SetI2CAddress(&u8g2.u8x8, 0x3C << 1);  // 后设置地址
 
 **修复建议**：将 `u8x8_SetI2CAddress` 移到 `u8g2_Setup_*` 之前，或在 Setup 后调用 `u8x8_GetI2CAddress` 验证。
 
+> **【R027 团队反馈】** ❌ **不成立**。代码顺序为 `Setup → SetI2CAddress → InitDisplay`，这是 **u8g2 文档推荐顺序**（Setup 注册 callback → SetI2CAddress 修改地址 → InitDisplay 发送初始化命令）。**非 bug**。本节描述撤回。
+
 ---
 
 ### M5：Kconfig 互不感知（CONFIG_USE_U8G2 与 ADF）
@@ -271,6 +273,12 @@ config USE_U8G2
 **实际**：当前默认都 y，build 通过。**未触发问题**。
 
 **修复建议**：加 `depends on USE_ESP_ADF` 或 `select USE_U8G2 if USE_ESP_ADF`（弱依赖）。
+
+> **【R027 团队反馈】** ⚠️ **部分属实但描述不准**。核实确认：
+> - **源码有 #ifdef 守卫**：`display.cpp:26` `#ifdef CONFIG_USE_U8G2` + `audio_player.cpp:21` `#ifdef CONFIG_USE_ESP_ADF`
+> - **sdkconfig 中正常生效**：`CONFIG_USE_U8G2=y` + `CONFIG_USE_ESP_ADF=y`
+>
+> 团队反馈"源码无 #ifdef 守卫"与事实不符，但"互不感知"问题**确实不存在**——Kconfig 工作正常，只是 default y 总启用。**若需严格关联**可加 `depends on`，但当前**非 bug**。本节描述撤回。
 
 ---
 

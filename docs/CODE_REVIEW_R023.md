@@ -462,12 +462,16 @@ host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;     // 重复（默认值）
 **问题**：u8g2_Setup_* 内部可能缓存地址到不同位置，导致后改无效。  
 **修复建议**（P1，5 行）：将 `u8x8_SetI2CAddress` 移到 `u8g2_Setup_*` 之前。
 
+> **【R027 团队反馈】** ❌ **不成立**。`Setup → SetI2CAddress → InitDisplay` 是 **u8g2 官方推荐顺序**。本节描述撤回。
+
 ### 🟡 M5：Kconfig 互不感知（CONFIG_USE_U8G2 与 ADF）
 
 **位置**：`main/Kconfig.projbuild:79-95`
 
 **问题**：两个开关独立，没有 Kconfig 校验。配置可任意组合。  
 **修复建议**（P1，1 行 Kconfig）：加 `depends on USE_ESP_ADF`。
+
+> **【R027 团队反馈】** ⚠️ **部分属实但描述不准**。核实确认源码**有 #ifdef 守卫**（`display.cpp:26` + `audio_player.cpp:21`），且 sdkconfig 中正常生效。"互不感知"问题**不成立**——Kconfig 工作正常，仅 default y 总启用。本节描述撤回。
 
 ### 🟢 Low（8 项）
 
