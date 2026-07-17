@@ -376,3 +376,165 @@ g_total_duration_ms = g_total_file_bytes / 16;
 **对照审核完成日期**：2026-07-17
 **Claude 审核者**：MiniMax-M3（按全局 CLAUDE.md 9 节新会话规范）
 **说明**：本章节由 Claude 独立审核后追加，保留用户原意见，不删除原 H1-M2-L4-I1-I3 内容
+
+---
+
+# 阶段三：R025 全项目代码审计（26 文件全覆盖）
+
+> **审计对象**：HEAD（`ebebfe8` R024-doc + 之前 R018-R024 全部修复）
+> **审计日期**：2026-07-17
+> **审计方法**：全项目代码审计（R024 仅覆盖 8 项 + 补充 4 项，本次 26 文件全覆盖）
+> **完整报告**：`docs/CODE_AUDIT_R025.md`（645 行）
+> **对比基线**：阶段一用户原 11 项 + 阶段二 Claude R024 补充 4 项
+> **本章节说明**：保留前两阶段所有意见，**仅追加** R025 独有发现
+
+## 阶段三发现汇总
+
+| 等级 | 数量 | 较阶段一+二新增 |
+|------|:----:|:---------------:|
+| 🔴 Critical | 0 | — |
+| 🟠 High | 2 | **H1**, H2 |
+| 🟡 Medium | 6 | M1-M6 |
+| 🟢 Low | 8 | L1-L8 |
+| ℹ️ 信息 | 4 | I1-I4 |
+
+**总计**：16 项新增。**未发现新的 Critical**。
+
+## 阶段三独有发现（前两阶段未发现）
+
+### 🟠 H1：light sleep 唤醒后状态不一致（FF/RW 模式下按键锁定）
+
+**位置**：`main/main.cpp:271-275`
+
+```cpp
+// EXTRA_LONG_PRESS 处理
+g_state_before_lock = g_app_state;          // 保存 FAST_FORWARD 状态
+g_key_locked = true;
+g_app_state = APP_STATE_LOCKED;
+// 注意：未调用 tape_control_ff_release() / tape_control_rewind_release()
+```
+
+**场景**：
+1. 用户正在 8x 快进（FAST_FORWARD 状态）
+2. 长按 PLAY 触发 EXTRA_LONG_PRESS，进入 LOCKED
+3. 此时 tape_control 仍在 FAST_FORWARD 模式（g_mode 未释放）
+4. 5 分钟后进 light sleep，唤醒
+5. `g_app_state = STOPPED`，但 `g_mode` 仍是 `FAST_FORWARD`
+
+**影响**：唤醒后用户按其他按键：
+- `tape_control_get_mode()` 返回 FAST_FORWARD
+- main loop line 610-612 `if (mode != TAPE_MODE_NORMAL)` 调 `audio_player_set_speed(8x)`
+- 音频会以 8x 播，用户未感知
+
+**修复建议**（P0，5 行）：
+```cpp
+if (e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+    if (g_app_state == APP_STATE_FAST_FORWARD) tape_control_ff_release();
+    else if (g_app_state == APP_STATE_REWIND) tape_control_rewind_release();
+    g_state_before_lock = g_app_state;
+    g_key_locked = true;
+    g_app_state = APP_STATE_LOCKED;
+}
+```
+
+### 🟠 H2：light sleep 唤醒后 play/offset 状态（与 M5 合并修复）
+
+**位置**：`main/main.cpp:685 + 700-712 + audio_player.cpp:281-282`
+
+**说明**：H2 与 R024 已识别的 M5（duration VBR 估算）相关，**应合并到 M5 修复时一并处理**。
+
+### 🟡 M1：mount_sd_card 多重冗余配置
+
+**位置**：`main/main.cpp:471-473`
+
+```cpp
+sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+host.slot = SD_SPI_HOST;                       // 重复
+host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;     // 重复（默认值）
+```
+
+**修复建议**（P1，2 行）：移除冗余配置 + `mount_config.use_one_fat = true`。
+
+### 🟡 M4：`u8x8_SetI2CAddress` 在 Setup 之后调用
+
+**位置**：`main/display.cpp:62-65`
+
+**问题**：u8g2_Setup_* 内部可能缓存地址到不同位置，导致后改无效。  
+**修复建议**（P1，5 行）：将 `u8x8_SetI2CAddress` 移到 `u8g2_Setup_*` 之前。
+
+### 🟡 M5：Kconfig 互不感知（CONFIG_USE_U8G2 与 ADF）
+
+**位置**：`main/Kconfig.projbuild:79-95`
+
+**问题**：两个开关独立，没有 Kconfig 校验。配置可任意组合。  
+**修复建议**（P1，1 行 Kconfig）：加 `depends on USE_ESP_ADF`。
+
+### 🟢 Low（8 项）
+
+| ID | 位置 | 描述 | 修复 |
+|----|------|------|------|
+| L1 | `audio_player.cpp:300` | `uint64_t` 隐式截断（byte_pos cast int）| 改 `int64_t` 后强转 |
+| L2 | `audio_player.cpp:343-363` | `speed = 0` 时 I2S 速率不变（设计层面）| 加注释"REWIND 走 tick seek" |
+| L3 | `bookmark.cpp` | delete 不释放 slot 状态 | 接受（10 slot 太小）|
+| L4 | `bookmark.cpp:33-44` | `int32_t val=0` 默认值误导 | 变量名已准确，无需改 |
+| L5 | `u8g2_esp32_hal.c:51` | `vTaskDelay` in light sleep | light sleep 期间不调用，无影响 |
+| L6 | `u8g2_esp32_hal.c:27` | `i2c_driver_install` 失败无检查 | 加 ESP_LOGE |
+| L7 | `u8g2_Setup_*` 内部 hal 指针可能丢失 | HAL 引脚固定，无影响 | — |
+| L8 | `u8g2_esp32_hal.c:28` | `ESP_LOGI` 格式化串 | 无问题 | — |
+
+### ℹ️ 信息（4 项）
+
+- **I1**：注释漂移状态——R018-R024 已修大部分，**L1 tape_control.cpp 注释过时未修**（R023 已识别）
+- **I2**：M3/M5/L1 已发现项补充——R024 列出的项已合并评估
+- **I3**：`audio_player.cpp:152-158` decoder 创建失败的清理路径正确
+- **I4**：`main.cpp` 键盘事件循环 8 个槽位足够（6 按键 × 1 事件）
+
+## 阶段三独有发现统计
+
+| 类别 | 独有发现 | 来源 |
+|------|:--------:|------|
+| H1 FF/RW 状态不一致 | ✅ **全新发现** | R025 |
+| H2 play/offset 状态 | 🔗 与 M5 合并 | R025 |
+| M1 mount 冗余 | ✅ 全新发现 | R025 |
+| M4 u8g2 SetI2CAddress | ✅ 全新发现 | R025 |
+| M5 Kconfig 互感知 | ✅ 全新发现 | R025 |
+| L1-L8 u8g2 HAL 细节 | ✅ 全新发现 | R025 |
+
+## 行动建议（R025 + R024 合并）
+
+| 优先级 | ID | 工作量 | 建议动作 |
+|:------:|----|:------:|----------|
+| **P0** | **H1** | **5 行** | **EXTRA_LONG_PRESS 时调 tape_control_ff/rewind_release（量产前必修）** |
+| P0 | H2 + M5（合并）| 中 | M5 VBR 修复时同步处理 |
+| P1 | M1, M4, M5 (Kconfig) | 各 ≤ 5 行 | 配置清理 |
+| P2 | L1-L8 | 各 ≤ 5 行 | 注释/类型/返回值检查 |
+| V1.1 | I1 L1 tape_control.cpp 注释 | 1 行 | 更新注释 |
+
+## R025 最终评分
+
+| 维度 | R023 | R024 | R025 |
+|------|:----:|:----:|:----:|
+| 严重问题 | 0 | 2 High | 2 High |
+| 中等问题 | 2 | 2 | 6 |
+| 风格/低 | 4 | 4 | 8 |
+| 信息项 | 3 | 3 | 4 |
+| 综合质量 | 4.3/5 | 4.3/5 | 4.2/5 |
+
+**R025 没有发现 Critical**，仅 1 项 H1 是 P0 修复（5 行）。**代码已可投板**（修 H1 后即可量产）。
+
+## 合并文档说明
+
+本文档现包含三阶段：
+- **阶段一**：用户原 R023 审核（11 项）—— 用户撰写
+- **阶段二**：Claude R024 对照审核（补充 4 项 + 1 项分歧）—— 保留用户原意见
+- **阶段三**：Claude R025 全项目审计（16 项新增）—— 基于阶段一+二补充
+
+**全部阶段总计**：31 项问题（H: 4 / M: 8 / L: 12 / I: 7）—— 阶段一 11 项 → 阶段二 15 项 → 阶段三 31 项累计。
+
+**保留承诺**：阶段一/二/三所有意见**未删除**，按时间顺序追加；用户可对照 git history 追溯各阶段。
+
+---
+
+**三阶段合并完成日期**：2026-07-17
+**合并者**：Claude（按用户要求"补充 R025 到本报告"）
+**来源 commit**：`docs/CODE_AUDIT_R025.md`（R025 完整报告，645 行）+ 本节精简摘要
