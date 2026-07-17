@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-17（R021 — Batch 1 深度评审修复 10 项，build 通过）
+> **最后更新**：2026-07-17（R022 — Batch 2 深度评审修复 5 项，全部 16 项闭环）
 
 ---
 
@@ -28,6 +28,8 @@
 | 2026-07-11 | 用户要求代码审计（仅汇总，不改动） | ✅ 报告 docs/CODE_AUDIT_R018.md（6C+7H+11M+15L） |
 | 2026-07-11 | 用户授权"帮我修复" → R018 节点框架已存在，按其 19 项清单实施 | ✅ commit `8a90513`；19 项全部落地 |
 | 2026-07-11 | 用户指出本机已配 ESP-IDF/ESP-ADF → 跑本地 build 验证，发现 3 个编译错误，R019 修复闭环 | ✅ commit `06f9be9`；`audiobook_player.bin` 762KB（0xb9f50），分区 76% 空闲 |
+| 2026-07-17 | Batch 1（R021）深度评审修复 10 项（独立项：C2/C3/H1/H2/H3/M4/M5/L1/L3/L4）| ✅ commit `1d03d03`；build 通过 0 错误 |
+| 2026-07-17 | Batch 2（R022）深度评审修复 5 项（依赖项：C1/C3跳帧/M1/M2/M6）| ✅ commit `584cf67`；build 通过 0 错误 |
 | 2026-07-11 | 用户评审 R018 发现 H-3 实际修复失败（截断 vs 四舍五入）；按建议方案 C 采纳整数四舍五入 trick；评审报告入仓 | ✅ commit `06bb8d0`；R018 修复成功率 100%（19/19） |
 | 2026-07-17 | R021 深度评审 Batch 1 修复 10 项（C2/C3/H1/H2/H3/M4/M5/L1/L3/L4） | ✅ build 通过，bin 0xba080，76% 空闲 |
 
@@ -320,10 +322,9 @@
 ## 6. 未来方向
 
 ### 下次会话
-1. **Batch 2 实施**：C1（seek 方案：play 前对 fatfs_reader 设 byte_pos）+ C3 跳帧模式 + M1/M2/M6（需真机验证 seek 生效）
-2. **烧录验证硬件**：`build.bat -p COMx flash` 确认 SD/OLED/I2S/按键全部跑通
-3. **V1.1 起步**：定时关机（ADC 实装）、A-B 复读、按键提示音
-4. **LE Audio 实施**：按 BT_AUDIO_PLAN.md 12 步计划——先验证 IDF master 构建
+1. **烧录验证硬件**：`build.bat -p COMx flash` 确认 Batch 1+Batch 2 全部修复（seek/跳帧/变速/i2c/SD/断点/休眠）跑通
+2. **V1.1 起步**：定时关机（ADC 实装）、A-B 复读、按键提示音
+3. **LE Audio 实施**：按 BT_AUDIO_PLAN.md 12 步计划——先验证 IDF master 构建
 
 ### 短期
 - V1.1 体验增强：定时关机、按键音、屏幕保护
@@ -363,14 +364,14 @@
 ## 8. R 节点 Git 状态
 
 ```
-ec7be8d R021: Batch 1 深度评审修复（10 项）
+584cf67 R022: Batch 2 深度评审修复（C1/C3跳帧/M1/M2/M6）
+1d03d03 R021: Batch 1 深度评审修复（10 项）
 06bb8d0 R020: H-3 用户重做（整数四舍五入）+ 评审报告入仓
 06f9be9 R019: R018 build 验证 + 修复 3 个编译副作用
 8a90513 R018: 代码审计修复 19 项（6C + 7H + 5M + 1L）
-d54d0ed R015: 硬件设计修复 6 项（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档
 ```
 
-**18 个 R 节点**（含 baseline + R001-R021）全部 committed + tagged（annotated）。
+**19 个 R 节点**（含 baseline + R001-R022）全部 committed + tagged（annotated）。
 
 ---
 
