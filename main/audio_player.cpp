@@ -381,6 +381,14 @@ void audio_player_set_speed(float speed)
 
 void audio_player_set_volume(int volume)
 {
+    // R023/M3 ALC 硬件限制说明：
+    // MAX98357A ALC 音量范围：-96..+12 dB（i2s_alc_volume_set）
+    // vol=0   → alc_vol = -96 dB（静音）
+    // vol=1..50  → alc_vol = -47..0 dB（每 vol 步 ≈ 1 dB，连续）
+    // vol=50..100 → alc_vol = 0..+12 dB（每 vol 步 ≈ 0.24 dB）
+    // → vol=51..58 实测仅映射到 0..2 dB 总变化（8 档合并到 3 档）
+    // 根因：ALC 范围有限（12 dB），vol 步进过密，整数化后必有相邻合并
+    // 详见 docs/FIX_PLAN_R019.md §M3 + docs/CODE_AUDIT_R018.md H-3
     if (volume < 0) volume = 0;
     if (volume > 100) volume = 100;
     g_volume = volume;
