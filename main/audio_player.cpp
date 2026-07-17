@@ -54,6 +54,7 @@ static int          g_total_file_bytes = 0;
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采样率缓存
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
 static int64_t      g_play_offset_us = 0;              // pause 时锁存的已播放时长，resume 时叠加
+static uint64_t     g_last_scrub_us = 0;               // M1: 上次跳帧时间戳（模块级全局）
 
 static audio_status_cb_t g_status_cb = NULL;
 static void              *g_user_data = NULL;
@@ -195,6 +196,7 @@ bool audio_player_play(const char *filepath)
     g_current_speed = TAPE_SPEED_NORMAL;
     g_play_start_us = esp_timer_get_time();
     g_play_offset_us = 0;
+    g_last_scrub_us = 0;  // M1: 跨曲目重置跳帧时间戳
 
     // 9. 计算文件字节数（用于 seek/位置换算）
     struct stat st;
@@ -204,8 +206,12 @@ bool audio_player_play(const char *filepath)
         g_total_file_bytes = 0;
     }
 
-    // 10. 总时长初始未知（通过 decoder total_bytes 或文件大小回退估计）
+    // M6: 从文件大小即时估计 duration（128kbps：file_bytes / 16）
     g_total_duration_ms = 0;
+    if (g_total_file_bytes > 0) {
+        g_total_duration_ms = g_total_file_bytes / 16;
+        ESP_LOGD(TAG, "Duration estimated from file size: %d ms", g_total_duration_ms);
+    }
 
     // 11. 应用当前音量
     audio_player_set_volume(g_volume);
@@ -275,6 +281,7 @@ void audio_player_stop(void)
     g_current_speed = TAPE_SPEED_NORMAL;
     g_total_duration_ms = 0;
     g_play_offset_us = 0;
+    g_last_scrub_us = 0;  // M1: 停止时重置跳帧时间戳
 }
 
 /* ============================================================
@@ -291,11 +298,14 @@ static void audio_player_seek_ms_internal(int ms)
 
     if (g_total_duration_ms > 0 && g_total_file_bytes > 0) {
         int byte_pos = (int)((int64_t)ms * g_total_file_bytes / g_total_duration_ms);
-        audio_element_set_byte_pos(g_decoder, byte_pos);
+        audio_element_set_byte_pos(g_fatfs_reader, byte_pos);  // C1: seek reader, not decoder
     } else if (g_total_file_bytes > 0) {
         int byte_pos = (int)((int64_t)ms * g_total_file_bytes / 3600000);
-        audio_element_set_byte_pos(g_decoder, byte_pos);
+        audio_element_set_byte_pos(g_fatfs_reader, byte_pos);  // C1: seek reader, not decoder
     }
+
+    // C1: 重置 decoder byte_pos，使其从 reader 新位置重新开始解码
+    audio_element_set_byte_pos(g_decoder, 0);
 
     g_play_start_us = esp_timer_get_time();
     g_play_offset_us = (int64_t)ms * 1000;
@@ -349,9 +359,15 @@ void audio_player_set_speed(float speed)
 
     int sample_rate;
     if (speed > 0) {
-        sample_rate = (int)(AUDIO_SAMPLE_RATE * speed);
-        if (sample_rate < 8000) sample_rate = 8000;
-        if (sample_rate > 176400) sample_rate = 176400;
+        // C3: Gear 4 跳帧模式 — I2S 正常速率，seek 跳帧提供"快进"感
+        int gear = tape_control_get_gear();
+        if (gear >= 4) {
+            sample_rate = AUDIO_SAMPLE_RATE;
+        } else {
+            sample_rate = (int)(AUDIO_SAMPLE_RATE * speed);
+            if (sample_rate < 8000) sample_rate = 8000;
+            if (sample_rate > 176400) sample_rate = 176400;
+        }
     } else {
         sample_rate = AUDIO_SAMPLE_RATE;
     }
@@ -394,9 +410,9 @@ int audio_player_get_volume(void)
 /* ============================================================
  * Tick — 处理管道状态 + 快进/快退跳帧
  *
- * 跳帧策略（C3: 档位重设计 1.5/2.0/3.0/4.0x）：
+ * 跳帧策略（C3: 档位 1.5/2.0/3.0 I2S 变速 + 4.0 跳帧模式）：
  * - 1.5x / 2.0x / 3.0x：仅变速（I2S 采样率），不跳帧
- * - ≥4.0x：变速 + 每 50ms seek 跳帧
+ * - 4.0x（跳帧模式）：正常 I2S + 每 50ms seek 跳帧（跳 7/8 音频）
  * - 快退：所有档位都通过向后 seek 模拟
  * ============================================================ */
 void audio_player_tick(void)
@@ -433,30 +449,36 @@ void audio_player_tick(void)
 
     if (!need_seek) return;
 
-    static uint64_t last_scrub_us = 0;
     uint64_t now = esp_timer_get_time();
 
-    if ((now - last_scrub_us) < 50000) return; // 50ms 间隔
-    last_scrub_us = now;
+    if ((now - g_last_scrub_us) < 50000) return; // 50ms 间隔
+    g_last_scrub_us = now;
 
-    // 毫秒级跳帧计算：50ms × 速度倍率 = 跳过的毫秒数
-    int skip_ms = (int)(50.0f * abs_speed);
+    // C3: Gear 4 跳帧模式 — 跳 7/8（skip 350ms/50ms），其他档位 50ms × abs_speed
+    int gear = tape_control_get_gear();
+    int skip_ms;
+    if (gear >= 4 && mode == TAPE_MODE_FAST_FORWARD) {
+        skip_ms = (int)(50.0f * (abs_speed - 1.0f));  // 跳帧模式：50 × (8-1) = 350ms
+    } else {
+        skip_ms = (int)(50.0f * abs_speed);           // 常规跳帧：50 × speed
+    }
 
     int cur_ms = audio_player_get_position_ms();
     int target_ms;
 
     if (speed > 0) {
-        // 快进：向前跳
         target_ms = cur_ms + skip_ms;
-        int duration_ms = g_total_duration_ms > 0 ? g_total_duration_ms : 3600000; // 默认上限 1h
+        int duration_ms = g_total_duration_ms > 0 ? g_total_duration_ms : 3600000;
         if (target_ms > duration_ms) target_ms = duration_ms;
     } else {
-        // 快退：向后跳
         target_ms = cur_ms - skip_ms;
         if (target_ms < 0) target_ms = 0;
     }
 
+    // M2 + C1: pause 确保 reader idle，seek 后 resume
+    audio_pipeline_pause(g_pipeline);
     audio_player_seek_ms_internal(target_ms);
+    audio_pipeline_resume(g_pipeline);
 }
 
 void audio_player_set_callback(audio_status_cb_t cb, void *user_data)
