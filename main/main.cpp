@@ -511,7 +511,7 @@ static void init_hardware(void)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase();
-        nvs_flash_init();
+        ESP_ERROR_CHECK(nvs_flash_init());
     }
 
     // 2. Settings（打开 NVS handle）
@@ -543,7 +543,12 @@ static void init_hardware(void)
         .idle_core_mask = 0,
         .trigger_panic = true,
     };
-    esp_task_wdt_init(&twdt_config);
+    esp_err_t wdt_err = esp_task_wdt_init(&twdt_config);
+    if (wdt_err == ESP_ERR_INVALID_STATE) {
+        esp_task_wdt_reconfigure(&twdt_config);
+    } else {
+        ESP_ERROR_CHECK(wdt_err);
+    }
     esp_task_wdt_add(NULL);  // 订阅当前任务
 
     // 10. 加载持久化设置
@@ -631,7 +636,7 @@ extern "C" void app_main(void)
             play_current_track();
         }
 
-        // 5b. 异步 NVS 保存（避免在回调内同步写 NVS）
+        // 5b. 异步保存持久化状态（回调中仅暂存，settings_flush() 负责落盘）
         if (g_pending_save_track >= 0) {
             char name[FILENAME_MAX_LEN] = "";
             playlist_get_name(g_pending_save_track, name, sizeof(name));
@@ -657,6 +662,7 @@ extern "C" void app_main(void)
                 ESP_LOGI(TAG, "Auto-off timer expired, stopping playback");
                 audio_player_stop();
                 g_app_state = APP_STATE_STOPPED;
+                power_mgmt_set_auto_off(0);
             }
         }
 
@@ -704,6 +710,7 @@ extern "C" void app_main(void)
             esp_light_sleep_start();
 
             ESP_LOGI(TAG, "Woke from light sleep");
+            g_next_loop_deadline = esp_timer_get_time();
 
             // 唤醒后恢复为 STOPPED 状态（保持曲目选中，用户按 Play 继续）
             g_app_state = APP_STATE_STOPPED;

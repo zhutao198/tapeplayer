@@ -14,7 +14,7 @@
 
 static int s_sda = -1, s_scl = -1;
 
-void u8g2_esp32_hal_init(u8g2_esp32_hal_t cfg) {
+esp_err_t u8g2_esp32_hal_init(u8g2_esp32_hal_t cfg) {
     s_sda = cfg.sda; s_scl = cfg.scl;
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
@@ -25,12 +25,12 @@ void u8g2_esp32_hal_init(u8g2_esp32_hal_t cfg) {
     };
     i2c_param_config(I2C_PORT, &conf);
     esp_err_t err = i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
-    // R028/L6: 检查 I2C 驱动安装返回值
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "i2c_driver_install failed: 0x%x", err);
-        return;
+        return err;
     }
     ESP_LOGI(TAG, "u8g2 I2C init sda=%d, scl=%d", s_sda, s_scl);
+    return ESP_OK;
 }
 
 uint8_t u8g2_esp32_i2c_byte_cb(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {

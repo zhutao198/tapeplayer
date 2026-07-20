@@ -50,7 +50,7 @@ static bool         g_is_paused = false;
 static int          g_volume = AUDIO_OUTPUT_VOL;
 static float        g_current_speed = TAPE_SPEED_NORMAL;
 static int          g_total_duration_ms = 0;
-static int          g_total_file_bytes = 0;
+static uint32_t     g_total_file_bytes = 0;
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采样率缓存
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
 static int64_t      g_play_offset_us = 0;              // pause 时锁存的已播放时长，resume 时叠加
@@ -201,7 +201,7 @@ bool audio_player_play(const char *filepath)
     // 9. 计算文件字节数（用于 seek/位置换算）
     struct stat st;
     if (stat(filepath, &st) == 0) {
-        g_total_file_bytes = (int)st.st_size;
+        g_total_file_bytes = (uint32_t)st.st_size;
     } else {
         g_total_file_bytes = 0;
     }
@@ -211,6 +211,7 @@ bool audio_player_play(const char *filepath)
     if (g_total_file_bytes > 0) {
         g_total_duration_ms = g_total_file_bytes / 16;
         ESP_LOGD(TAG, "Duration estimated from file size: %d ms", g_total_duration_ms);
+        ESP_LOGW(TAG, "VBR/FLAC: duration estimated @128kbps, seek may be imprecise");
     }
 
     // 11. 应用当前音量
@@ -239,16 +240,19 @@ void audio_player_resume(void)
     }
 }
 
+#define AUDIO_STOP_TIMEOUT_MS   200   /* I2S writer 等待终态超时 */
+#define AUDIO_STOP_POLL_MS      10    /* 超时轮询间隔 */
+
 void audio_player_stop(void)
 {
     if (g_pipeline) {
         audio_pipeline_stop(g_pipeline);
         {
-            int retries = 20;
+            int retries = AUDIO_STOP_TIMEOUT_MS / AUDIO_STOP_POLL_MS;
             while (retries > 0) {
                 audio_element_state_t st = audio_element_get_state(g_i2s_writer);
                 if (st == AEL_STATE_FINISHED || st == AEL_STATE_STOPPED || st == AEL_STATE_INIT) break;
-                vTaskDelay(pdMS_TO_TICKS(10));
+                vTaskDelay(pdMS_TO_TICKS(AUDIO_STOP_POLL_MS));
                 retries--;
             }
             if (retries == 0) {

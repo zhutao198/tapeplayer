@@ -173,6 +173,7 @@ int button_manager_scan(btn_event_info_t *events, int max_events)
                 event = BTN_EVENT_DOUBLE_CLICK;
             } else if (!pressed) {
                 btn->state = BTN_STATE_IDLE;
+                event = BTN_EVENT_SHORT_PRESS;
             } else if ((now_us - btn->press_start_us) >= debounce_us) {
                 btn->state = BTN_STATE_DBL_PRESSED;
             }

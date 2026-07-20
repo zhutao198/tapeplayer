@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-07-17（R029 — H1 显示一致性微调）
+> **最后更新**：2026-07-20（R030 — 合并评审批量修复 15 项全部落地）
 
 ---
 
@@ -39,6 +39,8 @@
 | 2026-07-17 | 用户提交团队反馈：M4 不成立（u8g2 官方顺序）+ M5 部分属实（源码实际有 #ifdef 守卫）；R027 修正 | ✅ commit `3242c60`；撤回 M4/M5，保留核实记录 |
 | 2026-07-17 | 用户授权"修复所有问题"；R028 实施 H1/M1/L1/L6 共 4 项 + build 通过 | ✅ commit `e64c6d6`；binary 0xba190（762KB），76% 空闲 |
 | 2026-07-17 | 用户对 R028 评审，H1 有显示一致性瑕疵；R029 微调 g_app_state 同步 | ✅ commit `f15ec83`；binary 0xba1a0（762KB），build 通过 |
+| 2026-07-20 | 用户要求将两份独立深度评审（R029 深审 + R030 全审）交叉核对，输出统一合并报告；经 7 项争议代码证据仲裁，生成 17 项修复计划 | ✅ `docs/CODE_REVIEW_CONSOLIDATED_R030.md` + `.opencode/plans/FIX_PLAN_R030.md` |
+| 2026-07-20 | S1（6 项）+ S2（4 项）+ S3（5 项含 C08 u8g2 错误上报）全部落地；build 通过 0 error | ✅ commit `a75219f`（后 amend 为 `f17d6b5`）；tag `R030`；binary 0xba680（762KB）|
 
 ---
 
@@ -328,6 +330,10 @@
 
 ---
 
+### L024：void 函数改 esp_err_t 要同步头文件 + 调用方
+- **现象**：`u8g2_esp32_hal_init()` 原为 `void`，I2C 失败时仅 `ESP_LOGE` 不通知调用方
+- **教训**：嵌入式 HAL 层函数不应把错误吞在内部，必须通过返回值向调用方传播
+
 ## 5. 性能指标
 
 | 指标 | R013 (MVP) | R014 (PRD fix + OLED) |
@@ -385,16 +391,16 @@
 ## 8. R 节点 Git 状态
 
 ```
+f17d6b5 R030: 批量修复合并评审 15 项（S1+S2+S3+C08）
+e64c6d6 R028: 代码审计 P0/P1/L1/L6 修复（4 项）
+f15ec83 R029: H1 显示一致性微调
 584cf67 R022: Batch 2 深度评审修复（C1/C3跳帧/M1/M2/M6）
 1d03d03 R021: Batch 1 深度评审修复（10 项）
-06bb8d0 R020: H-3 用户重做（整数四舍五入）+ 评审报告入仓
-06f9be9 R019: R018 build 验证 + 修复 3 个编译副作用
-8a90513 R018: 代码审计修复 19 项（6C + 7H + 5M + 1L）
 ```
 
-**19 个 R 节点**（含 baseline + R001-R022）全部 committed + tagged（annotated）。
+**21 个 R 节点**（baseline + R001-R030）全部 committed + tagged（annotated）。
 
 ---
 
-**作者**：Claude（6 R 节点完成：R010 → R015）  
+**作者**：Claude  
 **更新规则**：每次 R 节点 commit 后同步更新

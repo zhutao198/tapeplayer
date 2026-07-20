@@ -37,7 +37,7 @@
 /* ============================================================
  * 按键 (内部上拉，按下为低电平)
  * ============================================================ */
-#define BTN_PLAY_PAUSE      GPIO_NUM_1
+#define BTN_PLAY_PAUSE      GPIO_NUM_1   // ⚠️ V1.1 硬件：GPIO1 与 ADC1_CH0 共用，EXT1 唤醒时需切 GPIO 模式
 #define BTN_STOP            GPIO_NUM_2
 #define BTN_PREV            GPIO_NUM_8
 #define BTN_NEXT            GPIO_NUM_9
@@ -57,19 +57,18 @@
 #define TAPE_SPEED_3        3.0f          // 第三档加速（C3: 4.0→3.0）
 #define TAPE_SPEED_4        8.0f          // 最高加速
 
-// 加速档位切换时间阈值 (按住时长)
+// 加速档位切换时间阈值 (按住时长) — speed_idx[0..4] 索引数组，非 "gear"
+// speed_idx: 0=1.0x(NORMAL), 1=1.5x, 2=2.0x, 3=3.0x, 4=8.0x
 #define TAPE_ACCEL_STEP1_MS  800          // 0.8s后进入1.5x
-#define TAPE_ACCEL_STEP2_MS  2000         // 2.0s后进入2.5x
-#define TAPE_ACCEL_STEP3_MS  4000         // 4.0s后进入4x
-#define TAPE_ACCEL_STEP4_MS  7000         // 7.0s后进入8x
+#define TAPE_ACCEL_STEP2_MS  2000         // 2.0s后进入2.0x
+#define TAPE_ACCEL_STEP3_MS  4000         // 4.0s后进入3.0x
+#define TAPE_ACCEL_STEP4_MS  7000         // 7.0s后进入8.0x
 
 /* ============================================================
  * 音频配置
  * ============================================================ */
 #define AUDIO_SAMPLE_RATE   44100
-#define AUDIO_BUFFER_SIZE   (8 * 1024)    // 8KB 缓冲区
 #define AUDIO_OUTPUT_VOL    70             // 默认音量 0-100
-#define AUDIO_FILE_EXT_MAX  8              // 文件扩展名最大长度
 
 /* ============================================================
  * 播放列表

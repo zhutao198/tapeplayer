@@ -1,3 +1,5 @@
+# 活代码：ADF 自定义板级支持（CONFIG_AUDIO_BOARD_CUSTOM=y），board_pins_config 提供 GPIO 映射
+# 删除此组件会导致 ADF 编译报 undefined reference 到 board_pins_config / audio_board_handle
 set(COMPONENT_REQUIRES)
 set(COMPONENT_PRIV_REQUIRES audio_sal audio_hal esp_dispatcher esp_peripherals display_service)
 

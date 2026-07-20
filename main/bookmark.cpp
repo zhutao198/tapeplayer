@@ -6,6 +6,19 @@
 #include <string.h>
 
 static const char *TAG = "bookmark";
+
+/*
+ * NVS handle 说明：
+ *
+ * bookmark 和 settings 各持有独立的 nvs_handle（g_bm_handle / g_nvs_handle），
+ * 虽共享同一 namespace "tapebook"，但 ESP-IDF 的 nvs_commit(handle) 按 handle 隔离提交：
+ *   - settings_flush() 只提交 g_nvs_handle 的待写缓存
+ *   - g_bm_handle 的写入（nvs_set / nvs_erase）不会因此落盘
+ *
+ * 因此 bookmark_add / bookmark_delete 在各自成功路径上必须调用
+ * nvs_commit(g_bm_handle)，否则书签写入仅在 RAM 缓存中生效，
+ * 重启/断电后全部丢失。
+ */
 static nvs_handle_t g_bm_handle = 0;
 
 void bookmark_init(void)
@@ -73,7 +86,9 @@ int bookmark_add(int file_idx, int position_s)
         make_key(file_idx, slot, key, sizeof(key));
         err = nvs_set_i32(g_bm_handle, key, (int32_t)position_s);
         if (err != ESP_OK) return -1;
-        nvs_commit(g_bm_handle);
+        if (nvs_commit(g_bm_handle) != ESP_OK) {
+            ESP_LOGE(TAG, "nvs_commit failed after circular overwrite");
+        }
         ESP_LOGI(TAG, "Bookmark circular overwrite: file=%d slot=%d pos=%ds", file_idx, slot, position_s);
         return slot;
     }
@@ -85,7 +100,9 @@ int bookmark_add(int file_idx, int position_s)
         ESP_LOGE(TAG, "nvs_set_i32(%s) failed: 0x%x", key, err);
         return -1;
     }
-    nvs_commit(g_bm_handle);
+    if (nvs_commit(g_bm_handle) != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_commit failed after bookmark add");
+    }
     ESP_LOGI(TAG, "Bookmark added: file=%d slot=%d pos=%ds", file_idx, slot, position_s);
     return slot;
 }
@@ -97,7 +114,9 @@ bool bookmark_delete(int file_idx, int bm_idx)
     make_key(file_idx, bm_idx, key, sizeof(key));
     esp_err_t err = nvs_erase_key(g_bm_handle, key);
     if (err == ESP_OK) {
-        nvs_commit(g_bm_handle);
+        if (nvs_commit(g_bm_handle) != ESP_OK) {
+            ESP_LOGE(TAG, "nvs_commit failed after bookmark delete");
+        }
         ESP_LOGI(TAG, "Bookmark deleted: file=%d slot=%d", file_idx, bm_idx);
         return true;
     }

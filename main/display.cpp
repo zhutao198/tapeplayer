@@ -27,7 +27,11 @@
 
 #include "u8g2.h"
 #include "driver/i2c.h"
+#include "esp_err.h"
+#include "esp_log.h"
 #include "u8g2_esp32_hal.h"
+
+static const char *TAG = "display";
 
 static u8g2_t u8g2;
 
@@ -60,7 +64,10 @@ void display_init(void)
 {
     s_u8g2_hal.sda = DISPLAY_SDA_IO;
     s_u8g2_hal.scl = DISPLAY_SCL_IO;
-    u8g2_esp32_hal_init(s_u8g2_hal);
+    if (u8g2_esp32_hal_init(s_u8g2_hal) != ESP_OK) {
+        ESP_LOGE(TAG, "u8g2 I2C init failed, display disabled");
+        return;
+    }
 
     u8g2_Setup_ssd1306_i2c_128x64_noname_f(
         &u8g2, U8G2_R0, u8g2_esp32_i2c_byte_cb, u8g2_esp32_gpio_and_delay_cb);
@@ -188,6 +195,8 @@ void display_update(player_state_t state,
     u8g2_DrawFrame(&u8g2, 0, 30, 128, 12);
     if (total_sec > 0) {
         int bar_w = (int)(126.0f * current_sec / total_sec);
+        if (bar_w < 0) bar_w = 0;
+        if (bar_w > 126) bar_w = 126;
         if (bar_w > 0) {
             u8g2_DrawBox(&u8g2, 1, 31, bar_w, 10);
         }

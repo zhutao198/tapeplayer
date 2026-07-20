@@ -38,7 +38,7 @@ typedef enum {
 typedef struct {
     btn_id_t    id;             // 按键ID
     btn_event_t event;          // 事件类型
-    uint32_t    hold_ms;        // 已按住时长 (ms)，仅HOLD/RELEASE事件有效
+    uint32_t    hold_ms;        // 已按住时长 (ms)，所有事件均填充
 } btn_event_info_t;
 
 /**
