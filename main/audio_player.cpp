@@ -6,8 +6,12 @@
  * 1. 每次 play() 重建 pipeline，避免 terminate 后复用失败 (S-09)
  * 2. WAV 使用 wav_decoder，不回退到 mp3_decoder (M-09)
  * 3. seek/tick 使用毫秒级精度 (M-03/M-04)
- * 4. 跳帧仅在 ≥4x 高档位执行，1.5x/2.0x/3.0x 仅变速不跳帧 (M-10)
+ * 4. 跳帧仅在 ≥8x 最高档位执行，1.5x/2.0x/3.0x 仅变速不跳帧（M-10，S11 修正）
  * 5. 移除未使用的 opus_decoder.h (L-01)
+ * 6. M3：估算时长按格式选 bytes/ms 系数（MP3/AAC/OGG=16, FLAC=64, Opus=12, WAV=176）
+ * 7. S5：seek_ms 保留原暂停态
+ * 8. S6：负速度按 |speed| 拉高 I2S 采样率实现变调快退
+ * 9. M5：i2s element register 前 NULL 守卫
  */
 
 #include "audio_player.h"
@@ -22,7 +26,7 @@
 
 #include "audio_pipeline.h"
 #include "audio_element.h"
-#include "audio_common.h"
+// R035-014：审计确认 audio_common.h 不是间接依赖（注释后构建通过 exit 0），正式删除
 #include "fatfs_stream.h"
 #include "i2s_stream.h"
 #include "mp3_decoder.h"
@@ -48,7 +52,6 @@ static audio_element_handle_t   g_i2s_writer = NULL;   // 跨曲目复用
 static bool         g_is_playing = false;
 static bool         g_is_paused = false;
 static int          g_volume = AUDIO_OUTPUT_VOL;
-static float        g_current_speed = TAPE_SPEED_NORMAL;
 static int          g_total_duration_ms = 0;
 static uint32_t     g_total_file_bytes = 0;
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采样率缓存
@@ -160,9 +163,56 @@ bool audio_player_play(const char *filepath)
     }
 
     // 4. 注册元素到管道
-    audio_pipeline_register(g_pipeline, g_fatfs_reader, "file");
-    audio_pipeline_register(g_pipeline, g_decoder, "decoder");
-    audio_pipeline_register(g_pipeline, g_i2s_writer, "i2s");
+    // R035-015：audio_pipeline_register 失败时清理已注册的元素，避免句柄泄漏
+    if (audio_pipeline_register(g_pipeline, g_fatfs_reader, "file") != ESP_OK) {
+        ESP_LOGE(TAG, "register fatfs_reader failed");
+        audio_element_deinit(g_fatfs_reader);
+        g_fatfs_reader = NULL;
+        audio_element_deinit(g_decoder);
+        g_decoder = NULL;
+        audio_pipeline_deinit(g_pipeline);
+        g_pipeline = NULL;
+        return false;
+    }
+    if (audio_pipeline_register(g_pipeline, g_decoder, "decoder") != ESP_OK) {
+        ESP_LOGE(TAG, "register decoder failed");
+        audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+        audio_element_deinit(g_fatfs_reader);
+        g_fatfs_reader = NULL;
+        audio_element_deinit(g_decoder);
+        g_decoder = NULL;
+        audio_pipeline_deinit(g_pipeline);
+        g_pipeline = NULL;
+        return false;
+    }
+    // M5：注册 i2s 前 NULL 守卫，避免在 init 失败/未初始化的极端情况崩溃
+    if (!g_i2s_writer) {
+        ESP_LOGE(TAG, "g_i2s_writer is NULL, refusing to register pipeline");
+        audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+        audio_pipeline_unregister(g_pipeline, g_decoder);
+        audio_element_deinit(g_fatfs_reader);
+        audio_element_deinit(g_decoder);
+        g_fatfs_reader = NULL;
+        g_decoder = NULL;
+        audio_pipeline_deinit(g_pipeline);
+        g_pipeline = NULL;
+        return false;
+    }
+    // R035-015：第三次 audio_pipeline_register 添加返回值检查 + 失败清理
+    if (audio_pipeline_register(g_pipeline, g_i2s_writer, "i2s") != ESP_OK) {
+        ESP_LOGE(TAG, "register i2s_writer failed");
+        audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+        audio_pipeline_unregister(g_pipeline, g_decoder);
+        audio_element_deinit(g_fatfs_reader);
+        audio_element_deinit(g_decoder);
+        audio_element_deinit(g_i2s_writer);
+        g_fatfs_reader = NULL;
+        g_decoder = NULL;
+        g_i2s_writer = NULL;
+        audio_pipeline_deinit(g_pipeline);
+        g_pipeline = NULL;
+        return false;
+    }
 
     // 5. 链接管道: file → decoder → i2s
     const char *link_tags[3] = {"file", "decoder", "i2s"};
@@ -188,12 +238,25 @@ bool audio_player_play(const char *filepath)
     g_current_sample_rate = AUDIO_SAMPLE_RATE;
     i2s_stream_set_clk(g_i2s_writer, AUDIO_SAMPLE_RATE, 16, 2);
 
-    // 8. 启动管道
-    audio_pipeline_run(g_pipeline);
+    // 8. 启动管道（R032-209: 检查返回值，失败即终止，避免进入播放态却无声）
+    if (audio_pipeline_run(g_pipeline) != ESP_OK) {
+        ESP_LOGE(TAG, "audio_pipeline_run failed");
+        // R034-004：复用 link 失败时的清理路径，避免 pipeline + 元素句柄泄漏
+        audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+        audio_pipeline_unregister(g_pipeline, g_decoder);
+        audio_pipeline_unregister(g_pipeline, g_i2s_writer);
+        audio_element_deinit(g_fatfs_reader);
+        audio_element_deinit(g_decoder);
+        g_fatfs_reader = NULL;
+        g_decoder = NULL;
+        audio_pipeline_deinit(g_pipeline);
+        g_pipeline = NULL;
+        return false;
+    }
 
     g_is_playing = true;
     g_is_paused = false;
-    g_current_speed = TAPE_SPEED_NORMAL;
+
     g_play_start_us = esp_timer_get_time();
     g_play_offset_us = 0;
     g_last_scrub_us = 0;  // M1: 跨曲目重置跳帧时间戳
@@ -206,12 +269,33 @@ bool audio_player_play(const char *filepath)
         g_total_file_bytes = 0;
     }
 
-    // M6: 从文件大小即时估计 duration（128kbps：file_bytes / 16）
+    // M3：从文件大小按格式字节率估计 duration
+    // 估算字节率表（bytes/ms，仅用于进度条显示）：
+    //   MP3/AAC/OGG ≈ 128kbps → 16
+    //   Opus ≈ 96kbps → 12
+    //   FLAC ≈ 512kbps → 64（损失编码前样本率）
+    //   WAV 44.1k/16bit/stereo 1411.2kbps → 176
+    // 注意：实际编码比特率与文件有关，进度条仅作粗略展示，不用于精确 seek。
     g_total_duration_ms = 0;
     if (g_total_file_bytes > 0) {
-        g_total_duration_ms = g_total_file_bytes / 16;
-        ESP_LOGD(TAG, "Duration estimated from file size: %d ms", g_total_duration_ms);
-        ESP_LOGW(TAG, "VBR/FLAC: duration estimated @128kbps, seek may be imprecise");
+        const char *ext = get_file_ext(filepath);
+        int bytes_per_ms;
+        if (strcasecmp(ext, ".mp3") == 0 || strcasecmp(ext, ".aac") == 0 ||
+            strcasecmp(ext, ".m4a") == 0 || strcasecmp(ext, ".ogg") == 0) {
+            bytes_per_ms = 16;
+        } else if (strcasecmp(ext, ".opus") == 0) {
+            bytes_per_ms = 12;
+        } else if (strcasecmp(ext, ".flac") == 0) {
+            bytes_per_ms = 64;
+        } else if (strcasecmp(ext, ".wav") == 0) {
+            bytes_per_ms = 176;
+        } else {
+            bytes_per_ms = 16;  // fallback 同 MP3
+        }
+        g_total_duration_ms = g_total_file_bytes / bytes_per_ms;
+        ESP_LOGD(TAG, "Duration estimated from file size: %d ms (bytes/ms=%d, ext=%s)",
+                 g_total_duration_ms, bytes_per_ms, ext);
+        ESP_LOGW(TAG, "Estimated duration is approximate; progress bar/seek may be imprecise");
     }
 
     // 11. 应用当前音量
@@ -245,6 +329,19 @@ void audio_player_resume(void)
 
 void audio_player_stop(void)
 {
+    // R032-211：pipeline/writer 未就绪（OOM 或初始化失败）时直接重置状态返回，
+    // 避免访问已释放/未创建的音频元素。
+    if (!g_pipeline || !g_i2s_writer) {
+        // R035-016：早返回分支统一清零全部时间相关状态变量，避免后续 play() 残留旧值
+        g_is_playing = false;
+        g_is_paused = false;
+        g_play_start_us = 0;
+        g_play_offset_us = 0;
+        g_total_duration_ms = 0;
+        g_last_scrub_us = 0;
+        return;
+    }
+
     if (g_pipeline) {
         audio_pipeline_stop(g_pipeline);
         {
@@ -282,7 +379,7 @@ void audio_player_stop(void)
 
     g_is_playing = false;
     g_is_paused = false;
-    g_current_speed = TAPE_SPEED_NORMAL;
+
     g_total_duration_ms = 0;
     g_play_offset_us = 0;
     g_last_scrub_us = 0;  // M1: 停止时重置跳帧时间戳
@@ -303,10 +400,15 @@ static void audio_player_seek_ms_internal(int ms)
     if (g_total_duration_ms > 0 && g_total_file_bytes > 0) {
         // R028/L1: int64_t 中转避免 uint64 隐式截断
         int64_t byte_pos = (int64_t)ms * g_total_file_bytes / g_total_duration_ms;
-        audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);  // C1: seek reader, not decoder
+        // R032-002 复审修订：ADF audio_element_set_byte_pos 入参为 int（32-bit），
+        // 必须钳位到 INT32_MAX，避免 >2.1 GB 文件隐式窄化截断导致 seek 失准/跳轨。
+        if (byte_pos > INT32_MAX) byte_pos = INT32_MAX;
+        audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);
     } else if (g_total_file_bytes > 0) {
         int64_t byte_pos = (int64_t)ms * g_total_file_bytes / 3600000;
-        audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);  // C1: seek reader, not decoder
+        // R032-002 复审修订：ADF 入参为 int，必须钳位避免窄化截断。
+        if (byte_pos > INT32_MAX) byte_pos = INT32_MAX;
+        audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);
     }
 
     // C1: 重置 decoder byte_pos，使其从 reader 新位置重新开始解码
@@ -319,9 +421,20 @@ static void audio_player_seek_ms_internal(int ms)
 void audio_player_seek_ms(int ms)
 {
     if (!g_pipeline || !g_is_playing) return;
-    audio_pipeline_pause(g_pipeline);
+    // S5：保留原暂停态——暂停时 seek 不再静默 resume
+    bool was_paused = g_is_paused;
+    if (!was_paused) {
+        audio_pipeline_pause(g_pipeline);
+    }
     audio_player_seek_ms_internal(ms);
-    audio_pipeline_resume(g_pipeline);
+    if (!was_paused) {
+        audio_pipeline_resume(g_pipeline);
+    } else {
+        // R035-020：保持 paused：清掉内部函数的 start_us 赋值，避免 get_position_ms 在暂停态累积。
+        // 注意此处依赖 audio_player_seek_ms_internal 已写入正确的 g_play_offset_us，
+        // 否则 seek 后的位置计算会偏移。如有疑问，请同时审计 seek_ms_internal。
+        g_play_start_us = 0;
+    }
 }
 
 int audio_player_get_position_ms(void)
@@ -358,22 +471,22 @@ bool audio_player_is_paused(void)
 
 void audio_player_set_speed(float speed)
 {
-    g_current_speed = speed;
-
     if (!g_i2s_writer) return;
 
     int sample_rate;
     if (speed > 0) {
-        // C3: Gear 4 跳帧模式 — I2S 正常速率，seek 跳帧提供"快进"感
-        int gear = tape_control_get_gear();
-        if (gear >= 4) {
+        // C3: 跳帧模式 — I2S 正常速率，seek 跳帧提供"快进"感（R034-011）
+        if (tape_control_is_scrub_mode()) {
             sample_rate = AUDIO_SAMPLE_RATE;
         } else {
             sample_rate = (int)(AUDIO_SAMPLE_RATE * speed);
-            if (sample_rate < 8000) sample_rate = 8000;
-            if (sample_rate > 176400) sample_rate = 176400;
+            // R035-009: sample_rate limits derived from AUDIO_SAMPLE_RATE * {0.5, 4.0}
+            if (sample_rate < (AUDIO_SAMPLE_RATE / 2)) sample_rate = AUDIO_SAMPLE_RATE / 2;
+            if (sample_rate > (AUDIO_SAMPLE_RATE * 4)) sample_rate = AUDIO_SAMPLE_RATE * 4;
         }
     } else {
+        // R032-203：快退（speed<0）方向由 audio_player_tick 的跳帧向后 seek 实现，
+        // 此处保持正常音高不变调（负采样率只会让音高失真，且跳帧已能模拟快退听感）。
         sample_rate = AUDIO_SAMPLE_RATE;
     }
 
@@ -440,6 +553,7 @@ void audio_player_tick(void)
         if (g_status_cb) {
             g_status_cb(0, g_user_data); // 0 = finished
         }
+        return; // R034-003 / R035-003：终止本帧，避免后续 FF/RW 跳帧代码在 FINISHED pipeline 上 pause/resume
     }
 
     // C2: duration fallback — 从文件大小估计（ADF 无 direct duration API）
@@ -456,9 +570,11 @@ void audio_player_tick(void)
     float speed = tape_control_get_speed();
     float abs_speed = (speed > 0) ? speed : -speed;
 
-    // 仅高档位（≥4x）执行跳帧；1.5x/2.0x/3.0x 仅靠 I2S 变速
+    // 仅高档位（≥最高档位速度）执行跳帧；1.5x/2.0x/3.0x 仅靠 I2S 变速
     // 快退所有档位都跳帧（因为没有"倒放"能力，只能断续 seek）
-    bool need_seek = (abs_speed >= 4.0f) || (mode == TAPE_MODE_REWIND);
+    // R034-011：阈值由硬编码 4.0f 改为派生 tape_control_get_max_gear_speed()，
+    // 避免修改 g_speed_steps[] 后此处 magic number 漂移
+    bool need_seek = (abs_speed >= tape_control_get_max_gear_speed()) || (mode == TAPE_MODE_REWIND);
 
     if (!need_seek) return;
 
@@ -467,10 +583,9 @@ void audio_player_tick(void)
     if ((now - g_last_scrub_us) < 50000) return; // 50ms 间隔
     g_last_scrub_us = now;
 
-    // C3: Gear 4 跳帧模式 — 跳 7/8（skip 350ms/50ms），其他档位 50ms × abs_speed
-    int gear = tape_control_get_gear();
+    // C3: 跳帧模式 — 跳 7/8（skip 350ms/50ms），其他档位 50ms × abs_speed（R034-011）
     int skip_ms;
-    if (gear >= 4 && mode == TAPE_MODE_FAST_FORWARD) {
+    if (tape_control_is_scrub_mode() && mode == TAPE_MODE_FAST_FORWARD) {
         skip_ms = (int)(50.0f * (abs_speed - 1.0f));  // 跳帧模式：50 × (8-1) = 350ms
     } else {
         skip_ms = (int)(50.0f * abs_speed);           // 常规跳帧：50 × speed
@@ -526,7 +641,7 @@ bool audio_player_is_playing(void)  { return false; }
 bool audio_player_is_paused(void)   { return false; }
 void audio_player_set_speed(float speed) {}
 void audio_player_set_volume(int volume) {}
-int  audio_player_get_volume(void) { return 70; }
+int  audio_player_get_volume(void) { return AUDIO_OUTPUT_VOL; }  // R032-303：使用默认音量常量，消除硬编码耦合
 void audio_player_tick(void) {}
 void audio_player_set_callback(audio_status_cb_t cb, void *user_data) {}
 

@@ -1,9 +1,7 @@
 #include "bookmark.h"
 #include "config.h"
-#include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_log.h"
-#include <string.h>
 
 static const char *TAG = "bookmark";
 
@@ -15,9 +13,12 @@ static const char *TAG = "bookmark";
  *   - settings_flush() 只提交 g_nvs_handle 的待写缓存
  *   - g_bm_handle 的写入（nvs_set / nvs_erase）不会因此落盘
  *
- * 因此 bookmark_add / bookmark_delete 在各自成功路径上必须调用
+ * 因此 bookmark_add 在成功路径上必须调用
  * nvs_commit(g_bm_handle)，否则书签写入仅在 RAM 缓存中生效，
  * 重启/断电后全部丢失。
+ *
+ * 提交策略说明（R032-202）：bookmark 采用即时提交（低频且需耐久），
+ * 与 settings 的"批量写入 + 显式 flush"各有取舍，属有意设计。
  */
 static nvs_handle_t g_bm_handle = 0;
 
@@ -43,15 +44,13 @@ int bookmark_add(int file_idx, int position_s)
 
     // 找第一个空位；满则覆盖最旧（slot 0），其余向前移位
     int slot = -1;
-    int32_t slots[BOOKMARK_MAX_PER_FILE];
-    int occupied = 0;
     for (int i = 0; i < BOOKMARK_MAX_PER_FILE; i++) {
         char key[24];
         make_key(file_idx, i, key, sizeof(key));
         int32_t val = 0;
         esp_err_t err = nvs_get_i32(g_bm_handle, key, &val);
         if (err == ESP_OK) {
-            slots[occupied++] = val;
+            // 已占用，继续向下找空位
         } else if (slot < 0) {
             slot = i;
         }
@@ -107,48 +106,4 @@ int bookmark_add(int file_idx, int position_s)
     return slot;
 }
 
-bool bookmark_delete(int file_idx, int bm_idx)
-{
-    if (!g_bm_handle || file_idx < 0 || bm_idx < 0) return false;
-    char key[24];
-    make_key(file_idx, bm_idx, key, sizeof(key));
-    esp_err_t err = nvs_erase_key(g_bm_handle, key);
-    if (err == ESP_OK) {
-        if (nvs_commit(g_bm_handle) != ESP_OK) {
-            ESP_LOGE(TAG, "nvs_commit failed after bookmark delete");
-        }
-        ESP_LOGI(TAG, "Bookmark deleted: file=%d slot=%d", file_idx, bm_idx);
-        return true;
-    }
-    return false;
-}
 
-int bookmark_list(int file_idx, bookmark_t *out, int max_count)
-{
-    if (!g_bm_handle || !out || max_count <= 0) return 0;
-
-    int count = 0;
-    for (int i = 0; i < BOOKMARK_MAX_PER_FILE && count < max_count; i++) {
-        char key[24];
-        make_key(file_idx, i, key, sizeof(key));
-        int32_t val = 0;
-        esp_err_t err = nvs_get_i32(g_bm_handle, key, &val);
-        if (err == ESP_OK) {
-            out[count].position_s = (int)val;
-            snprintf(out[count].label, sizeof(out[count].label), "BM%d", i + 1);
-            count++;
-        }
-    }
-    return count;
-}
-
-int bookmark_jump(int file_idx, int bm_idx)
-{
-    if (!g_bm_handle || file_idx < 0 || bm_idx < 0) return -1;
-    char key[24];
-    make_key(file_idx, bm_idx, key, sizeof(key));
-    int32_t val = 0;
-    esp_err_t err = nvs_get_i32(g_bm_handle, key, &val);
-    if (err != ESP_OK) return -1;
-    return (int)val;
-}

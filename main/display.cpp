@@ -14,19 +14,20 @@
 
 #include "display.h"
 #include "config.h"
+#include "tape_control.h"
 #include "esp_timer.h"
 
 // u8g2 库头文件，如果使用简化方案可以用 SSD1306 驱动
 // 这里演示使用 u8g2 的接口
 
-// 如果未安装 u8g2，以下为兼容的占位实现
-// 实际使用请通过 idf component 拉取（main/idf_component.yml）
-// 2026-07-03 R002: 从手动源码 components/u8g2 切换为 idf component 依赖
+// R035-017：本块注释原声称"经 idf_component.yml 拉取 u8g2"，但 yml 中 dependencies 被整体注释，
+// 实际仍由 components/u8g2_esp32_hal + components/u8g2 手动源码方式提供。
+// 2026-07-03 R002: 从手动源码 components/u8g2 切换为 idf component 依赖（待 R003 启用，参见 R035-018）
+// 2026-07-22 R035-017: 回归手动源码（u8g2_esp32_hal 已存在），与 idf_component.yml 当前状态一致
 
 #ifdef CONFIG_USE_U8G2
 
 #include "u8g2.h"
-#include "driver/i2c.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "u8g2_esp32_hal.h"
@@ -39,6 +40,7 @@ static u8g2_t u8g2;
 static uint32_t g_display_fp = 0;
 static uint64_t g_display_last_update_us = 0;
 static bool     g_display_sleep = false;
+static bool     g_display_initialized = false;   // R032-207: I2C 未就绪时阻止对未初始化 u8g2 的调用
 
 static uint32_t calc_fingerprint(player_state_t state,
                                   int track_idx, int total,
@@ -77,10 +79,12 @@ void display_init(void)
     u8g2_SetPowerSave(&u8g2, 0);
     u8g2_ClearBuffer(&u8g2);
     u8g2_SendBuffer(&u8g2);
+    g_display_initialized = true;   // R032-207
 }
 
 void display_show_splash(void)
 {
+    if (!g_display_initialized) return;   // R032-207
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
     u8g2_DrawStr(&u8g2, 10, 20, "Audiobook Player");
@@ -92,6 +96,7 @@ void display_show_splash(void)
 
 void display_show_no_files(void)
 {
+    if (!g_display_initialized) return;   // R032-207
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
     u8g2_DrawStr(&u8g2, 15, 25, "No Audio Files");
@@ -103,6 +108,7 @@ void display_show_no_files(void)
 
 void display_show_no_card(void)
 {
+    if (!g_display_initialized) return;   // R032-207
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
     u8g2_DrawStr(&u8g2, 10, 25, "No SD Card");
@@ -119,20 +125,20 @@ static const char *state_icon(player_state_t state)
     case PLAYER_STATE_STOPPED:       return "#";
     case PLAYER_STATE_FAST_FORWARD:  return ">>";
     case PLAYER_STATE_REWIND:        return "<<";
+    case PLAYER_STATE_LOCKED:        return "[]";   // M2：锁定态独立图标
     default:                         return "?";
     }
 }
 
 static const char *gear_str(int gear)
 {
-    switch (gear) {
-    case 0: return "";
-    case 1: return "1.5x";
-    case 2: return "2.0x";
-    case 3: return "3.0x";
-    case 4: return "4x";
-    default: return "";
-    }
+    // R035-006：标签与 tape_control.cpp 的 g_speed_steps[] 联动（单源），
+    // 修改档位定义时无需同步 display.cpp。
+    static char s_gear_buf[8];
+    float speed = tape_control_get_gear_speed(gear);
+    if (speed <= 0.0f) return "";
+    snprintf(s_gear_buf, sizeof(s_gear_buf), "%.1fx", speed);
+    return s_gear_buf;
 }
 
 static void format_time(int seconds, char *buf, size_t size)
@@ -153,6 +159,8 @@ void display_update(player_state_t state,
                     int current_sec, int total_sec,
                     float speed, int gear, int volume)
 {
+    if (!g_display_initialized) return;   // R032-207
+
     uint64_t now = esp_timer_get_time();
 
     /* 脏区检查：帧内容无变化则跳过 I2C 刷新 */
@@ -198,7 +206,15 @@ void display_update(player_state_t state,
         if (bar_w < 0) bar_w = 0;
         if (bar_w > 126) bar_w = 126;
         if (bar_w > 0) {
-            u8g2_DrawBox(&u8g2, 1, 31, bar_w, 10);
+            // R032-308：暂停态用反色填充进度条以"灰显/冻结"，与 PLAYING 的实心填充区分；
+            // 位置数值（current_sec）仍准确，仅视觉提示已暂停。
+            if (state == PLAYER_STATE_PAUSED) {
+                u8g2_SetDrawColor(&u8g2, 0);
+                u8g2_DrawBox(&u8g2, 1, 31, bar_w, 10);
+                u8g2_SetDrawColor(&u8g2, 1);
+            } else {
+                u8g2_DrawBox(&u8g2, 1, 31, bar_w, 10);
+            }
         }
     }
 
@@ -219,7 +235,9 @@ void display_update(player_state_t state,
 
     /* --- Line 4: 底部操作提示 --- */
     u8g2_SetFont(&u8g2, u8g2_font_4x6_tf);
-    u8g2_DrawStr(&u8g2, 0, 63, "<Prev  Play  Stop  Next>  FF^RW");
+    // R035-008：原文 "<Prev  Play  Stop  Next>  FF^RW" 28 字符 × ~5 px advance ≈ 140 px 超 128 px 屏宽，
+    // 缩短为 "<Prev Stop Next> FF/RW" 22 字符 × ~5 px ≈ 110 px，留余量
+    u8g2_DrawStr(&u8g2, 0, 63, "<Prev Stop Next> FF/RW");
 
     u8g2_SendBuffer(&u8g2);
 }
@@ -230,6 +248,7 @@ void display_update(player_state_t state,
 
 void display_show_browse(int selected, int total, char lines[][24], int count)
 {
+    if (!g_display_initialized) return;   // R032-207
     if (count <= 0) return;
 
     u8g2_ClearBuffer(&u8g2);
@@ -286,6 +305,7 @@ void display_update(player_state_t state,
     else if (state == PLAYER_STATE_PAUSED) st = "PAUS";
     else if (state == PLAYER_STATE_FAST_FORWARD) st = "FF>>";
     else if (state == PLAYER_STATE_REWIND) st = "<<RW";
+    else if (state == PLAYER_STATE_LOCKED) st = "LOCK";   // M2：锁定态
 
     ESP_LOGI(TAG, "[%d/%d] %s | %s | %ds/%ds | %.1fx vol:%d",
              track_idx, total, st, track_name, current_sec, total_sec, speed, volume);

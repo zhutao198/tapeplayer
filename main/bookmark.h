@@ -34,23 +34,6 @@ void bookmark_init(void);
  */
 int bookmark_add(int file_idx, int position_s);
 
-/**
- * @brief 删除指定书签
- */
-bool bookmark_delete(int file_idx, int bm_idx);
-
-/**
- * @brief 获取指定文件的书签列表
- * @return 实际书签数
- */
-int bookmark_list(int file_idx, bookmark_t *out, int max_count);
-
-/**
- * @brief 获取书签位置（用于跳转）
- * @return 书签位置（秒），-1=不存在
- */
-int bookmark_jump(int file_idx, int bm_idx);
-
 #ifdef __cplusplus
 }
 #endif

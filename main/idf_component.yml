@@ -4,6 +4,8 @@
 ##   之前 components/u8g2/ 是手 clone 的 334M 第三方源码。
 ## 2026-07-03 R003: 暂禁用 u8g2 依赖（README 写的 lfengineering/u8g2_esp32 在 registry 不存在）。
 ##   等用户提供正确 component 名后用 R004 启用真实 u8g2。
+## 2026-07-22 R035-018：实际仍由 components/u8g2_esp32_hal + components/u8g2 手动源码提供，
+##   本 yml 作占位；启用前需先评估 idf component 版本与手动源码的兼容性。
 
 # 2026-07-03 R003: 整个 dependencies 块注释掉（YAML 空 dict 仍报"Input should be a valid dictionary"）
 # dependencies:

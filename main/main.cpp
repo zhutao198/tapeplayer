@@ -34,7 +34,7 @@
 #include "audio_player.h"
 #include "settings.h"
 #include "power_mgmt.h"
-#include "voice_prompt.h"
+
 #include "bookmark.h"
 
 static const char *TAG = "main";
@@ -98,10 +98,14 @@ static uint64_t    g_last_sd_check_us = 0;
  * ============================================================ */
 static void save_current_position(void)
 {
-    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
+    // R034-002：包含 FF/RW 态，避免快进/快退中掉电后续播点停留在上次普通播放位置
+    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
+        g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
         char name[FILENAME_MAX_LEN] = "";
         playlist_get_name(g_current_track, name, sizeof(name));
         settings_save_position(g_current_track, audio_player_get_position(), name);
+        // S8：seek/切歌后立即 flush，避免断电丢失最近一次断点
+        settings_flush();
     }
 }
 
@@ -123,7 +127,7 @@ static void stop_playback(void)
 
 static void play_current_track(void)
 {
-    char filepath[FILENAME_MAX_LEN * 2];
+    char filepath[FILENAME_MAX_LEN * 4];  // R032-001: 扩到 *4 与 playlist 路径缓冲一致，避免接收时截断
     if (playlist_get_path(g_current_track, filepath, sizeof(filepath))) {
         if (audio_player_play(filepath)) {
             // 如果有断点位置（从 NVS 恢复或切换曲目时指定）
@@ -131,7 +135,16 @@ static void play_current_track(void)
                 audio_player_seek(g_seek_on_play_position);
                 g_seek_on_play_position = 0;
             }
-            g_app_state = APP_STATE_PLAYING;
+            // R034-001：依据 tape_control_get_mode() 还原状态，避免 FF/RW 跨曲时
+            // g_app_state 与 tape mode 不一致（行为对但图标/状态机错位）
+            tape_mode_t m = tape_control_get_mode();
+            if (m == TAPE_MODE_FAST_FORWARD) {
+                g_app_state = APP_STATE_FAST_FORWARD;
+            } else if (m == TAPE_MODE_REWIND) {
+                g_app_state = APP_STATE_REWIND;
+            } else {
+                g_app_state = APP_STATE_PLAYING;
+            }
             g_last_auto_save_us = esp_timer_get_time();
             ESP_LOGI(TAG, "Now playing: %s", filepath);
         }
@@ -158,6 +171,7 @@ static void skip_seconds(int seconds)
     int duration = audio_player_get_duration();
     if (duration > 0 && new_pos > duration) new_pos = duration;
     audio_player_seek(new_pos);
+    save_current_position();   // R032-104: seek 后立即保存断点并 flush，避免断电丢失
     ESP_LOGI(TAG, "Skip %ds → pos=%d", seconds, new_pos);
 }
 
@@ -180,7 +194,9 @@ static void on_track_finished(int state, void *user_data)
             g_pending_track_seek = 0;
             g_pending_track_finished = true;
         } else {
-            g_app_state = APP_STATE_STOPPED;
+            if (g_app_state != APP_STATE_LOCKED) {  // R032-109: 锁定态不覆盖为 STOPPED，仅显示短暂不一致
+                g_app_state = APP_STATE_STOPPED;
+            }
             ESP_LOGI(TAG, "Playlist finished (sequence mode)");
         }
         break;
@@ -312,11 +328,14 @@ static void handle_button_events(void)
             if (e->event == BTN_EVENT_SHORT_PRESS) {
                 g_vol_hold_counter = 0;
                 save_current_position();  // 切换前保存旧位置
-                g_current_track = playlist_prev();
-                playlist_set_index(g_current_track);
-                g_seek_on_play_position = 0;  // 新曲目从头
-                if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
-                    play_current_track();
+                int prev = playlist_prev();  // R032-107: 空列表返回 -1，避免污染 g_current_track
+                if (prev >= 0) {
+                    g_current_track = prev;
+                    playlist_set_index(prev);
+                    g_seek_on_play_position = 0;  // 新曲目从头
+                    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
+                        play_current_track();
+                    }
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS || e->event == BTN_EVENT_HOLD) {
                 /* 长按/持续按住 → 音量减（每 100ms 减 1 级） */
@@ -338,11 +357,14 @@ static void handle_button_events(void)
             if (e->event == BTN_EVENT_SHORT_PRESS) {
                 g_vol_hold_counter = 0;
                 save_current_position();
-                g_current_track = playlist_next();
-                playlist_set_index(g_current_track);
-                g_seek_on_play_position = 0;
-                if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
-                    play_current_track();
+                int next = playlist_next();  // R032-107: 空列表返回 -1，避免污染 g_current_track
+                if (next >= 0) {
+                    g_current_track = next;
+                    playlist_set_index(next);
+                    g_seek_on_play_position = 0;
+                    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
+                        play_current_track();
+                    }
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS || e->event == BTN_EVENT_HOLD) {
                 g_vol_hold_counter++;
@@ -441,11 +463,11 @@ static void update_display(void)
     case APP_STATE_PLAYING:      disp_state = PLAYER_STATE_PLAYING;  break;
     case APP_STATE_FAST_FORWARD: disp_state = PLAYER_STATE_FAST_FORWARD; break;
     case APP_STATE_REWIND:       disp_state = PLAYER_STATE_REWIND;   break;
-    case APP_STATE_PAUSED:       disp_state = PLAYER_STATE_PAUSED;   break;
-    case APP_STATE_LOCKED:       disp_state = PLAYER_STATE_STOPPED;  break;
-    case APP_STATE_STOPPED:
-    case APP_STATE_IDLE:
-    default:                     disp_state = PLAYER_STATE_STOPPED;  break;
+        case APP_STATE_PAUSED:       disp_state = PLAYER_STATE_PAUSED;   break;
+        case APP_STATE_LOCKED:       disp_state = PLAYER_STATE_LOCKED;  break;   // M2：独立图标
+        case APP_STATE_STOPPED:
+        case APP_STATE_IDLE:
+        default:                     disp_state = PLAYER_STATE_STOPPED;  break;
     }
 
     char track_name[FILENAME_MAX_LEN] = "";
@@ -641,28 +663,36 @@ extern "C" void app_main(void)
             char name[FILENAME_MAX_LEN] = "";
             playlist_get_name(g_pending_save_track, name, sizeof(name));
             settings_save_position(g_pending_save_track, g_pending_save_position, name);
+            settings_flush();   // R032-104: 播完后立即落盘，避免 30s 自动保存窗口内断电丢断点
             g_pending_save_track = -1;
         }
 
-        // 6. 每 30 秒自动保存断点 + 批量 flush NVS（仅在播放/暂停时写入）
+        // 6. 每 30 秒自动保存断点 + 批量 flush NVS（播放/暂停/FF/RW 均保存，R034-002 / R035-004）
         {
             uint64_t now = esp_timer_get_time();
             if ((now - g_last_auto_save_us) >= AUTO_SAVE_INTERVAL_US) {
                 g_last_auto_save_us = now;
-                if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
+                if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
+                    g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
                     save_current_position();
                     settings_flush();
+                    // R035-010：自动保存也算用户活动，重置 auto-off 计时
+                    power_mgmt_record_activity();
                 }
             }
         }
 
-        // 7. 定时关机检查
-        if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
+        // 7. 定时关机检查（含 FF/RW）
+        if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
+            g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
             if (power_mgmt_auto_off_expired()) {
                 ESP_LOGI(TAG, "Auto-off timer expired, stopping playback");
                 audio_player_stop();
                 g_app_state = APP_STATE_STOPPED;
                 power_mgmt_set_auto_off(0);
+                // R034-007：触发后落盘清零 NVS，避免重启 power_mgmt_init 重新武装
+                settings_save_auto_off(0);
+                settings_flush();
             }
         }
 
@@ -693,10 +723,14 @@ extern "C" void app_main(void)
         }
 
         // 7c. 自动休眠（5 分钟无操作进入 light sleep，按键 GPIO 唤醒）
-        if (power_mgmt_should_sleep()) {
+        // S2：播放中（PLAYING/PAUSED）不休眠，否则听书会被打断
+        // S3：sleep 前释放磁带状态机，避免唤醒后档位残留
+        if ((g_app_state == APP_STATE_STOPPED || g_app_state == APP_STATE_IDLE) &&
+            power_mgmt_should_sleep()) {
             ESP_LOGI(TAG, "Idle timeout, entering light sleep");
 
-            save_current_position();
+            save_current_position();   // R032-103: sleep 前保存断点（FF/RW 不会进入此分支，已在此前释放）
+            settings_flush();
             audio_player_stop();
             g_app_state = APP_STATE_IDLE;
 
@@ -741,6 +775,8 @@ extern "C" void app_main(void)
                         audio_player_stop();
                         display_show_no_card();
                         g_app_state = APP_STATE_IDLE;
+                        // R035-019 fix: 卸载 VFS 并释放 sdmmc 资源，否则下次挂载会失败
+                        esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, g_sd_card);
                         g_sd_card = NULL;
                     }
                 }

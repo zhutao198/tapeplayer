@@ -14,7 +14,6 @@
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include "esp_log.h"
-#include <string.h>
 
 static const char *TAG = "button";
 
@@ -82,13 +81,18 @@ void button_manager_init(void)
         return;
     }
 
-    memcpy(g_buttons, g_btn_config, sizeof(g_buttons));
+    // R033-313: 显式逐字段拷贝，避免 memcpy(g_buttons, g_btn_config) 因
+    // btn_ctx_t 比 btn_config_t 多字段而越界读取配置数组（src 越界 UB）。
     for (int i = 0; i < BTN_ID_MAX; i++) {
-        g_buttons[i].state = BTN_STATE_IDLE;
-        g_buttons[i].press_start_us = 0;
+        g_buttons[i].gpio            = g_btn_config[i].gpio;
+        g_buttons[i].id              = g_btn_config[i].id;
+        g_buttons[i].dbl_click_en    = g_btn_config[i].dbl_click_en;
+        g_buttons[i].state           = BTN_STATE_IDLE;
+        g_buttons[i].press_start_us  = 0;
+        g_buttons[i].last_scan_us    = 0;
         g_buttons[i].first_release_us = 0;
-        g_buttons[i].long_press_fired = false;
-        g_buttons[i].extra_long_fired = false;
+        g_buttons[i].long_press_fired  = false;
+        g_buttons[i].extra_long_fired  = false;
     }
 }
 
@@ -170,10 +174,11 @@ int button_manager_scan(btn_event_info_t *events, int max_events)
         case BTN_STATE_DBL_DEBOUNCE:
             if (!pressed && (now_us - btn->press_start_us) >= debounce_us) {
                 btn->state = BTN_STATE_IDLE;
-                event = BTN_EVENT_DOUBLE_CLICK;
+                event = BTN_EVENT_DOUBLE_CLICK;       // 第二次按下有效
             } else if (!pressed) {
+                // R033-201：第二次按下在 debounce_us 内释放（抖动/短脉冲），
+                // 去抖失败，不输出任何事件，仅回到 IDLE，避免幽灵 SHORT_PRESS。
                 btn->state = BTN_STATE_IDLE;
-                event = BTN_EVENT_SHORT_PRESS;
             } else if ((now_us - btn->press_start_us) >= debounce_us) {
                 btn->state = BTN_STATE_DBL_PRESSED;
             }
