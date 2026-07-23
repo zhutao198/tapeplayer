@@ -463,11 +463,11 @@ static void update_display(void)
     case APP_STATE_PLAYING:      disp_state = PLAYER_STATE_PLAYING;  break;
     case APP_STATE_FAST_FORWARD: disp_state = PLAYER_STATE_FAST_FORWARD; break;
     case APP_STATE_REWIND:       disp_state = PLAYER_STATE_REWIND;   break;
-        case APP_STATE_PAUSED:       disp_state = PLAYER_STATE_PAUSED;   break;
-        case APP_STATE_LOCKED:       disp_state = PLAYER_STATE_LOCKED;  break;   // M2：独立图标
-        case APP_STATE_STOPPED:
-        case APP_STATE_IDLE:
-        default:                     disp_state = PLAYER_STATE_STOPPED;  break;
+    case APP_STATE_PAUSED:       disp_state = PLAYER_STATE_PAUSED;   break;
+    case APP_STATE_LOCKED:       disp_state = PLAYER_STATE_LOCKED;  break;   // M2：独立图标
+    case APP_STATE_STOPPED:
+    case APP_STATE_IDLE:
+    default:                     disp_state = PLAYER_STATE_STOPPED;  break;
     }
 
     char track_name[FILENAME_MAX_LEN] = "";

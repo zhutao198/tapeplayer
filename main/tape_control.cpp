@@ -101,7 +101,8 @@ int tape_control_get_gear(void)
 
 // R034-011：将"跳帧档位"判定收敛到本模块，消除 audio_player.cpp 中
 // gear >= 4 的硬编码耦合。判定阈值取 NUM_SPEED_STEPS - 1（最高档），
-// 修改 g_accel_gears 档数时无需同步修改 audio_player。
+// 修改 g_speed_steps 档数时无需同步修改 audio_player。
+// R036-003：注释中数组名由 g_accel_gears 修正为 g_speed_steps（实际定义见 L26）。
 bool tape_control_is_scrub_mode(void)
 {
     if (g_mode == TAPE_MODE_NORMAL) return false;

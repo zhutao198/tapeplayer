@@ -199,16 +199,17 @@ bool audio_player_play(const char *filepath)
         return false;
     }
     // R035-015：第三次 audio_pipeline_register 添加返回值检查 + 失败清理
+    // R036-001：i2s_writer 是跨曲目复用资源（见 L50/L112 注释），失败清理仅 unregister，
+    // 不 deinit、不置 NULL，与 run/link 失败路径一致。
     if (audio_pipeline_register(g_pipeline, g_i2s_writer, "i2s") != ESP_OK) {
         ESP_LOGE(TAG, "register i2s_writer failed");
         audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
         audio_pipeline_unregister(g_pipeline, g_decoder);
         audio_element_deinit(g_fatfs_reader);
         audio_element_deinit(g_decoder);
-        audio_element_deinit(g_i2s_writer);
+        audio_pipeline_unregister(g_pipeline, g_i2s_writer);  // 仅 unregister，保留跨曲目复用
         g_fatfs_reader = NULL;
         g_decoder = NULL;
-        g_i2s_writer = NULL;
         audio_pipeline_deinit(g_pipeline);
         g_pipeline = NULL;
         return false;

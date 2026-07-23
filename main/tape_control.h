@@ -88,7 +88,7 @@ float tape_control_get_max_gear_speed(void);
  * @brief 是否处于"跳帧模式"（R034-011）
  *
  * 用于 audio_player 在 FF/RW 高档位时跳帧推进，避免与 tape_control.cpp
- * 的 g_accel_gears 数组档位数硬耦合。修改 NUM_SPEED_STEPS 时无需同步
+ * 的 g_speed_steps 数组档位数硬耦合。修改 NUM_SPEED_STEPS 时无需同步
  * 修改 audio_player。
  *
  * @return true = 当前处于 FF/RW 且档位 ≥ 最高档（跳帧快进模式）

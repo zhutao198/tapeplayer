@@ -18,7 +18,7 @@ extern "C" {
 
 typedef struct {
     int  position_s;     // 书签位置（秒）
-    char label[16];      // 可选标签（如 "CH03"）
+    // R036-004：移除未使用的 label[16] 字段（R035-007 删除 bookmark_list 后再无写入路径）
 } bookmark_t;
 
 /**
