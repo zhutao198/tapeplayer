@@ -1,6 +1,10 @@
 /**
  * @file button_manager.h
- * @brief 按键管理模块 - 扫描、去抖、短按、双击、长按、超长按、持续按住检测
+ * @brief 按键管理模块 - 扫描、去抖、短按、长按、超长按、持续按住检测
+ *
+ * R047：双击检测已移除（BTN_EVENT_DOUBLE_CLICK 已删除）。所有按键统一走
+ * 短按路径。如未来需启用双击，恢复 BTN_EVENT_DOUBLE_CLICK 并配合
+ * button_manager.cpp 中的双击状态机。
  */
 
 #pragma once
@@ -15,8 +19,7 @@ extern "C" {
 /** 按键事件类型 */
 typedef enum {
     BTN_EVENT_NONE = 0,             // 无事件
-    BTN_EVENT_SHORT_PRESS,          // 短按 (松开时触发；双击启用按键需等待窗口排除)
-    BTN_EVENT_DOUBLE_CLICK,         // 双击 (仅双击启用按键：短按间隔 < 双击窗口)
+    BTN_EVENT_SHORT_PRESS,          // 短按 (松开时立即触发，无双击窗口)
     BTN_EVENT_LONG_PRESS,           // 长按 (按住超过 500ms 时触发一次)
     BTN_EVENT_EXTRA_LONG_PRESS,     // 超长按 (按住超过 3s，用于按键锁定)
     BTN_EVENT_HOLD,                 // 持续按住 (每扫描周期持续触发)
