@@ -31,6 +31,8 @@ typedef enum {
     BTN_ID_NEXT,
     BTN_ID_REWIND,
     BTN_ID_FAST_FORWARD,
+    BTN_ID_VOL_DOWN,
+    BTN_ID_VOL_UP,
     BTN_ID_MAX
 } btn_id_t;
 

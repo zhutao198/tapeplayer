@@ -50,12 +50,14 @@ typedef struct {
 
 /* 按键配置：FF/RW 禁用双击检测，保证磁带模式即时响应 */
 static const btn_config_t g_btn_config[BTN_ID_MAX] = {
-    { .gpio = BTN_PLAY_PAUSE,    .id = BTN_ID_PLAY_PAUSE,   .dbl_click_en = true  },
-    { .gpio = BTN_STOP,          .id = BTN_ID_STOP,         .dbl_click_en = true  },
+    { .gpio = BTN_PLAY_PAUSE,    .id = BTN_ID_PLAY_PAUSE,   .dbl_click_en = false },
+    { .gpio = BTN_STOP,          .id = BTN_ID_STOP,         .dbl_click_en = false },
     { .gpio = BTN_PREV,          .id = BTN_ID_PREV,         .dbl_click_en = false },
     { .gpio = BTN_NEXT,          .id = BTN_ID_NEXT,         .dbl_click_en = false },
     { .gpio = BTN_REWIND,        .id = BTN_ID_REWIND,       .dbl_click_en = false },
     { .gpio = BTN_FAST_FORWARD,  .id = BTN_ID_FAST_FORWARD, .dbl_click_en = false },
+    { .gpio = BTN_VOL_DOWN,      .id = BTN_ID_VOL_DOWN,     .dbl_click_en = false },
+    { .gpio = BTN_VOL_UP,        .id = BTN_ID_VOL_UP,       .dbl_click_en = false },
 };
 
 static btn_ctx_t g_buttons[BTN_ID_MAX];

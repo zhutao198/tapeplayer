@@ -1,0 +1,29 @@
+===== tools\_lckswitch.pdf =====
+Total pages: 1
+
+
+----- Page 1 -----
+额定电流  Rated Current：额定电压  Rated voltage：绝缘电阻  Insulation Resistance：接触电阻  Contact resistance：
+机械性能 机械寿命  Mechanical life：温度范围  Temperature Range:
+耐压强度  Compressive strength：
+环境性能 
+电气性能 
+操作力度  Operating force：
+项    目 标    准
+操作行程  Operation Stroke：
+0.1A MAXDC 12V≤100mΩ≥100MΩAC110V  50Hz/1 min-10°C ~ +60°C2-80±50gf10,0000 cycles Min1.0±0.2mm205±50gf
+ab cdabcdab cdA向24°a与b通 B向24°a与d通  C向1  a与c通  
+向24
+B向24°
+abcd
+拨动方向说明A向与B向只能左右拨动不可左右拨动时进行下按操作C向操作则只能下按
+A向与B向左右拨动到18度时不可进行下按操作，因底座始终为塑料，并不是铁块，如按压力过大会导致基座破裂.
+ANO.材 料  Material 颜色   colour零件名称  Part Name 镀涂  Plating coatingQ'TY1BCDEF
+底座嵌件簧片盖板弹簧手柄
+11111
+黑色银白色白色原色//单边覆银整体镀银/
+尼龙覆银铜磷铜不锈钢黑色
+尼龙/不锈钢丝原色
+备注  Remarks
+ACEFBD
+连晟欣LCK 产品类别TG:波轮开关TK:五向开关 产品流水料号识别码电镀规格G1：1UG3：3U（以此推类）

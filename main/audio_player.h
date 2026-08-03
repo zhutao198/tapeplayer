@@ -8,7 +8,7 @@
  * 关键设计：
  * - 每次播放重新创建 pipeline（避免 terminate 后复用失败）
  * - seek/tick 使用毫秒级精度
- * - 跳帧仅在 ≥4x 高档位执行，1.5x/2.5x 仅变速不跳帧
+ * - 跳帧仅在 ≥8x 最高档位执行，1.5x/2.0x/3.0x 仅变速不跳帧（变调靠 I2S 输出采样率倍增）
  */
 
 #pragma once
@@ -30,7 +30,7 @@ void audio_player_init(void);
 
 /**
  * @brief 播放指定文件
- * @param filepath  完整文件路径
+ * @param filepath  完整文件路径（非 NULL，须以 '/' 开头的合法路径）
  * @return true=成功开始 / false=失败
  */
 bool audio_player_play(const char *filepath);

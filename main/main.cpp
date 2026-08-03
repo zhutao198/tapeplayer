@@ -21,6 +21,7 @@
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
 #include "esp_sleep.h"
+#include "esp_err.h"
 #include "nvs_flash.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
@@ -36,6 +37,7 @@
 #include "power_mgmt.h"
 
 #include "bookmark.h"
+#include "led_strip.h"
 
 static const char *TAG = "main";
 
@@ -58,18 +60,16 @@ typedef enum {
     APP_STATE_PAUSED,          // 暂停
     APP_STATE_FAST_FORWARD,    // 快进（磁带模式）
     APP_STATE_REWIND,          // 快退（磁带模式）
-    APP_STATE_LOCKED,          // 按键锁定
     APP_STATE_BROWSING,        // 文件夹浏览
 } app_state_t;
 
 // 所有全局变量单任务访问，无需 volatile（M-9/L-8: 设计确认 OK）
 static app_state_t    g_app_state = APP_STATE_IDLE;
 static int            g_current_track = 0;
-static bool           g_key_locked = false;
-static app_state_t    g_state_before_lock = APP_STATE_STOPPED;
 static uint64_t       g_last_display_update = 0;
 static int64_t        g_next_loop_deadline = 0;
-static int            g_vol_hold_counter = 0;  // 音量长按计数器（每 5 步=100ms 调 1 级）
+static int            g_vol_down_counter = 0;  // 音量减长按计数器（每 5 步调 1 级）
+static int            g_vol_up_counter = 0;    // 音量加长按计数器（每 5 步调 1 级）
 static int            g_seek_on_play_position = 0;  // 断点恢复 seek 目标（秒）
 // g_last_auto_save_us: 与 auto_save/settings_flush/power_mgmt 耦合，单任务下 OK（M-15: 设计级，可接受）
 static uint64_t       g_last_auto_save_us = 0;
@@ -86,12 +86,33 @@ static int            g_pending_save_position = 0;
 
 static int            g_browse_index = 0;              // 浏览模式选中索引
 static app_state_t    g_state_before_browse = APP_STATE_STOPPED;
+static uint32_t       g_browse_repeat_ms = 0;          // 浏览长按连续移动基准时刻 (hold_ms)
+
+// 组合键 REW+STOP：两键在 COMBO_WINDOW_US 内先后/同时短按 → 跳到当前曲首
+static uint64_t       g_combo_rew_us = 0;
+static uint64_t       g_combo_stop_us = 0;
+
+/**
+ * 浏览模式长按连续移动的间隔 (ms/曲)：随按住时长加速缩短。
+ * 刚进入长按用 BROWSE_REPEAT_MS_INIT，超过 BROWSE_HOLD_ACCEL_MS 后用最快间隔。
+ */
+static uint32_t browse_repeat_interval(uint32_t hold_ms)
+{
+    if (hold_ms >= BROWSE_HOLD_ACCEL_MS) {
+        return BROWSE_REPEAT_MS_MIN;
+    }
+    if (hold_ms >= BROWSE_HOLD_ACCEL_MS / 2) {
+        return BROWSE_REPEAT_MS_FAST;
+    }
+    return BROWSE_REPEAT_MS_INIT;
+}
 
 static sdmmc_card_t   *g_sd_card = NULL;  // SD 卡句柄
 static uint64_t    g_last_sd_check_us = 0;
 
 #define AUTO_SAVE_INTERVAL_US  (30 * 1000000)  // 30 秒自动保存
 #define SD_CHECK_INTERVAL_US   (5 * 1000000)   // 5 秒检查 SD 卡状态
+#define COMBO_WINDOW_US        (250 * 1000)    // 组合键 REW+STOP 判定窗：250ms 内两键短按算同时
 
 /* ============================================================
  * 辅助：保存当前断点
@@ -115,6 +136,12 @@ static void save_current_position(void)
 static void stop_playback(void)
 {
     save_current_position();
+    // 缓存当前位置，供 STOPPED→播放 续播（主循环不再清零，见 BTN_ID_PLAY_PAUSE）。
+    // 必须在 audio_player_stop() 之前读取，管道销毁后 get_position 失效。
+    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
+        g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
+        g_seek_on_play_position = audio_player_get_position();
+    }
     audio_player_stop();
     // 统一退出磁带模式（不限 FF/RW）
     if (g_app_state == APP_STATE_FAST_FORWARD) {
@@ -123,6 +150,27 @@ static void stop_playback(void)
         tape_control_rewind_release();
     }
     g_app_state = APP_STATE_STOPPED;
+}
+
+/* 组合键 REW+STOP：跳到当前曲首（从头）。
+ * 仅播放相关态有效：播放/暂停/快进退态立即 seek(0) 并落盘；停止态则把续播位置设为 0。 */
+static void jump_to_track_start(void)
+{
+    if (g_app_state == APP_STATE_FAST_FORWARD)      tape_control_ff_release();
+    else if (g_app_state == APP_STATE_REWIND)       tape_control_rewind_release();
+
+    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
+        g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
+        audio_player_set_speed(TAPE_SPEED_NORMAL);
+        audio_player_seek(0);
+        save_current_position();   // 落盘曲首位置（0）
+        if (g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
+            g_app_state = APP_STATE_PLAYING;
+        }
+    } else if (g_app_state == APP_STATE_STOPPED) {
+        g_seek_on_play_position = 0;   // 停止态：下次播放从头
+    }
+    ESP_LOGI(TAG, "Combo REW+STOP: jump to track start");
 }
 
 static void play_current_track(void)
@@ -158,6 +206,7 @@ static void cycle_play_mode(void)
     const char *mode_str[] = {"SEQ", "ALL", "ONE"};
     ESP_LOGI(TAG, "Play mode: %s", mode_str[g_play_mode]);
     settings_save_play_mode((int)g_play_mode);
+    display_set_play_mode((int)g_play_mode);
 }
 
 /* 短按跳转 ±10s */
@@ -194,9 +243,7 @@ static void on_track_finished(int state, void *user_data)
             g_pending_track_seek = 0;
             g_pending_track_finished = true;
         } else {
-            if (g_app_state != APP_STATE_LOCKED) {  // R032-109: 锁定态不覆盖为 STOPPED，仅显示短暂不一致
-                g_app_state = APP_STATE_STOPPED;
-            }
+            g_app_state = APP_STATE_STOPPED;
             ESP_LOGI(TAG, "Playlist finished (sequence mode)");
         }
         break;
@@ -221,6 +268,26 @@ static void handle_button_events(void)
     btn_event_info_t events[8];
     int n = button_manager_scan(events, sizeof(events) / sizeof(events[0]));
 
+    /* 组合键 REW+STOP 跳曲首：先检测本帧是否两键同时短按（排除浏览/空闲态） */
+    uint64_t now = esp_timer_get_time();
+    bool in_play_ctx = (g_app_state != APP_STATE_BROWSING && g_app_state != APP_STATE_IDLE);
+    bool frame_rew = false, frame_stop = false;
+    if (in_play_ctx) {
+        for (int j = 0; j < n; j++) {
+            if (events[j].event == BTN_EVENT_SHORT_PRESS) {
+                if (events[j].id == BTN_ID_REWIND) frame_rew = true;
+                if (events[j].id == BTN_ID_STOP)    frame_stop = true;
+            }
+        }
+    }
+    bool combo_done = false;
+    if (frame_rew && frame_stop) {
+        jump_to_track_start();
+        combo_done = true;
+        g_combo_rew_us = 0;
+        g_combo_stop_us = 0;
+    }
+
     for (int i = 0; i < n; i++) {
         btn_event_info_t *e = &events[i];
 
@@ -229,36 +296,87 @@ static void handle_button_events(void)
             power_mgmt_record_activity();
         }
 
-        /* 按键锁定模式下，仅响应解锁操作 */
-        if (g_key_locked) {
-            if (e->id == BTN_ID_PLAY_PAUSE && e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
-                g_key_locked = false;
-                g_app_state = g_state_before_lock;
-                ESP_LOGI(TAG, "Key lock released, state restored to %d", g_app_state);
-            }
-            continue;
-        }
-
-        /* 浏览模式：Prev/Next 滚动，Play 选择，STOP 退出 */
+        /* 浏览模式：上一首/下一首 短按上/下一曲；长按/持续按住则加速连续移动；
+           播放 选择，停止 退出，停止长按 给选中曲加书签 */
         if (g_app_state == APP_STATE_BROWSING) {
-            if (e->event != BTN_EVENT_SHORT_PRESS) continue;
             int total = playlist_count();
             switch (e->id) {
             case BTN_ID_PREV:
-                g_browse_index = (g_browse_index - 1 + total) % total;
+                if (e->event == BTN_EVENT_SHORT_PRESS) {
+                    g_browse_index = (g_browse_index - 1 + total) % total;
+                    g_browse_repeat_ms = 0;
+                } else if (e->event == BTN_EVENT_LONG_PRESS) {
+                    g_browse_repeat_ms = e->hold_ms;   // 锚定起点，避免长按瞬间重复跳
+                } else if (e->event == BTN_EVENT_HOLD ||
+                           e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                    uint32_t step = browse_repeat_interval(e->hold_ms);
+                    if (e->hold_ms - g_browse_repeat_ms >= step) {
+                        g_browse_repeat_ms = e->hold_ms;
+                        g_browse_index = (g_browse_index - 1 + total) % total;
+                    }
+                } else if (e->event == BTN_EVENT_RELEASE) {
+                    g_browse_repeat_ms = 0;
+                }
                 break;
             case BTN_ID_NEXT:
-                g_browse_index = (g_browse_index + 1) % total;
+                if (e->event == BTN_EVENT_SHORT_PRESS) {
+                    g_browse_index = (g_browse_index + 1) % total;
+                    g_browse_repeat_ms = 0;
+                } else if (e->event == BTN_EVENT_LONG_PRESS) {
+                    g_browse_repeat_ms = e->hold_ms;
+                } else if (e->event == BTN_EVENT_HOLD ||
+                           e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                    uint32_t step = browse_repeat_interval(e->hold_ms);
+                    if (e->hold_ms - g_browse_repeat_ms >= step) {
+                        g_browse_repeat_ms = e->hold_ms;
+                        g_browse_index = (g_browse_index + 1) % total;
+                    }
+                } else if (e->event == BTN_EVENT_RELEASE) {
+                    g_browse_repeat_ms = 0;
+                }
                 break;
             case BTN_ID_PLAY_PAUSE:
-                g_current_track = g_browse_index;
-                playlist_set_index(g_current_track);
-                g_seek_on_play_position = 0;
-                g_app_state = g_state_before_browse;
-                play_current_track();
+                if (e->event == BTN_EVENT_SHORT_PRESS) {
+                    g_current_track = g_browse_index;
+                    playlist_set_index(g_current_track);
+                    g_seek_on_play_position = 0;
+                    g_app_state = g_state_before_browse;
+                    play_current_track();
+                }
                 break;
+            case BTN_ID_REWIND:
+                if (e->event == BTN_EVENT_SHORT_PRESS) {
+                    int first = 0;
+                    g_browse_index = (g_browse_index - BROWSE_PAGE_STEP < first)
+                                      ? first : g_browse_index - BROWSE_PAGE_STEP;
+                } else if (e->event == BTN_EVENT_LONG_PRESS ||
+                           e->event == BTN_EVENT_HOLD ||
+                           e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                    g_browse_index = 0;          // 跳到列表头
+                }
+                g_browse_repeat_ms = 0;
+                break;
+            case BTN_ID_FAST_FORWARD: {
+                int last = (total > 0) ? total - 1 : 0;
+                if (e->event == BTN_EVENT_SHORT_PRESS) {
+                    g_browse_index = (g_browse_index + BROWSE_PAGE_STEP > last)
+                                      ? last : g_browse_index + BROWSE_PAGE_STEP;
+                } else if (e->event == BTN_EVENT_LONG_PRESS ||
+                           e->event == BTN_EVENT_HOLD ||
+                           e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                    g_browse_index = last;        // 跳到列表尾
+                }
+                g_browse_repeat_ms = 0;
+                break;
+            }
             case BTN_ID_STOP:
-                g_app_state = g_state_before_browse;
+                if (e->event == BTN_EVENT_SHORT_PRESS) {
+                    g_app_state = g_state_before_browse;
+                } else if (e->event == BTN_EVENT_LONG_PRESS) {
+                    int bm = bookmark_add(g_browse_index, 0);
+                    if (bm >= 0) ESP_LOGI(TAG, "Bookmark added at track %d (slot %d)", g_browse_index, bm);
+                    else        ESP_LOGW(TAG, "Bookmark add failed at track %d", g_browse_index);
+                }
                 break;
             default:
                 break;
@@ -273,7 +391,7 @@ static void handle_button_events(void)
             if (e->event == BTN_EVENT_SHORT_PRESS) {
                 if (g_app_state == APP_STATE_STOPPED || g_app_state == APP_STATE_IDLE) {
                     g_current_track = playlist_current_index();
-                    g_seek_on_play_position = 0;
+                    // 不再清零：沿用 stop_playback/init_storage 缓存的位置（0 = 从头）
                     play_current_track();
                 } else if (g_app_state == APP_STATE_PLAYING) {
                     audio_player_pause();
@@ -282,38 +400,28 @@ static void handle_button_events(void)
                     audio_player_resume();
                     g_app_state = APP_STATE_PLAYING;
                 }
-            } else if (e->event == BTN_EVENT_DOUBLE_CLICK) {
+            } else if (e->event == BTN_EVENT_LONG_PRESS) {
+                /* 长按：切换播放模式（顺序 → 列表循环 → 单曲循环） */
                 cycle_play_mode();
-            } else if (e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
-                // R029/H1: 锁定前退出磁带模式 + 同步 g_app_state=PLAYING
-                // （防 light sleep 唤醒后 g_state_before_lock=FAST_FORWARD 残留图标）
-                if (g_app_state == APP_STATE_FAST_FORWARD) {
-                    tape_control_ff_release();
-                    g_app_state = APP_STATE_PLAYING;
-                } else if (g_app_state == APP_STATE_REWIND) {
-                    tape_control_rewind_release();
-                    g_app_state = APP_STATE_PLAYING;
-                }
-                g_state_before_lock = g_app_state;
-                g_key_locked = true;
-                g_app_state = APP_STATE_LOCKED;
-                ESP_LOGI(TAG, "Key lock engaged (state saved: %d)", g_state_before_lock);
             }
             break;
 
         /* --- 停止 --- */
         case BTN_ID_STOP:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
-                stop_playback();
-            } else if (e->event == BTN_EVENT_DOUBLE_CLICK) {
-                int pos = audio_player_get_position();
-                int bm = bookmark_add(g_current_track, pos);
-                if (bm >= 0) {
-                    ESP_LOGI(TAG, "Bookmark added at %ds (slot %d)", pos, bm);
+                if (combo_done) {
+                    // 本帧已作为组合键处理（两键同按），跳过单独逻辑，避免重复 stop/skip
+                } else if (g_combo_rew_us && (now - g_combo_rew_us) < COMBO_WINDOW_US) {
+                    // 与稍早的 REW 短按构成组合键 → 跳曲首
+                    jump_to_track_start();
+                    g_combo_rew_us = 0;
+                    g_combo_stop_us = 0;
                 } else {
-                    ESP_LOGW(TAG, "Bookmark add failed at %ds", pos);
+                    g_combo_stop_us = now;   // 记录单独 STOP，等待可能的 REW 组合
+                    stop_playback();
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
+                /* 长按：进入浏览界面 */
                 if (playlist_count() > 0) {
                     g_state_before_browse = g_app_state;
                     g_browse_index = g_current_track;
@@ -326,7 +434,8 @@ static void handle_button_events(void)
         /* --- 上一首 --- */
         case BTN_ID_PREV:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
-                g_vol_hold_counter = 0;
+                if (g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND)
+                    break;   // 按住快进/快退期间忽略切歌（磁带机互锁）
                 save_current_position();  // 切换前保存旧位置
                 int prev = playlist_prev();  // R032-107: 空列表返回 -1，避免污染 g_current_track
                 if (prev >= 0) {
@@ -337,25 +446,15 @@ static void handle_button_events(void)
                         play_current_track();
                     }
                 }
-            } else if (e->event == BTN_EVENT_LONG_PRESS || e->event == BTN_EVENT_HOLD) {
-                /* 长按/持续按住 → 音量减（每 100ms 减 1 级） */
-                g_vol_hold_counter++;
-                if (g_vol_hold_counter % 5 == 0) {
-                    int vol = audio_player_get_volume();
-                    if (vol > 0) {
-                        audio_player_set_volume(vol - 1);
-                    }
-                }
-            } else if (e->event == BTN_EVENT_RELEASE) {
-                g_vol_hold_counter = 0;
-                settings_save_volume(audio_player_get_volume());  // 松开时保存音量
             }
+            /* R042: 长按/持续按住音量调节已迁出至专用 VOL± 键 (GPIO0/GPIO3) */
             break;
 
         /* --- 下一首 --- */
         case BTN_ID_NEXT:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
-                g_vol_hold_counter = 0;
+                if (g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND)
+                    break;   // 按住快进/快退期间忽略切歌（磁带机互锁）
                 save_current_position();
                 int next = playlist_next();  // R032-107: 空列表返回 -1，避免污染 g_current_track
                 if (next >= 0) {
@@ -366,16 +465,55 @@ static void handle_button_events(void)
                         play_current_track();
                     }
                 }
-            } else if (e->event == BTN_EVENT_LONG_PRESS || e->event == BTN_EVENT_HOLD) {
-                g_vol_hold_counter++;
-                if (g_vol_hold_counter % 5 == 0) {
+            }
+            /* R042: 长按/持续按住音量调节已迁出至专用 VOL± 键 (GPIO0/GPIO3) */
+            break;
+
+        /* --- 音量减 (LCK 左拨, GPIO0) --- */
+        case BTN_ID_VOL_DOWN:
+            if (e->event == BTN_EVENT_SHORT_PRESS) {
+                g_vol_down_counter = 0;
+                int vol = audio_player_get_volume();
+                if (vol > 0) {
+                    audio_player_set_volume(vol - 1);
+                }
+            } else if (e->event == BTN_EVENT_LONG_PRESS ||
+                       e->event == BTN_EVENT_HOLD ||
+                       e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                /* 拨轮自复位场景下 LONG_PRESS/HOLD 极少触发; 兜底保留连续减 */
+                g_vol_down_counter++;
+                if (g_vol_down_counter % 5 == 0) {
+                    int vol = audio_player_get_volume();
+                    if (vol > 0) {
+                        audio_player_set_volume(vol - 1);
+                    }
+                }
+            } else if (e->event == BTN_EVENT_RELEASE) {
+                g_vol_down_counter = 0;
+                settings_save_volume(audio_player_get_volume());  // 松开时保存音量
+            }
+            break;
+
+        /* --- 音量加 (LCK 右拨, GPIO3) --- */
+        case BTN_ID_VOL_UP:
+            if (e->event == BTN_EVENT_SHORT_PRESS) {
+                g_vol_up_counter = 0;
+                int vol = audio_player_get_volume();
+                if (vol < 100) {
+                    audio_player_set_volume(vol + 1);
+                }
+            } else if (e->event == BTN_EVENT_LONG_PRESS ||
+                       e->event == BTN_EVENT_HOLD ||
+                       e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                g_vol_up_counter++;
+                if (g_vol_up_counter % 5 == 0) {
                     int vol = audio_player_get_volume();
                     if (vol < 100) {
                         audio_player_set_volume(vol + 1);
                     }
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
-                g_vol_hold_counter = 0;
+                g_vol_up_counter = 0;
                 settings_save_volume(audio_player_get_volume());
             }
             break;
@@ -383,40 +521,71 @@ static void handle_button_events(void)
         /* --- 快进 --- */
         case BTN_ID_FAST_FORWARD:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
-                skip_seconds(10);
-            } else if (e->event == BTN_EVENT_LONG_PRESS || e->event == BTN_EVENT_HOLD) {
+                skip_seconds(5);            // R045：短按跳 5 秒
+            } else if (e->event == BTN_EVENT_LONG_PRESS) {
+                // 进入变速态：仅在长按首次触发一次（避免与 HOLD 重复调用 press）
                 if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
                     if (g_app_state == APP_STATE_PAUSED) {
                         audio_player_resume();
                     }
+                    skip_seconds(5);            // R046：先继承短按基准跳进 5 秒，避免"刚过长按反而倒退更少"的断层
                     tape_control_ff_press();
                     audio_player_set_speed(tape_control_get_speed());
                     g_app_state = APP_STATE_FAST_FORWARD;
+                    g_combo_rew_us = 0; g_combo_stop_us = 0;  // 进入变速态，放弃未完成的组合键计时
+                }
+            } else if (e->event == BTN_EVENT_HOLD ||
+                       e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                // 保持态：变速档位由 tape_control_tick() 按按住时长自动升档，
+                // 此处仅确保速度同步（press 已在 LONG_PRESS 调过，不重复调用）。
+                if (g_app_state == APP_STATE_FAST_FORWARD) {
+                    audio_player_set_speed(tape_control_get_speed());
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
                 tape_control_ff_release();
                 audio_player_set_speed(TAPE_SPEED_NORMAL);
                 g_app_state = APP_STATE_PLAYING;
+                g_combo_rew_us = 0; g_combo_stop_us = 0;  // 退出变速态，清空组合键计时
             }
             break;
 
         /* --- 快退 --- */
         case BTN_ID_REWIND:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
-                skip_seconds(-10);
-            } else if (e->event == BTN_EVENT_LONG_PRESS || e->event == BTN_EVENT_HOLD) {
+                if (combo_done) {
+                    // 本帧已作为组合键处理（两键同按），跳过单独逻辑，避免重复 stop/skip
+                } else if (g_combo_stop_us && (now - g_combo_stop_us) < COMBO_WINDOW_US) {
+                    // 与稍早的 STOP 短按构成组合键 → 跳曲首
+                    jump_to_track_start();
+                    g_combo_rew_us = 0;
+                    g_combo_stop_us = 0;
+                } else {
+                    g_combo_rew_us = now;    // 记录单独 REW，等待可能的 STOP 组合
+                    skip_seconds(-5);        // R045：短按后退 5 秒
+                }
+            } else if (e->event == BTN_EVENT_LONG_PRESS) {
+                // 进入变速态：仅在长按首次触发一次（避免与 HOLD 重复调用 press）
                 if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
                     if (g_app_state == APP_STATE_PAUSED) {
                         audio_player_resume();
                     }
+                    skip_seconds(-5);           // R046：先继承短按基准后退 5 秒，避免"刚过长按反而倒退更少"的断层
                     tape_control_rewind_press();
                     audio_player_set_speed(tape_control_get_speed());
                     g_app_state = APP_STATE_REWIND;
+                    g_combo_rew_us = 0; g_combo_stop_us = 0;  // 进入变速态，放弃未完成的组合键计时
+                }
+            } else if (e->event == BTN_EVENT_HOLD ||
+                       e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
+                // 保持态：变速档位由 tape_control_tick() 自动升档，press 已调过，不重复
+                if (g_app_state == APP_STATE_REWIND) {
+                    audio_player_set_speed(tape_control_get_speed());
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
                 tape_control_rewind_release();
                 audio_player_set_speed(TAPE_SPEED_NORMAL);
                 g_app_state = APP_STATE_PLAYING;
+                g_combo_rew_us = 0; g_combo_stop_us = 0;  // 退出变速态，清空组合键计时
             }
             break;
 
@@ -464,7 +633,6 @@ static void update_display(void)
     case APP_STATE_FAST_FORWARD: disp_state = PLAYER_STATE_FAST_FORWARD; break;
     case APP_STATE_REWIND:       disp_state = PLAYER_STATE_REWIND;   break;
     case APP_STATE_PAUSED:       disp_state = PLAYER_STATE_PAUSED;   break;
-    case APP_STATE_LOCKED:       disp_state = PLAYER_STATE_LOCKED;  break;   // M2：独立图标
     case APP_STATE_STOPPED:
     case APP_STATE_IDLE:
     default:                     disp_state = PLAYER_STATE_STOPPED;  break;
@@ -520,13 +688,78 @@ static bool mount_sd_card(void)
 }
 
 /* ============================================================
+ * 唤醒 GPIO 辅助 (ESP32-S3 仅 GPIO0~21 为 RTC GPIO, 可作 ext1 唤醒源)
+ * 新版按键映射中 NEXT(IO47)/REW(IO42)/FF(IO41) 非 RTC GPIO,
+ * 不能用于 light/deep sleep 唤醒, 须从唤醒掩码中排除。
+ * ============================================================ */
+static bool is_rtc_wakeup_gpio(gpio_num_t g)
+{
+    return (g >= GPIO_NUM_0 && g <= GPIO_NUM_21);
+}
+
+static uint64_t build_rtc_wakeup_mask(void)
+{
+    uint64_t mask = 0;
+    const gpio_num_t btns[] = {
+        BTN_PLAY_PAUSE, BTN_STOP, BTN_PREV, BTN_NEXT, BTN_REWIND, BTN_FAST_FORWARD
+    };
+    for (int i = 0; i < 6; i++) {
+        if (is_rtc_wakeup_gpio(btns[i])) {
+            mask |= (1ULL << btns[i]);
+        }
+    }
+    return mask;
+}
+
+/* ============================================================
  * 初始化外设
  * ============================================================ */
+/* ============================================================
+ * WS2812 状态指示灯 (IO48)
+ * 采用 ESP-IDF led_strip 组件（RMT 驱动单颗 WS2812）。
+ * WS2812 数据线经硬件电平转换；MCU 侧以 GPIO 推挽输出驱动。
+ * 颜色语义：蓝=充电中 / 红=电量极低 / 橙=电量低 / 绿=播放中 / 灭=空闲。
+ * ============================================================ */
+static led_strip_handle_t s_ws2812 = NULL;
+
+static void indicator_led_set(uint8_t r, uint8_t g, uint8_t b)
+{
+    if (!s_ws2812) return;
+    esp_err_t r1 = led_strip_set_pixel(s_ws2812, 0, r, g, b);
+    esp_err_t r2 = led_strip_refresh(s_ws2812);
+    if (r1 != ESP_OK || r2 != ESP_OK) {
+        ESP_LOGW(TAG, "WS2812 set failed: %s / %s", esp_err_to_name(r1), esp_err_to_name(r2));
+    }
+}
+
+static void indicator_led_init(void)
+{
+    if (s_ws2812) return;
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = WS2812_IO,
+        .max_leds = 1,
+        .led_model = LED_MODEL_WS2812,
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
+        .flags = { .invert_out = false },
+    };
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000, // 10 MHz
+        .flags = { .with_dma = false },
+    };
+    esp_err_t ret = led_strip_new_rmt_device(&strip_config, &rmt_config, &s_ws2812);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "WS2812 init failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    indicator_led_set(0, 0, 0); // 上电默认熄灭
+}
+
 static void init_hardware(void)
 {
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "  TapeBook - Tape-Style Audiobook Player");
-    ESP_LOGI(TAG, "  ESP32-S3-WROOM-2 (N32R16V / Octal PSRAM)");
+    ESP_LOGI(TAG, "  ESP32-S3-WROOM-1 (Octal PSRAM)");
     ESP_LOGI(TAG, "========================================");
 
     // 1. NVS
@@ -549,12 +782,29 @@ static void init_hardware(void)
     // 5. 磁带控制器
     tape_control_init();
 
+    // 5.5 MAX98357 SD_MODE (GPIO4 = I2S_SD → Pin4)：采样率模式选择脚，须由 MCU 拉到固定电平，
+    //     否则悬空会导致采样率模式不确定、无声。
+    {
+        gpio_config_t sd_mode_cfg = {
+            .pin_bit_mask = (1ULL << MAX98357_SD_MODE_GPIO),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        ESP_ERROR_CHECK(gpio_config(&sd_mode_cfg));
+        gpio_set_level(MAX98357_SD_MODE_GPIO, MAX98357_SD_MODE_LEVEL);
+    }
+
     // 6. 音频播放器
     audio_player_init();
     audio_player_set_callback(on_track_finished, NULL);
 
     // 7. 电源管理
     power_mgmt_init();
+
+    // 7.5 状态指示灯 (WS2812, IO48)
+    indicator_led_init();
 
     // 8. 书签模块
     bookmark_init();
@@ -577,13 +827,17 @@ static void init_hardware(void)
     int vol = settings_load_volume();
     audio_player_set_volume(vol);
     g_play_mode = (play_mode_t)settings_load_play_mode();
+    display_set_play_mode((int)g_play_mode);
 
-    // 11. 验证所有按键 GPIO 可唤醒（RTC IO 范围检查）
+    // 11. 校验所有按键 GPIO 是否为合法 RTC 唤醒源 (新版映射部分按键非 RTC GPIO)
     const gpio_num_t wakeup_gpios[] = {
         BTN_PLAY_PAUSE, BTN_STOP, BTN_PREV, BTN_NEXT, BTN_REWIND, BTN_FAST_FORWARD
     };
     for (size_t i = 0; i < sizeof(wakeup_gpios) / sizeof(wakeup_gpios[0]); i++) {
-        assert(esp_sleep_is_valid_wakeup_gpio(wakeup_gpios[i]));
+        if (!esp_sleep_is_valid_wakeup_gpio(wakeup_gpios[i])) {
+            ESP_LOGW(TAG, "GPIO %d is NOT a valid RTC wakeup source; "
+                          "excluded from sleep wakeup mask", wakeup_gpios[i]);
+        }
     }
 }
 
@@ -704,20 +958,37 @@ extern "C" void app_main(void)
                 last_power_tick = now;
                 power_mgmt_tick();
 
-                // 电量极低时保存状态并深度休眠
+                // WS2812 状态指示灯颜色更新
+                if (power_mgmt_is_charging()) {
+                    indicator_led_set(0, 0, 255);            // 蓝：充电中
+                } else {
+                    bat_state_t st = power_mgmt_get_state();
+                    if (st == BAT_STATE_CRITICAL) {
+                        indicator_led_set(255, 0, 0);        // 红：电量极低
+                    } else if (st == BAT_STATE_LOW) {
+                        indicator_led_set(255, 80, 0);      // 橙：电量低
+                    } else if (g_app_state == APP_STATE_PLAYING ||
+                               g_app_state == APP_STATE_PAUSED ||
+                               g_app_state == APP_STATE_FAST_FORWARD ||
+                               g_app_state == APP_STATE_REWIND) {
+                        indicator_led_set(0, 255, 0);        // 绿：播放中
+                    } else {
+                        indicator_led_set(0, 0, 0);          // 灭：空闲
+                    }
+                }
+
+                // 电量极低时保存状态并软关机 (脉冲 POW_EN 硬断电)
                 if (power_mgmt_should_shutdown()) {
-                    ESP_LOGE(TAG, "Battery critical, saving state and shutting down");
+                    ESP_LOGE(TAG, "Battery critical, saving state and powering off");
                     save_current_position();
                     settings_flush();
                     audio_player_stop();
-                    {
-                        uint64_t wakeup_mask = 0;
-                        wakeup_mask |= (1ULL << BTN_PLAY_PAUSE) | (1ULL << BTN_STOP);
-                        wakeup_mask |= (1ULL << BTN_PREV) | (1ULL << BTN_NEXT);
-                        wakeup_mask |= (1ULL << BTN_REWIND) | (1ULL << BTN_FAST_FORWARD);
+                    // 仅 RTC GPIO 可作唤醒源; 设置掩码供 power_off 的 deep-sleep 兜底
+                    uint64_t wakeup_mask = build_rtc_wakeup_mask();
+                    if (wakeup_mask) {
                         esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
                     }
-                    esp_deep_sleep_start();
+                    power_mgmt_power_off();   // 脉冲 POW_EN 释放电源锁存 (含 deep-sleep 兜底)
                 }
             }
         }
@@ -735,11 +1006,10 @@ extern "C" void app_main(void)
             g_app_state = APP_STATE_IDLE;
 
             {
-                uint64_t wakeup_mask = 0;
-                wakeup_mask |= (1ULL << BTN_PLAY_PAUSE) | (1ULL << BTN_STOP);
-                wakeup_mask |= (1ULL << BTN_PREV) | (1ULL << BTN_NEXT);
-                wakeup_mask |= (1ULL << BTN_REWIND) | (1ULL << BTN_FAST_FORWARD);
-                esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+                uint64_t wakeup_mask = build_rtc_wakeup_mask();
+                if (wakeup_mask) {
+                    esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+                }
             }
             esp_light_sleep_start();
 

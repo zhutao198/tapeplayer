@@ -32,8 +32,20 @@ void power_mgmt_tick(void);
 
 /**
  * @brief 获取电量百分比 0~100
+ * @note BAT_DET (IO1/ADC1_CH0) 经 LMV321 运放送入; 换算系数见 power_mgmt.cpp
  */
 int power_mgmt_get_battery_percent(void);
+
+/**
+ * @brief 是否正在充电 (CHRG IO2, 低电平=充电中)
+ */
+bool power_mgmt_is_charging(void);
+
+/**
+ * @brief 软关机: 脉冲 POW_EN (IO40) 释放电源锁存, 整板断电
+ * @note 仅在电池临界或用户长按等终态调用
+ */
+void power_mgmt_power_off(void);
 
 /**
  * @brief 获取电池状态

@@ -1,28 +1,32 @@
-# sdkconfig.defaults template: ESP32-S3-WROOM-2 N32R16V
-# Flash : 32 MB Octal SPI (8-line)
-# PSRAM : 16 MB Octal SPI (8-line)
-# V_SPI : 1.8 V
-# Used by configure.bat when BOARD_MODULE_WROOM_2_N32R16V is selected
-# (default; matches the dev kit).
-# See HARDWARE_MODULE_MIGRATION.md for the full comparison.
+# sdkconfig.defaults template: ESP32-S3-WROOM-1 N16R8 (PRODUCTION)
+# Flash : 16 MB Quad SPI (4-line)
+# PSRAM :  8 MB Octal SPI (8-line)
+# V_SPI :  3.3 V
+# Pairs with partitions_ota.csv (each app slot = 2 MB).
+# Used by configure.bat when BOARD_MODULE_WROOM_1_N16R8 is selected.
+# See HARDWARE_MODULE_MIGRATION.md for details.
 
 CONFIG_IDF_TARGET="esp32s3"
 
-# Flash (Octal SPI, 32 MB)
-CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
-CONFIG_ESPTOOLPY_OCT_FLASH=y
+# Flash (Quad SPI, 16 MB)
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# CONFIG_ESPTOOLPY_FLASHMODE_QIO is not set
+# CONFIG_ESPTOOLPY_FLASHMODE_QOUT is not set
 CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+# CONFIG_ESPTOOLPY_FLASHMODE_DOUT is not set
+# CONFIG_ESPTOOLPY_OCT_FLASH is not set
 
-# PSRAM (Octal SPI, 16 MB)
+# PSRAM (Octal SPI, 8 MB)
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 
-# Partition table (single factory, no OTA by default)
+# Partition table (OTA-capable, see partitions_ota.csv)
 CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_ota.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
 
 # File system
 CONFIG_FATFS_LFN_STACK=y
@@ -41,17 +45,14 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
-# FreeRTOS backward compatibility for ADF (xSemaphoreHandle etc.)
+# FreeRTOS backward compatibility for ESP-ADF
+# ESP-ADF 组件 (audio_pipeline / audio_element) 仍使用旧 FreeRTOS API
+# (xSemaphoreHandle, portTICK_RATE_MS, mutex_* 等)，在 IDF v5.x 中需显式开启向后兼容
 CONFIG_FREERTOS_ENABLE_BACKWARD_COMPATIBILITY=y
 
-# Enable ESP-ADF (audio_player.cpp uses real audio_pipeline)
-CONFIG_USE_ESP_ADF=y
-
-# Enable u8g2 OLED (display.cpp uses real u8g2 rendering)
-CONFIG_USE_U8G2=y
-
-# Custom audio board (project uses MAX98357 + SSD1306 on custom PCB, not LYRA-T)
-CONFIG_AUDIO_BOARD_CUSTOM=y
-
-# Suppress deprecation warnings (ADF v2.8 uses some deprecated IDF APIs)
-CONFIG_COMPILER_WARN_CFLAGS="-Wno-error=deprecated-declarations"
+# ADF audio_board selection
+# 本项目为自定义 tapebook 硬件，audio_board_init() 实际未被调用（I2S/LCD/SD 均由自写驱动接管），
+# 但 ADF 的 audio_stream 组件 REQUIRES audio_board，故需选定一个板型。
+# 现改为项目内 components/audio_board 覆盖 ADF 自带版本，提供自定义 tapebook 板（桩实现），
+# 不再依赖任何现成开发板（ESP_SD_PIN_* 宏在 tapebook/board_def.h 中定义，值仅用于编译）。
+CONFIG_ESP_TAPEBOOK_BOARD=y

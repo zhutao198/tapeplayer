@@ -24,10 +24,9 @@ typedef struct {
 } speed_step_t;
 
 static const speed_step_t g_speed_steps[] = {
-    { TAPE_ACCEL_STEP1_MS, TAPE_SPEED_1 },  // 档位1: 1.5x
-    { TAPE_ACCEL_STEP2_MS, TAPE_SPEED_2 },  // 档位2: 2.0x
-    { TAPE_ACCEL_STEP3_MS, TAPE_SPEED_3 },  // 档位3: 3.0x
-    { TAPE_ACCEL_STEP4_MS, TAPE_SPEED_4 },  // 档位4: 8.0x
+    { TAPE_ACCEL_STEP1_MS, TAPE_SPEED_1 },  // 档位1: 2.0x（慢速精确定位）
+    { TAPE_ACCEL_STEP2_MS, TAPE_SPEED_2 },  // 档位2: 4.0x（贴近真实磁带倒带）
+    { TAPE_ACCEL_STEP3_MS, TAPE_SPEED_3 },  // 档位3: 8.0x（跳帧模式）
 };
 #define NUM_SPEED_STEPS (sizeof(g_speed_steps) / sizeof(g_speed_steps[0]))
 
@@ -48,7 +47,7 @@ void tape_control_init(void)
 static void enter_mode(tape_mode_t mode)
 {
     g_mode = mode;
-    g_speed = TAPE_SPEED_NORMAL;
+    g_speed = TAPE_SPEED_1;            // R045：进入变速态直接 2x，无 1x 缓冲
     g_gear = 0;
     g_mode_start_us = esp_timer_get_time();
 }

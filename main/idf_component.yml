@@ -4,10 +4,17 @@
 ##   之前 components/u8g2/ 是手 clone 的 334M 第三方源码。
 ## 2026-07-03 R003: 暂禁用 u8g2 依赖（README 写的 lfengineering/u8g2_esp32 在 registry 不存在）。
 ##   等用户提供正确 component 名后用 R004 启用真实 u8g2。
-## 2026-07-22 R035-018：实际仍由 components/u8g2_esp32_hal + components/u8g2 手动源码提供，
-##   本 yml 作占位；启用前需先评估 idf component 版本与手动源码的兼容性。
+## 2026-07-29：u8g2 由 components/u8g2 手动源码提供；u8g2_esp32_hal 组件已移除（display.cpp 使用自写 SPI 驱动，不依赖该 HAL）。
+##   本 yml 作占位；若未来启用 idf component 版 u8g2，需先评估版本与手动源码的兼容性。
+##
+## 2026-07-29：WS2812 状态指示灯改用 ESP-IDF Component Manager 的 led_strip 组件
+##   （ESP-IDF v5.5 起 led_strip 已移出内置组件，需经 idf component manager 拉取）。
 
-# 2026-07-03 R003: 整个 dependencies 块注释掉（YAML 空 dict 仍报"Input should be a valid dictionary"）
-# dependencies:
-#   ## 2026-07-03 R003: 暂禁用 u8g2（component 名待定）
-#   lfengineering/u8g2_esp32: "*"
+version: "1.0.0"
+description: "audiobook_player main firmware component"
+
+dependencies:
+  espressif/led_strip:
+    version: "^3.0.0"
+  lvgl/lvgl:
+    version: ">=9.0.0"

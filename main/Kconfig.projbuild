@@ -2,7 +2,7 @@ menu "Target Module Selection"
 
 choice BOARD_MODULE
     prompt "Target ESP32-S3 Module"
-    default BOARD_MODULE_WROOM_2_N32R16V
+    default BOARD_MODULE_WROOM_1_N16R8
     help
         Select the ESP32-S3 module variant for this build.
         This option drives which sdkconfig defaults template configure.bat uses.
@@ -89,7 +89,7 @@ config USE_U8G2
     bool "Enable u8g2 OLED display library"
     default y
     help
-        Enable u8g2 library for SSD1306/SSD1315 OLED display via I2C.
+        Enable u8g2 library (offline framebuffer renderer for the SPI ST7789 TFT display).
         When disabled, display output goes to serial log only.
         Requires u8g2 and u8g2_esp32_hal components (included in components/).
 

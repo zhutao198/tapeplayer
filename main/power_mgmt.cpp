@@ -1,8 +1,12 @@
 /**
  * @file power_mgmt.cpp
- * @brief 电源管理 stub (P2 — V1.1+)
+ * @brief 电源管理 (V1.1+, 基于 PADS 原理图 V1 网表修正)
  *
- * V1.0 仅提供 stub，V1.1 完善 ADC 检测和休眠逻辑。
+ * 关键 GPIO (以原理图为准):
+ *   BAT_DET (IO1 / ADC1_CH0) — 电池电压, 经 LMV321 运放送入
+ *   CHRG    (IO2)            — 充电状态, 低电平=充电中
+ *   POW_EN  (IO40)           — 电源锁存控制, 脉冲释放=整板断电
+ *   LCD_POW_EN (IO39)        — LCD 软电源开关 (display.cpp 管理)
  */
 
 #include "power_mgmt.h"
@@ -11,6 +15,10 @@
 #include "esp_timer.h"
 #include "esp_sleep.h"
 #include "driver/gpio.h"
+#include "driver/adc.h"
+#include "esp_adc/adc_oneshot.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "config.h"
 
 static const char *TAG = "power_mgmt";
@@ -18,6 +26,19 @@ static uint64_t g_last_activity_us = 0;
 static int      g_auto_off_min = 0;
 static uint64_t g_auto_off_start_us = 0;
 static int      g_tick_count = 0;
+
+/* 电池电压换算系数。
+ * 原理图: 电池 → 分压/运放(LMV321) → IO1(ADC1_CH0, 0~3.3V)。
+ * 默认假设运放前为 1:1 分压, ADC 读电池电压的一半 (BAT_ADC_GAIN=2.0)。
+ * ⚠️ 须根据实际 LMV321 电阻网络标定该增益。 */
+#define BAT_ADC_GAIN       2.0f
+#define BAT_V_MIN          3.0f    // 0% 对应电压
+#define BAT_V_MAX          4.2f    // 100% 对应电压
+#define BAT_ADC_MAX_RAW    4095
+#define BAT_ADC_VREF       3.3f
+
+/* ADC 单次采样句柄 (BAT_DET) */
+static adc_oneshot_unit_handle_t s_adc_handle = NULL;
 
 #define SLEEP_TIMEOUT_US  (5 * 60 * 1000000ULL)  // 5 分钟无操作自动休眠
 #define TICK_INTERVAL_US  (1 * 1000000)           // 1 秒
@@ -30,6 +51,30 @@ void power_mgmt_init(void)
         g_auto_off_start_us = esp_timer_get_time();
         ESP_LOGI(TAG, "Auto-off restored: %d min", g_auto_off_min);
     }
+
+    /* BAT_DET: ADC1_CH0 (IO1) */
+    adc_oneshot_unit_init_cfg_t adc_cfg = {
+        .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    if (adc_oneshot_new_unit(&adc_cfg, &s_adc_handle) == ESP_OK) {
+        adc_oneshot_chan_cfg_t chan_cfg = {
+            .atten = ADC_ATTEN_DB_11,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        adc_oneshot_config_channel(s_adc_handle, ADC_CHANNEL_0, &chan_cfg);
+        ESP_LOGI(TAG, "BAT_DET ADC1_CH0 (IO1) initialized");
+    } else {
+        ESP_LOGW(TAG, "BAT_DET ADC init failed, battery stuck at 100%%");
+    }
+
+    /* CHRG: IO2 输入, 低=充电中 */
+    gpio_set_direction(CHRG_DET_IO, GPIO_MODE_INPUT);
+
+    /* POW_EN: IO40 输出, 默认高 (锁存保持); 脉冲低释放 */
+    gpio_set_direction(POW_EN_IO, GPIO_MODE_OUTPUT);
+    gpio_set_level(POW_EN_IO, 1);
+
     ESP_LOGI(TAG, "Power management initialized (sleep timeout: 5min)");
 }
 
@@ -37,7 +82,6 @@ void power_mgmt_tick(void)
 {
     g_tick_count++;
 
-    // 每 10 秒打印一次电池信息
     if (g_tick_count % 10 == 0) {
         int bat = power_mgmt_get_battery_percent();
         bat_state_t st = power_mgmt_get_state();
@@ -46,21 +90,32 @@ void power_mgmt_tick(void)
         } else if (st == BAT_STATE_CRITICAL) {
             ESP_LOGE(TAG, "Battery critical: %d%%", bat);
         }
+        if (power_mgmt_is_charging()) {
+            ESP_LOGI(TAG, "Charging... bat=%d%%", bat);
+        }
     }
 }
 
 int power_mgmt_get_battery_percent(void)
 {
-    // V1.1+: ADC1 通道读取电池分压（GPIO1/ADC1_CH0 预留），查表换算百分比
-    // V1.0: 返回 100（假定 USB 供电或满电）
-    // int raw;
-    // if (adc_oneshot_read(g_adc_handle, ADC_CHANNEL_0, &raw) == ESP_OK) {
-    //     float voltage = raw * 3.3f / 4095.0f * 2.0f;  // 10K+10K 分压
-    //     pct = (int)((voltage - 3.3f) / (4.2f - 3.3f) * 100.0f);
-    //     if (pct < 0) pct = 0;
-    //     if (pct > 100) pct = 100;
-    // }
-    return 100;
+    if (!s_adc_handle) return 100;   // ADC 未就绪, 假定满电
+
+    int raw = 0;
+    if (adc_oneshot_read(s_adc_handle, ADC_CHANNEL_0, &raw) != ESP_OK) {
+        return 100;
+    }
+    float v_adc = (float)raw * BAT_ADC_VREF / BAT_ADC_MAX_RAW;   // 0~3.3V
+    float v_bat = v_adc * BAT_ADC_GAIN;                          // 还原电池电压
+    int pct = (int)((v_bat - BAT_V_MIN) / (BAT_V_MAX - BAT_V_MIN) * 100.0f);
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    return pct;
+}
+
+bool power_mgmt_is_charging(void)
+{
+    /* CHRG 低电平=充电中 */
+    return gpio_get_level(CHRG_DET_IO) == 0;
 }
 
 bat_state_t power_mgmt_get_state(void)
@@ -99,4 +154,15 @@ bool power_mgmt_auto_off_expired(void)
     if (g_auto_off_min <= 0) return false;
     uint64_t elapsed_s = (esp_timer_get_time() - g_auto_off_start_us) / 1000000;
     return elapsed_s >= (uint64_t)(g_auto_off_min * 60);
+}
+
+void power_mgmt_power_off(void)
+{
+    ESP_LOGI(TAG, "Soft power off: pulsing POW_EN (IO40) to release latch");
+    /* 拉低 POW_EN ~2s 释放电源锁存 (MX66100T), 整板断电 */
+    gpio_set_level(POW_EN_IO, 0);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    gpio_set_level(POW_EN_IO, 1);
+    /* 若锁存未完全切断, 进入深度休眠兜底 */
+    esp_deep_sleep_start();
 }

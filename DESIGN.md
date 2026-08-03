@@ -3,9 +3,10 @@
 | 文档信息 | |
 |---------|---|
 | 项目名称 | TapeBook — 磁带机风格听书机 |
-| 文档版本 | 1.1 |
+| 文档版本 | 1.7 |
 | 编制日期 | 2026-07-02 |
-| 适用平台 | ESP32-S3-WROOM-2 (N32R16V / Octal PSRAM) |
+| 最后修订 | 2026-07-29 |
+| 适用平台 | ESP32-S3-WROOM-1 N16R8 (16 MB Flash + 8 MB Octal PSRAM, 3.3 V SPI) |
 | 关联文档 | PRD.md / README.md |
 
 ---
@@ -59,7 +60,8 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                        用户交互层                                 │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
-│  │ 6 实体按键 │  │ OLED 128x64│  │ 喇叭 3W    │  │ 3.5mm 耳机   │   │
+│  │ 6 实体按键 │  │ SPI TFT   │  │ 喇叭 3W    │  │ WS2812 RGB  │   │
+│  │          │  │ LCD 屏幕  │  │            │  │  状态指示灯  │   │   │
 │  └─────┬────┘  └─────┬─────┘  └─────┬────┘  └──────┬───────┘   │
 └────────┼─────────────┼──────────────┼───────────────┼──────────┘
          │             │              │               │
@@ -84,13 +86,13 @@
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │                     硬件抽象层 (HAL)                        │ │
-│  │  I2S  │  SPI  │  I2C  │  GPIO  │  ADC  │  NVS  │  FATFS    │ │
+│  │  I2S  │  SPI(SD) │ SPI(TFT) │ GPIO  │  ADC  │  NVS  │ FATFS│ │
 │  └────────────────────────────────────────────────────────────┘ │
 └─────────────┬───────────┬───────────┬───────────┬────────────────┘
               │           │           │           │
          ┌────▼───┐  ┌────▼───┐  ┌───▼────┐  ┌───▼────┐
-         │MAX98357│  │MicroSD │  │SSD1306 │  │TP4056  │
-         │ I2S DAC│  │  SPI   │  │OLED I2C│  │Charge  │
+         │MAX98357│  │MicroSD │  │SPI TFT │  │TP4056  │
+         │ I2S DAC│  │  SPI   │  │ LCD    │  │Charge  │
          └────────┘  └────────┘  └────────┘  └────────┘
 ```
 
@@ -99,49 +101,46 @@
 | 总线 | 设备 | 速率 | 占用 |
 |------|------|------|------|
 | I2S | MAX98357 | 44.1kHz × 16bit × 2ch = 1.4 Mbps | 高速实时 |
-| SPI | MicroSD | 最高 40 MHz | 大数据块读 |
-| I2C | SSD1306 | 400 kHz | 低速显示 |
-| GPIO | 6 个按键 | 软件轮询 20ms | 无总线占用 |
-| ADC | 电池电压 (可选) | 软件触发 | < 1 Hz |
+| SPI | MicroSD (SPI2_HOST) | 最高 40 MHz | 大数据块读 |
+| SPI | TFT LCD 显示屏 | 最高 40 MHz | 显示刷新 |
+| GPIO | 7 个功能按键 + 状态检测 | 软件轮询 20ms | 无总线占用 |
+| ADC | 电池电压 (IO1) | 软件触发 | < 1 Hz |
+| PWM/GPIO | WS2812 RGB LED (IO48) | 800kHz 时序 | 低频状态指示 |
 
 ### 2.3 时钟与功耗域
 
 - **CPU 主时钟**：240 MHz（解码需要）
 - **I2S 时钟**：MCLK 由 APLL 派生，保证低抖动
 - **休眠模式**：Light-sleep（保留 RAM），按键 GPIO 中断唤醒
+- **LCD 软件电源开关**：IO39 控制 AO3401 PMOS，待机时可彻底断开 LCD 电源
 
-### 2.4 ESP32-S3-WROOM-2 模块特性（基于官方 v1.7 数据手册）
+### 2.4 ESP32-S3-WROOM1 模块特性（基于官方 v1.7 数据手册）
 
 | 项目 | 规格 |
 |------|------|
-| SoC | ESP32-S3R8V / ESP32-S3R16V（Xtensa LX7 双核 32 位，240 MHz） |
+| SoC | ESP32-S3R8V / ESP32-S3R16V（Xtensa LX7 双核 32 位，240 MHz）|
 | 封装内 PSRAM | 8 MB / 16 MB Octal SPI |
 | Flash | 16 MB / 32 MB Octal SPI |
-| 电源 | 3.0 ~ 3.6 V（典型 3.3 V） |
+| 电源 | 3.0 ~ 3.6 V（典型 3.3 V）|
 | 工作温度 | -40 ~ +65 °C |
 | 模块尺寸 | 18.0 × 25.5 × 3.1 mm |
-| 封装 | SMD 贴片（41 焊盘 + 1 EPAD） |
-| GPIO | 33 个（含 4 个 Strapping 引脚） |
-| 1.8V 电压域 | GPIO47、GPIO48（VDD_SPI 域，需电平转换） |
-| 板载天线 | PCB 天线（2.4 GHz Wi-Fi + BLE 5） |
+| 封装 | SMD 贴片（41 焊盘 + 1 EPAD）|
+| GPIO | 33 个可用（含 4 个 Strapping 引脚）|
+| 板载天线 | PCB 天线（2.4 GHz Wi-Fi + BLE 5）|
 | 峰值电流 | Wi-Fi TX ~355 mA；BLE TX ~130 mA |
-| 深度休眠 | 7 µA（RTC 内存保持） |
+| 深度休眠 | 7 µA（RTC 内存保持）|
 
-**与 WROOM-1 关键差异**：
+**实际使用模块：ESP32-S3-WROOM-1 N16R8（非 WROOM-2）**
 
-1. **Octal PSRAM** 占用额外 4 个 GPIO（FSPI IOs），WROOM-2 可用 GPIO 更少
-2. **GPIO47/GPIO48 为 1.8V 域**（WROOM-1 没有这两个 GPIO 暴露）
-3. **闪存 + PSRAM 都改用 Octal SPI**（WROOM-1 通常 Quad），总线速度更高
-4. **VDD_SPI 固定 1.8V**（由 eFuse 锁定），不可通过软件改回 3.3V
-5. **Strapping 引脚默认状态不同**：GPIO45 默认下拉（0），影响 ROM 日志打印
+> 注：原理图 V1 使用 ESP32-S3-WROOM-1（U1 封装为 41 引脚）。WROOM-1 与 WROOM-2 的主要差异在于 PSRAM 配置和部分 GPIO 可用性。本项目实际引脚分配以原理图网表为准。
 
 **GPIO 使用约束**：
 
-- ❌ 避免使用 GPIO47/48（1.8V）— 除非配合电平转换
+- ❌ 避免使用 GPIO47/48 作普通 IO — 本项目 IO48 用于 WS2812（3.3V 域 GPIO 推挽，硬件经电平转换驱动灯珠）
 - ⚠️ GPIO0/3/45/46 为 Strapping 引脚 — 启动期间不能拉错电平
-- ✅ I2S 推荐的 GPIO4/5/6/7（BCK/WS/DOUT/MCLK）在 WROOM-2 上完全可用
-- ✅ SPI 推荐的 GPIO10/11/12/13 在 WROOM-2 上完全可用
-- ✅ I2C 推荐的 GPIO17/18 在 WROOM-2 上完全可用
+- ✅ I2S 使用的 GPIO5/6/7 在 WROOM-1 上完全可用
+- ✅ SPI 推荐的 GPIO10/11/12/13 在 WROOM-1 上完全可用
+- ✅ TFT 使用的 GPIO8/15/16/17/18 在 WROOM-1 上完全可用
 
 ## 3. 硬件设计
 
@@ -149,66 +148,84 @@
 
 ```
                             ┌─────────────────────┐
-                            │   ESP32-S3-WROOM-2  │
+                            │   ESP32-S3-WROOM-1  │
                             │   (Octal PSRAM)    │
-                            │   240MHz / 8-16MB PSRAM │
-   ┌──────┐   I2S_BCK(4)──►│                     │
-   │      │   I2S_WS(5)───►│                     │
-   │MAX   │   I2S_DOUT(6)─►│  GPIO Matrix        │
-   │98357 │   I2S_MCLK(7)─►│                     │◄──SD_CS(10)
+                            │   240MHz / 8 MB PSRAM   │
+   ┌──────┐   I2S_BCLK(6)──►│                     │
+   │      │   I2S_LRC(7)───►│                     │
+   │MAX   │   I2S_DIN(5)───►│  GPIO Matrix        │
+   │98357 │   I2S_SD(4) ──►│                     │◄──SD_CS(10)
    │      │                 │                     │◄──SD_MOSI(11)
-   │      │ ◄──GAIN/SD_MODE │                     │◄──SD_MISO(12)
-   └──┬───┘                 │                     │◄──SD_SCLK(13)
+   │      │ ◄──GAIN/SD_MODE │                     │◄──SD_SCLK(12)
+   └──┬───┘                 │                     │◄──SD_MISO(13)
       │                     │                     │
-      ▼                     │                     │◄──OLED_SDA(17)
-   ┌──────┐                 │                     │◄──OLED_SCL(18)
-   │3W 4Ω│                 │                     │
-   │Speaker                │                     │◄──BTN_PLAY(1)
-   └──────┘                 │                     │◄──BTN_STOP(2)
-                            │                     │◄──BTN_PREV(8)
-                            │                     │◄──BTN_NEXT(9)
-                            │                     │◄──BTN_REW(14)
-                            │                     │◄──BTN_FF(15)
-                            │                     │◄──ENC_A(38) [可选]
-                            │                     │◄──ENC_B(39) [可选]
-                            │                     │◄──BAT_ADC(3) [可选]
+      ▼                     │                     │◄──TFT_SDA(18)
+   ┌──────┐                 │                     │◄──TFT_SCL(8)
+   │3W 4Ω│                 │                     │◄──TFT_DC(16)
+   │Speaker                │                     │◄──TFT_RES(17)
+   └──────┘                 │                     │◄──TFT_BLK(15)
+                            │                     │
+                            │                     │◄──KEY_PLAY(9)
+                            │                     │◄──KEY_STOP(14)
+                            │                     │◄──KEY_PREV(21)
+                            │                     │◄──KEY_NEXT(47)
+                            │                     │◄──KEY_FF(41)
+                            │                     │◄──KEY_REV(42)
+                            │                     │
+                            │                     │◄──BAT_DET(ADC, IO1)
+                            │                     │◄──CHRG(IO2)
+                            │                     │◄──SD_CD(IO38)
+                            │                     ├──WS2812(IO48)
+                            │                     │◄──POW_EN(IO40)
+                            │                     │──LCD_POW_EN(IO39)
                             └─────────────────────┘
 ```
 
-### 3.2 GPIO 分配表（扩展版）
+> 注：`KEY_STOP` 实际经 SW7 → IO14；`KEY_PREV` 实际经 SW5 → IO21。本原理图 V1 网表中 IO3、IO46 未连接任何信号，留作 NC；旧文档中"双源/备用"说法与网表不符，已修正。
+
+### 3.2 GPIO 分配表（以原理图 V1 网表为准）
 
 | GPIO | 功能 | 输入/输出 | 上下拉 | 中断 | 备注 |
 |------|------|----------|--------|------|------|
-| 1 | BTN_PLAY/PAUSE | IN | 上拉 | - | 按下低电平 |
-| 2 | BTN_STOP | IN | 上拉 | - | 按下低电平 |
-| 3 | BAT_ADC | IN | - | - | 1/2 分压，0~2.4V → ADC1_CH3 |
-| 4 | I2S_BCK | OUT | - | - | 位时钟 |
-| 5 | I2S_WS | OUT | - | - | 字选择 |
-| 6 | I2S_DOUT | OUT | - | - | 数据输出 |
-| 7 | I2S_MCLK | OUT | - | - | 主时钟 (APLL) |
-| 8 | BTN_PREV | IN | 上拉 | - | |
-| 9 | BTN_NEXT | IN | 上拉 | - | |
-| 10 | SD_CS | OUT | - | - | 片选 |
-| 11 | SD_MOSI | OUT | - | - | |
-| 12 | SD_MISO | IN | - | - | |
-| 13 | SD_SCLK | OUT | - | - | |
-| 14 | BTN_REW | IN | 上拉 | - | 快退 |
-| 15 | BTN_FF | IN | 上拉 | - | 快进 |
-| 17 | OLED_SDA | I/O | 上拉 | - | I2C0 |
-| 18 | OLED_SCL | OUT | - | - | I2C0 |
-| 38 | ENC_A | IN | 上拉 | GPIO_INT | 编码器 A 相 |
-| 39 | ENC_B | IN | 上拉 | GPIO_INT | 编码器 B 相 |
-| 0 | BOOT | - | - | - | 保留（自动下载模式） |
+| **0** | BOOT / Reset (SW8) | IN | - | - | 启动选择/复位键 |
+| **1** | 🔋 BAT_DET (ADC) | IN | - | - | 电池电压检测，经 LMV321 运放 |
+| **2** | ⚡ CHRG 状态 | IN | 上拉 | - | TP4056 充电状态指示（充电中=LOW）|
+| **4** | 📗 MAX98357 SD_MODE | OUT | - | - | 采样率模式选择（I2S_SD 信号，接 MAX98357 Pin4，非 I2S 数据流）|
+| **5** | 🔊 I2S_DIN | OUT | - | - | I2S 数据输入到 MAX98357 |
+| **6** | 🎵 I2S_BCLK | OUT | - | - | I2S 位时钟 |
+| **7** | 🎵 I2S_LRC | OUT | - | - | I2S 左右声道时钟 |
+| **8** | 🖵 TFT_SCL | OUT | - | - | TFT SPI 时钟线 |
+| **9** | ▶️ KEY_PLAY | IN | 上拉 | - | 播放/暂停键（经 SW4）|
+| **10** | 💾 SD_CS | OUT | - | - | SD 卡片选 |
+| **11** | 💾 SD_MOSI | OUT | - | - | SD 卡 MOSI（接 U3.3 CMD）|
+| **12** | 💾 SD_SCLK | OUT | - | - | SD 卡时钟（接 U3.5 CLK）|
+| **13** | 💾 SD_MISO | IN | - | - | SD 卡 MISO（接 U3.7 DAT0）|
+| **14** | 🛑 KEY_STOP | IN | 上拉 | - | 停止键（经 SW7）|
+| **15** | 💡 TFT_BLK | OUT | - | PWM | 屏幕背光控制（PWM 调光） |
+| **16** | 🖵 TFT_DC | OUT | - | - | 屏幕数据/命令选择 |
+| **17** | 🖵 TFT_RES | OUT | - | - | 屏幕硬件复位 |
+| **18** | 🖵 TFT_SDA | OUT | - | - | 屏幕数据线（SPI MOSI） |
+| **21** | ⏮️ KEY_PREV | IN | 上拉 | - | 上一曲键（经 SW5）|
+| **38** | 💾 SD_CD | IN | 上拉 | GPIO_INT | SD 卡在位检测 |
+| **39** | 🔌 LCD_POW_EN | OUT | 下拉 | - | LCD 软件电源开关（PMOS 控制） |
+| **40** | 🔌 POW_EN | OUT | - | - | 系统电源保持锁存 |
+| **41** | ⏩ KEY_FF | IN | 上拉 | - | 快进键（经 SW2）|
+| **42** | ⏪ KEY_REV | IN | 上拉 | - | 快退键（经 SW6）|
+| **47** | ⏭️ KEY_NEXT | IN | 上拉 | - | 下一曲键（经 SW3）|
+| **48** | 🌈 WS2812 | OUT | - | - | RGB 状态指示灯（1.8V 域） |
 
-**GPIO 冲突检查**：
-- GPIO 1, 2 (按键) ⚠️ 注意：下载时为 UART0，可能需要切换
-- GPIO 17, 18 ⚠️ 默认 USB-JTAG，需在 menuconfig 关闭 USB
-- **WROOM-2 特有约束**：
-  - GPIO47/48 为 1.8V 域，本项目未使用，避开即可
-  - GPIO0/3/45/46 为 Strapping 引脚，本项目未用作业务 GPIO，安全
-  - 所有使用的 GPIO（1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 38, 39）在 WROOM-2 上完全可用
+**GPIO 冲突与约束检查**：
+- ✅ **无电气冲突**：所有 GPIO 功能分配互不冲突
+- ⚠️ **IO15 = TFT_BLK**：虽为 Strapping 引脚（MTDI），但用作 PWM 输出控制背光，启动时默认高阻态不影响 boot
+- ⚠️ **IO48 = WS2812**：属于 VDD_SPI 1.8V 域，WS2812 需要电平转换或选用 1.8V 兼容型号
+- ⚠️ **IO1 = BAT_DET (ADC)**：使用 ADC1_CH0，注意不要同时配置为普通 GPIO 输入
+- ✅ **IO21/IO41/IO42/IO47** 用于按键：非 Strapping 引脚，安全
+- ✅ **IO0 = BOOT**（SW8）：Strapping 引脚，按键上拉 + 默认高电平启动进入正常模式
+- 📌 **IO3 / IO46 未连接**：原理图 V1 网表中这两个 GPIO 没有任何 `*SIGNAL*` 连接，留作 NC；旧文档中曾列为"KEY_STOP 双源 / KEY_PREV 双源"已确认不实
 
 ### 3.3 电源设计
+
+#### 3.3.1 电源架构框图
 
 ```
    ┌──────────┐         ┌──────────┐
@@ -225,35 +242,67 @@
                                     └────────┬─────────┘
                                              │ B+
                                              │
-                                             ▼
-                                    ┌──────────────────┐
-                                    │ 拨动开关 SS12D00 │ (总电源)
+                                    ┌────────▼────────┐
+                                    │  MX66100T 双路   │
+                                    │  电源开关 IC     │
+                                    │  (按键开机/软关机)│
                                     └────────┬─────────┘
-                                             │
+                                             │ SYS_3.7V
                        ┌─────────────────────┼─────────────────────┐
                        ▼                     ▼                     ▼
-              ┌─────────────┐        ┌─────────────┐        ┌─────────────┐
-              │ AMS1117-3.3 │        │ MAX98357 VIN│        │ OLED VCC    │
-              │ LDO 800mA   │        │ (3.3V 也可) │        │ 3.3V        │
-              └──────┬──────┘        └─────────────┘        └─────────────┘
-                     │ 3.3V
-                     ▼
-              ┌─────────────┐
-              │ ESP32-S3    │ + MicroSD + 编码器
-              └─────────────┘
+              ┌─────────────────┐   ┌─────────────┐        ┌─────────────┐
+              │ MT3608 升压     │   │ MAX98357 VIN │        │ AO3401 PMOS │
+              │ 3.7V → 5V       │   │ (5V VBUS)    │        │ LCD_POW_SW  │
+              │ (供功放+USB)     │   └─────────────┘        │ IO39 控制   │
+              └────────┬────────┘                          └──────┬──────┘
+                       │ 5V_VBUS                                     │ 3V3_LCD
+                       ▼                                            ▼
+              ┌─────────────────┐                           ┌─────────────┐
+              │ BL8039 降压     │                           │ SPI TFT LCD │
+              │ 5V → 3.3V       │                           │ (独立供电)   │
+              │ (供 MCU+外设)   │                           └─────────────┘
+              └────────┬────────┘
+                       │ +3V3_MCU
+                       ▼
+              ┌─────────────────────────────────────┐
+              │ ESP32-S3 + MicroSD + 按键 + 运放     │
+              └─────────────────────────────────────┘
 ```
 
-**电流预算**：
+#### 3.3.2 电源架构说明
 
-| 模块 | 工作电流 | 峰值 |
-|------|---------|------|
-| ESP32-S3 (WiFi/BT 关) | 50 mA | 240 mA (瞬态) |
-| MAX98357 (中等音量) | 80 mA | 250 mA (峰值音量) |
-| OLED SSD1306 | 20 mA | 30 mA |
-| MicroSD 读写 | 30 mA | 100 mA |
-| **合计** | **~180 mA** | **~620 mA** |
+| 电源轨 | 电压 | 来源 | 供电对象 |
+|--------|------|------|---------|
+| **VBUS** | 5.0V | MT3608 (升压) | MAX98357 功放、USB 接口 |
+| **+3V3_MCU** | 3.3V | BL8039 (降压) | ESP32-S3、MicroSD、LMV321、按键网络、WS2812 |
+| **3V3_LCD** | 3.3V | AO3401 PMOS (受控) | SPI TFT LCD 屏幕（可软件断电） |
 
-2600 mAh 电池理论续航 = 2600 / 180 ≈ **14 小时**（实际约 10-12 小时，留出余量）
+#### 3.3.3 软件电源开关
+
+- **系统 POW_EN (IO40)**：控制 MX66100T 双路开关的锁存电路（Q2=2N7002 NMOS），实现软件关机功能
+- **LCD_POW_EN (IO39)**：控制 Q3=AO3401A PMOS，实现 LCD 屏幕独立电源开关
+  - IO39 = LOW → PMOS 导通 → LCD 上电
+  - IO39 = HIGH → PMOS 关断 → LCD 断电（待机省电）
+  - 默认状态（MCU 未初始化）：R47(100K) 下拉 → LCD 默认上电
+
+#### 3.3.4 电流预算
+
+| 模块 | 工作电流 | 峰值 | 电源轨 |
+|------|---------|------|--------|
+| ESP32-S3 (WiFi/BT 关) | 50 mA | 240 mA (瞬态) | +3V3_MCU |
+| MAX98357 (中等音量) | 80 mA | 250 mA (峰值音量) | VBUS (5V) |
+| SPI TFT LCD (背光 50%) | 40 mA | 80 mA (全亮) | 3V3_LCD |
+| SPI TFT LCD (休眠断电) | **0 mA** | — | 软件关断 |
+| MicroSD 读写 | 30 mA | 100 mA | +3V3_MCU |
+| LMV321 运放 | < 1 mA | 1 mA | +3V3_MCU |
+| WS2812 LED (单色) | 12 mA | 60 mA (全白) | +3V3_MCU |
+| **合计（正常播放）** | **~213 mA** | **~620 mA** | |
+| **合计（LCD 断电）** | **~173 mA** | **~540 mA** | |
+
+2600 mAh 电池理论续航：
+- 正常播放（含 LCD）：2600 / 213 ≈ **12 小时**
+- LCD 断电纯音频：2600 / 173 ≈ **15 小时**
+- 实际约打 7 折：**8-10 小时**
 
 ### 3.4 关键电路
 
@@ -261,62 +310,123 @@
 
 | 引脚 | 连接 | 含义 |
 |------|------|------|
-| GAIN | GND | 12 dB 增益（4Ω，仅 MAX98357B；A 变体为 9dB） |
-| SD_MODE | VDD | L+R 混合为单声道输出（单扬声器场景应接 VDD 以获得左右混合） |
-| VIN | 3.3V 或 5V | 3.3V 时输出约 1.8W，5V 时 3W |
+| BCLK | IO6 (I2S_BCLK) | 位时钟 |
+| LRC | IO7 (I2S_LRC) | 左右声道时钟 |
+| DIN | IO5 (I2S_DIN) | 数据输入 |
+| SD | IO4 (I2S_SD) | MAX98357 **SD_MODE** 采样率模式选择脚（接 Pin4，非 I2S 数据流，作普通 GPIO 输出设定电平）|
+| GAIN | GND | 12 dB 增益（MAX98357AETE+T） |
+| SD_MODE | IO4 (I2S_SD) | 由 MCU GPIO4 控制：拉高 = 原 VDD 意图的采样率模式（与单声道混合一致）；拉低为另一模式 |
+| VIN | 5V (VBUS) | 由 MT3608 升压供电，输出功率可达 3W |
 
 #### 3.4.2 SD 卡 SPI 接口
 
-- 使用 SPI2_HOST（避开 SPI0/SPI1 保留给 Flash/PSRAM）
+- 使用 **SPI2_HOST**（避开 SPI0/SPI1 保留给 Flash/PSRAM）
 - DMA 通道：SPI_DMA_CH_AUTO
-- 最高时钟：40 MHz（普通卡） / 20 MHz（低速卡兼容）
-- CS 信号：软件管理，注意在 SPI 多设备时序
+- 最高时钟：40 MHz（普通卡）/ 20 MHz（低速卡兼容）
+- CS 信号：软件管理（IO10）
+- CD 在位检测：IO38（卡插入时为指定电平）
 
-#### 3.4.3 按键电路
+SD 卡座（MicroSD 推推式座，位号 **U3**）通过 SPI 模式与 MCU 相连，使用 **SPI2_HOST**；TFT 显示屏则使用**独立的 SPI3_HOST**（SCLK=IO8 / MOSI=IO18，与 SD 的 IO12/IO11/IO13 引脚完全不同源），**两条 SPI 总线互不共用、可并行操作**。SD 卡 CS 为 IO10（软件管理），而 TFT 的 CS（J2.7）由 R46(10K) **下拉至 GND**（CS 低电平有效，故恒为选通/恒选）、不占用 MCU GPIO（详见 3.4.3 节 J2 引脚表 Pin 7）：
+
+| U3 引脚 | 信号 | GPIO | 方向 | 说明 |
+|---------|------|------|------|------|
+| 1 | DAT2 | NC | — | SPI 模式未使用 |
+| 2 | DAT3 / CS | IO10 | OUT | 片选（软件管理，SD_CS），网表信号 `SD_CS` |
+| 3 | CMD | IO11 | OUT | 命令/数据输入 MOSI（SD_MOSI），网表接 `U3.3` |
+| 4 | VDD | — | — | 3.3V 供电（来自 +3V3_MCU）|
+| 5 | CLK | IO12 | OUT | 时钟 SCLK（SD_CLK），网表接 `U3.5` |
+| 6 | VSS | — | — | 地 |
+| 7 | DAT0 | IO13 | IN | 数据输出 MISO（SD_MISO），网表接 `U3.7` |
+| 8 | DAT1 | NC | — | SPI 模式未使用 |
+| 检测簧片 | CD | IO38 | IN | 卡在位检测（SD_CD，上拉），网表信号 `SD_CD` |
+
+> 注：U3 具体封装脚位与 CD 检测簧片物理脚号以原理图 PDF 零件封装为准；上表"信号 → GPIO"映射与 V1 网表（`hardware/V1/audio_player.txt`）一致。此前的文档版本未列出本引脚表，已补齐。
+
+#### 3.4.3 SPI TFT 显示接口
+
+显示屏通过 8pin XH1.5 连接器 (J2) 与 MCU 相连：
+
+| J2 引脚 | 信号 | GPIO | 方向 | 说明 |
+|---------|------|------|------|------|
+| Pin 1 | GND | — | — | 地 |
+| Pin 2 | +3V3_LCD | — | — | 受 PMOS 控制的屏幕电源 |
+| Pin 3 | TFT_SCL | IO8 | OUT | SPI 时钟 |
+| Pin 4 | TFT_SDA | IO18 | OUT | SPI 数据 (MOSI) |
+| Pin 5 | TFT_RES | IO17 | OUT | 硬件复位（低有效） |
+| Pin 6 | TFT_DC | IO16 | OUT | 数据/命令选择 |
+| Pin 7 | TFT_CS | — | — | 片选（R46 10K 下拉到 GND，常选——CS 低电平有效故恒为选通） |
+| Pin 8 | TFT_BLK | IO15 | OUT(PWM) | 背光控制（可 PWM 调光） |
+
+#### 3.4.4 按键电路
+
+6 个功能按键（PLAY/STOP/PREV/NEXT/FF/REV）+ 1 个 Boot/Reset 键（SW8），共 7 个实体按键，均为"上拉→串联电阻→按键→GND"结构：
 
 ```
-       3.3V
-        │
-       ┌┴┐
-       │ │ 10kΩ 内部上拉
-       └┬┘
-        │  (ESP32 内部)
-        ├────► GPIOx
-        │
-       ┌┴┐
-       │ │ 轻触开关
-       │ │
-       └┬┘
-        │
-       GND
+       +3V3_MCU
+          │
+         Rpu (10KΩ)
+          │
+          ├────► GPIOx (ESP32)
+          │
+         Rs (1KΩ)  ← 串联电阻（限流/去抖）
+          │
+         SWx (轻触开关)
+          │
+         Cfilt (100nF)  ← 滤波电容（并联到 SW-GND 侧）
+          │
+         GND
 ```
 
-按下时 GPIO 读 0，松开时 GPIO 读 1。已使用 ESP32 内部上拉，无需外部电阻。
+按下时 GPIO 读 0（低电平），松开时读 1（高电平）。外部 10K 上拉 + 100nF 滤波确保稳定。
 
-#### 3.4.4 电池电压检测（可选）
+| 按键 | GPIO | 原理图标号 | 功能 |
+|------|------|-----------|------|
+| SW2 | IO41 | KEY_FF | 快进 |
+| SW3 | IO47 | KEY_NEXT | 下一曲 |
+| SW4 | IO9 | KEY_PLAY | 播放/暂停 |
+| SW5 | IO21 | KEY_PREV | 上一曲 |
+| SW6 | IO42 | KEY_REV | 快退 |
+| SW7 | IO14 | KEY_STOP | 停止 |
+| SW8 | IO0 | BOOT | Boot/Reset（长按关机） |
+
+#### 3.4.5 电池电压检测电路
 
 ```
-  BAT+ ──── ┬──── ─ ─ ─ ─ ─
-            │
-            R1 (100kΩ)
-            │
-            ├────► GPIO3 (ADC1_CH3)
-            │
-            R2 (100kΩ)
-            │
-  GND ──────┴──── ─ ─ ─ ─ ─
+  BAT+ (3.0~4.2V)
+       │
+       R_top (— 分压网络 —)
+       │
+       ├────► LMV321 (U10) 同相比例放大
+       │       │
+       │       └────► IO1 (BAT_DET, ADC1_CH0)
+       │
+  GND ─┴──── ─ ─ ─ ─ ─ ─ ─ ─
 ```
 
-分压比 1:1，3.7V → 1.85V（ADC 安全范围）。
+- 采用 **LMV321 运放** 作同相比例放大（非简单分压），提高测量精度和输入阻抗
+- 输出接 **IO1 (ADC1_CH0)**，ADC 参考电压 ~1.1V
+- 映射关系：18650 满充 4.2V → ADC 高位；截止 3.0V → ADC 低位
+- 运放由 +3V3_MCU 供电
 
-**注意**：ESP32-S3 ADC 输入源阻抗建议 ≤ 50kΩ。两个 100kΩ 电阻串联的等效源阻抗约为 50kΩ，处于边界。为获得稳定读数，建议在 ADC 引脚对 GND 并联 **100nF 陶瓷电容**；更高精度可改用 47kΩ+47kΩ 分压（功耗约 39µA）。
+#### 3.4.6 WS2812 RGB LED
+
+- 驱动引脚：**IO48**（U1 门引脚 Pin25）
+- ⚠️ IO48 属于 VDD_SPI 1.8V 域，WS2812 标准逻辑电平为 3.3V/5V
+- 建议：选用 1.8V 逻辑兼容型号，或添加电平转换电路（如 74HCT245）
+- 独立供电：+3V3_MCU
+- 用途：播放状态指示（呼吸/闪烁/颜色编码）
 
 ### 3.5 PCB 布局注意事项
 
-1. **SD 卡座**：远离 MAX98357 模拟部分，避免数字噪声耦合
-2. **I2S 信号线**：BCK/WS/DOUT 等长走线，避免 90° 直角
-3. **电源**：ESP32 与 MAX98357 各自退耦电容（100nF + 10μF）
-4. **喇叭走线**：短而粗，避免 PWM 类信号的串扰
+1. **SD 卡座**：远离 MAX98357 模拟部分和 SPI TFT 高速信号线，避免数字噪声耦合
+2. **I2S 信号线**：BCLK/LRC/DIN 等长走线（±5mm 内），避免 90° 直角，远离开关电源（MT3608）
+3. **电源分区**：
+   - 模拟地/数字地单点接地（AGDG/DGND 在 LMV321 下方汇合）
+   - MT3608（升压）远离音频和 ADC 电路，防止开关噪声耦合
+   - BL8039（3.3V LDO）靠近 ESP32-S3 放置，退耦电容紧靠电源引脚
+4. **喇叭走线**：短而粗（≥0.5mm），差分走线（若用 BTL 模式），避开敏感信号
+5. **TFT SPI 走线**：SDA/SCL/DC/RES 等长匹配，避免跨分割平面
+6. **天线区域**：ESP32-S3 板载天线下方及周围 5mm 内不走线、不铺铜
 
 ---
 
@@ -359,7 +469,7 @@
 | `tape_control` | 磁带机档位管理、速度计算 | `init/ff_press/ff_release/...` | esp_timer |
 | `playlist` | SD 卡扫描、排序、索引 | `scan/count/next/prev/get_*` | FATFS |
 | `audio_player` | 音频管道、解码、变速、seek | `init/play/pause/seek/set_speed` | ESP-ADF |
-| `display` | OLED 界面绘制 | `init/update/show_*` | I2C/u8g2 |
+| `display` | SPI TFT LCD 界面绘制 | `init/update/show_*` | esp_lcd(ST7789)/LVGL |
 | `bookmark` | 书签增删查 | `add/del/list/jump` | NVS |
 | `settings` | 配置存储 | `get_volume/set_volume/get_mode` | NVS |
 | `power_mgmt` | 电池检测、休眠、定时 | `init/tick/get_battery` | ADC/FreeRTOS |
@@ -522,8 +632,8 @@ void audio_player_tick(void);                    // 主循环调用，处理 FF/
 ```c
 // 配置（config.h）
 #define TAPE_ACCEL_STEP1_MS   800   // 0.8s 进入 1.5x
-#define TAPE_ACCEL_STEP2_MS  2000   // 2.0s 进入 2.5x
-#define TAPE_ACCEL_STEP3_MS  4000   // 4.0s 进入 4.0x
+#define TAPE_ACCEL_STEP2_MS  2000   // 2.0s 进入 2.0x
+#define TAPE_ACCEL_STEP3_MS  4000   // 4.0s 进入 3.0x
 #define TAPE_ACCEL_STEP4_MS  7000   // 7.0s 进入 8.0x
 
 // 阶梯表
@@ -572,9 +682,9 @@ void tape_control_tick(void) {
 |------|---------|-----------|---------|------|
 | 正常 | 1.0x | 44100 Hz | 不跳帧 | 原音 |
 | 快进 1.5x | 1.5x | 66150 Hz | 不跳帧 | 1.5x 变调快放 |
-| 快进 2.5x | 2.5x | 96000 Hz（上限） | 不跳帧 | 叽叽喳喳 |
-| 快进 4.0x | 4.0x | 96000 Hz（上限） | 每 50ms 跳 200ms | 极快扫描 |
-| 快进 8.0x | 8.0x | 96000 Hz（上限） | 每 50ms 跳 400ms | 极速 |
+| 快进 2.0x | 2.0x | 88200 Hz | 不跳帧 | 叽叽喳喳 |
+| 快进 3.0x | 3.0x | 132300 Hz | 不跳帧 | 快速扫描 |
+| 快进 8.0x | 8.0x | 176400 Hz（I2S 上限 4.0×44.1k） | 每 50ms 跳 350ms（跳 7/8） | 极速 |
 | 快退 1.5x | -1.5x | 44100 Hz | 每 50ms seek -75ms | 断续倒退跳跃 |
 | 快退 8.0x | -8.0x | 44100 Hz | 每 50ms seek -400ms | 极速倒带（断续） |
 
@@ -730,9 +840,22 @@ Namespace: "tapebook"
 7. nvs_close()
 ```
 
-### 5.6 OLED 显示（display）
+### 5.6 SPI TFT LCD 显示（display）
 
-#### 5.6.1 屏幕布局（128×64）
+#### 5.6.1 屏幕规格与接口
+
+| 项目 | 规格 |
+|------|------|
+| 接口类型 | SPI TFT（非 I2C OLED），走 **SPI3_HOST**（独立于 SD 卡的 SPI2_HOST） |
+| 面板 | ST7789 控制器，物理分辨率 240×320（2.0 寸） |
+| 逻辑分辨率 | 由 `config.h` 的 `DISPLAY_ORIENTATION` 决定：0=横屏 320×240（默认），1=竖屏 240×320；方向由 esp_lcd 的 `swap_xy/mirror` 在初始化时设置，后期可切换 |
+| 连接器 | XH1.5-8P (J2) |
+| 控制线 | CS(接地恒选), DC, RES, SCL(CK), SDA(MOSI), BLK(PWM) |
+| 背光 | IO15 PWM 调光（可软件控制亮度/彻底关闭） |
+| 驱动方案 | ESP-IDF 原生 `esp_lcd`：`esp_lcd_new_panel_io_spi`（IO 层）+ `esp_lcd_new_panel_st7789`（面板驱动，IDF v5.x 内置，零第三方） |
+| GUI 框架 | **LVGL v9**（idf component manager 拉取），`flush_cb` 底层为 `esp_lcd_panel_draw_bitmap` |
+
+#### 5.6.2 屏幕布局
 
 ```
 ┌──────────────────────────────────────┐  y=0
@@ -745,30 +868,40 @@ Namespace: "tapebook"
 │  ████████████████░░░░░░░░░░░░░░░░░  │  进度条 (h=10, y=38)
 │  ▲当前位置                            │
 ├──────────────────────────────────────┤  y=40
-│  12:35 / 45:00             [2.5x]    │  时间/速度 (h=8, y=48)
+│  12:35 / 45:00             [2.0x]    │  时间/速度 (h=8, y=48)
 ├──────────────────────────────────────┤  y=50
 │ RW  ◀◀  ▶  ■  ▶▶  FF   [VOL-/+]     │  按键提示 (h=10, y=60)
-└──────────────────────────────────────┘  y=64
+└──────────────────────────────────────┘  y=64 (或更高，取决于实际分辨率)
 
-> 注：状态栏图标（L=锁定、B=电量、V=音量、→=顺序播放）为 ASCII 示意，实际实现采用 u8g2 字体或 8×8 位图。Emoji 不作为实际显示内容。
+> 注：状态栏图标（L=锁定、B=电量、V=音量、→=顺序播放）为 ASCII 示意。TFT 可显示更丰富的图形和颜色。
 ```
 
-#### 5.6.2 渲染策略
+#### 5.6.3 渲染策略
 
-- **整屏重绘**：200ms 一次，仅更新变化部分
-- **文件滚动**：长文件名（>21 字符）每 200ms 滚动 2 像素
-- **进度条**：每 200ms 重新计算并重绘
-- **图标**：使用 u8g2 内置字体（5x7, 6x10, 8x13）
+- **驱动库**：ESP-IDF 原生 `esp_lcd`（`esp_lcd_panel_st7789`，IDF v5.x 内置），不再使用 u8g2 / 自写 SPI 驱动
+- **GUI 框架**：LVGL v9，draw buffer 置于 PSRAM，`flush_cb` 调用 `esp_lcd_panel_draw_bitmap`（DMA 刷屏）
+- **重绘机制**：LVGL 脏区（invalidate）机制自动局部重绘；业务层仍按 200ms 节奏更新数据
+- **文件滚动**：长文件名使用 LVGL label 的 `LV_LABEL_LONG_SCROLL_CIRCULAR` 滚动模式
+- **进度条**：LVGL `lv_bar` widget，数据变化时 `lv_bar_set_value`
+- **字体**：LVGL 内置 Montserrat 字体（中文字体可后续通过 `lv_font_conv` 生成）
+- **背光管理**：
+  - 正常播放：PWM 50%~100% 亮度
+  - 无操作 2 分钟：PWM 渐暗至 0% 或直接关闭
+  - 深度休眠前：IO39 = HIGH → PMOS 关断 LCD 电源（零功耗）
+  - 唤醒时：IO39 = LOW → PMOS 导通 → LCD 上电 → RES 复位 → 重新初始化
 
-#### 5.6.3 显示状态机
+#### 5.6.4 显示状态机
 
 ```
        ┌──────────┐ 开机完成 ┌──────────┐
        │  SPLASH  ├─────────►│  MAIN    │
        └──────────┘          └─────┬────┘
                                     │
-                                    ├── 长时间无操作 → SCREENSAVER
+                                    ├── 长时间无操作 → DIM_BACKLIGHT
                                     │                  └─ 按键唤醒 → MAIN
+                                    │
+                                    ├── 更长时间无操作 → LCD_POW_OFF
+                                    │                  └─ 按键唤醒 → 重新初始化LCD → MAIN
                                     │
                                     ├── 长按 STOP → BROWSE (文件夹浏览)
                                     │                  └─ 短按 STOP → MAIN
@@ -776,6 +909,8 @@ Namespace: "tapebook"
                                     └── 长按 PLAY → LOCKED
                                                        └─ 长按 PLAY → MAIN
 ```
+
+> 与旧版差异：新增 **DIM_BACKLIGHT**（背光渐暗）和 **LCD_POW_OFF**（PMOS 彻底断电）两个低功耗状态，利用 IO39 软件电源开关实现。
 
 ### 5.7 电源管理（power_mgmt）P2
 
@@ -977,20 +1112,14 @@ static int natural_compare(const char *a, const char *b) {
 ### 7.3 进度条更新算法
 
 ```c
-void draw_progress_bar(int current_sec, int total_sec) {
-    if (total_sec <= 0) return;
-    int width = (int)(126.0f * current_sec / total_sec);
-    width = CLAMP(width, 0, 126);
-    
-    // 绘制外框
-    u8g2_DrawFrame(&u8g2, 1, 30, 126, 10);
-    // 绘制填充
-    if (width > 0) {
-        u8g2_DrawBox(&u8g2, 2, 31, width, 8);
+// LVGL 实现：lv_bar widget，范围 0~1000（千分比），数据变化时更新
+void update_progress_bar(lv_obj_t *bar, int current_sec, int total_sec) {
+    if (total_sec <= 0) {
+        lv_bar_set_value(bar, 0, LV_ANIM_OFF);
+        return;
     }
-    // 当前位置小三角
-    int marker_x = (int)(126.0f * current_sec / total_sec) + 1;
-    u8g2_DrawTriangle(&u8g2, marker_x-2, 28, marker_x+2, 28, marker_x, 31);
+    int permille = (int)(1000LL * current_sec / total_sec);
+    lv_bar_set_value(bar, CLAMP(permille, 0, 1000), LV_ANIM_OFF);
 }
 ```
 
@@ -999,9 +1128,9 @@ void draw_progress_bar(int current_sec, int total_sec) {
 | 速度 | 50ms 内跳过的秒数 | 计算依据 |
 |------|----------------|---------|
 | 1.5x | 0.075 秒 | 50ms × 1.5 |
-| 2.5x | 0.125 秒 | 50ms × 2.5 |
-| 4.0x | 0.2 秒 | 50ms × 4.0 |
-| 8.0x | 0.4 秒 | 50ms × 8.0 |
+| 2.0x | 0.1 秒 | 50ms × 2.0 |
+| 3.0x | 0.15 秒 | 50ms × 3.0 |
+| 8.0x | 0.35 秒 | 50ms × (8-1)（跳帧模式） |
 | -1.5x | -0.075 秒 | 50ms × 1.5（负） |
 | -8.0x | -0.4 秒 | 50ms × 8.0（负） |
 
@@ -1146,9 +1275,26 @@ audio_player/
 │   ├── CMakeLists.txt          # 组件构建 (idf_component_register)
 │   └── *.cpp / *.h
 ├── components/                 # 自定义组件（可选）
-│   └── u8g2_esp32/             # u8g2 的 ESP32 移植
-└── managed_components/         # 自动管理的依赖（idf component manager）
+│   ├── u8g2/                   # （已废弃，待删除）原 u8g2 源码，显示层已迁移到 LVGL
+│   └── audio_board/            # 覆盖 ADF 自带 audio_board 的自定义 tapebook 板
+└── managed_components/         # 自动管理的依赖（idf component manager，含 lvgl）
 ```
+
+#### 10.1.1 自定义 ADF Board（tapebook）
+
+项目通过 `EXTRA_COMPONENT_DIRS = $ENV{ADF_PATH}/components` 引入 ESP-ADF。
+IDF 组件解析**优先**搜索项目自身 `components/`，因此在 `components/audio_board`
+建立同名组件即可**覆盖** ADF 自带的 `audio_board`，无需改动全局 ADF 安装：
+方案可随仓库版本化、不受 ADF 更新影响。
+
+- `components/audio_board/tapebook/` 为自定义板，仅提供编译通过的桩实现：
+  项目使用自写 I2S/LCD/SD 驱动，`audio_board_init()` 实际不被调用。
+- `tapebook/board_def.h` 必须定义 `ESP_SD_PIN_*` 全套宏（供 `esp_peripherals/sdcard.c`
+  编译）与 `BOARD_PA_GAIN`（供 ADF `audio_hal` 驱动编译），引脚值置 -1 / 0，运行时不生效。
+- 选板在 `configs/sdkconfig.defaults.*` 中由 `CONFIG_ESP_TAPEBOOK_BOARD=y` 指定，
+  不再依赖任何现成开发板（如 `esp32_s3_box_3`、`lyrat_v4_3`）。
+
+> 详细计划与实施步骤见 `docs/PLAN_TAPEBOOK_ADF_BOARD.md`。
 
 ### 10.2 依赖管理
 
@@ -1159,8 +1305,9 @@ git clone --recursive https://github.com/espressif/esp-idf.git -b v5.3
 # 2. ESP-ADF v2.7（音频框架）
 git clone --recursive https://github.com/espressif/esp-adf.git -b v2.7
 
-# 3. u8g2 (OLED 图形库)
-# 通过 idf component manager 自动下载，或放到 components/ 目录
+# 3. LVGL v9（GUI 图形库）
+# 经 idf component manager 自动下载（main/idf_component.yml: lvgl/lvgl >=9.0.0）
+# ST7789 驱动使用 IDF 内置 esp_lcd 组件（esp_lcd_panel_st7789），无需第三方
 ```
 
 > **兼容性提醒**：ESP-ADF 版本与 ESP-IDF 版本有严格对应关系。若 `v2.7` 编译时报告 IDF 版本不匹配，请优先使用 Espressif 官方推荐的 IDF 分支（例如 ADF 的 `idf_v5.x` 兼容分支）。
@@ -1171,7 +1318,7 @@ git clone --recursive https://github.com/espressif/esp-adf.git -b v2.7
 # 设置目标芯片
 idf.py set-target esp32s3
 
-# 配置（启用 ADF、u8g2）
+# 配置（启用 ADF、LVGL）
 idf.py menuconfig
 #   → Audio HAL → Enable
 #   → FATFS → Long filename support
@@ -1233,8 +1380,8 @@ T+0   FF按下  DEBOUNCE     -                -                 -
 T+30  FF保持  PRESSED      -                -                 -
 T+500 FF保持  LONG_PRESS   mode=FF,gear=0   speed=1.0x        正常（缓冲期）
 T+800 FF保持  HOLD         mode=FF,gear=1   speed=1.5x          轻微变调
-T+2000 FF保持 HOLD         mode=FF,gear=2   speed=2.5x          叽叽喳喳
-T+4000 FF保持 HOLD         mode=FF,gear=3   speed=4.0x          快速扫描
+T+2000 FF保持 HOLD         mode=FF,gear=2   speed=2.0x          叽叽喳喳
+T+4000 FF保持 HOLD         mode=FF,gear=3   speed=3.0x          快速扫描
 T+7000 FF保持 HOLD         mode=FF,gear=4   speed=8.0x          极速
 T+8500 FF松开 RELEASE      mode=NORMAL,gear=0 speed=1.0x         恢复正常
 T+8510 -       IDLE        -                -                 1.0x 正常播放
@@ -1287,7 +1434,7 @@ ESP_LOGD(TAG, "Debug");          // D - 调试（默认不显示）
 - [ ] 实现 NVS 断点续播模块
 - [ ] 实现 A-B 复读模块
 - [ ] 实现定时关机模块
-- [ ] 添加 u8g2 图形库支持
+- [x] 显示层迁移到原生 esp_lcd (ST7789) + LVGL v9（Phase 1 完成；Phase 2 UI 细化、Phase 3 删除 u8g2 残留待办）
 - [ ] 集成 ESP-ADF 并验证管道
 - [ ] 编写单元测试（按键状态机、tape_control 档位）
 - [ ] 制作 3D 打印外壳图纸
@@ -1299,3 +1446,7 @@ ESP_LOGD(TAG, "Debug");          // D - 调试（默认不显示）
 | 1.0 | 2026-07-02 | — | 初稿：基于 PRD V1.0 编写 |
 | 1.1 | 2026-07-02 | — | 评审修订：修正目标模块为 ESP32-S3-WROOM-2 Octal PSRAM；删除重复的 3. 硬件设计章节；修正磁带快进时序图；修正 I2S 采样率与快进/快退表；修正 seek API 与跳帧代码示例；修正功耗与电池 ADC 说明；澄清分区表与 OTA 布局 |
 | 1.2 | 2026-07-02 | — | 评审修订 V2：系统框图 SRAM 512KB→~400KB；MAX98357 SD_MODE GND→VDD；AMS1117 500mA→800mA；任务优先级修正(main=1, scan 在主循环内)；按键状态机增加双击/超长按；playlist 改为结构体绑定排序+PSRAM；跳帧策略仅≥4x；配置速查表增加双击窗口/超长按阈值 |
+| **1.3** | **2026-07-28** | **—** | **原理图对齐修订（基于 PADS Logic V9.5 网表权威数据）：模块型号 WROOM-1 替代 WROOM-2；系统框图更新为 SPI TFT+WS2812 替代 OLED+耳机/编码器；GPIO 分配表完全重写（I2S:IO5/6/7、TFT:IO8/15/16/17/18、按键:IO3/9/14/41/42/46/47、BAT_DET:IO1、CHRG:IO2 等）；电源架构更新为 TP4056→MT3608→BL8039 三级拓扑+MX66100T 软开关+LCD PMOS 独立供电；新增 LCD_POW_EN(IO39)、POW_EN(IO40)、WS2812(IO48)、SD_CD(IO38) 引脚定义；显示模块从 I2C OLED 改为 SPI TFT（含 DC/RES/BLK/CS 四控制线）；按键电路增加串联电阻+滤波电容规格；电池检测从简单分压改为 LMV321 运放方案；PCB 布局增加电源分区和天线区域约束** |
+| **1.4** | **2026-07-29** | **—** | **硬件映射勘误（基于 V1 网表复核）：① SD 卡 GPIO12/13 引脚纠正——GPIO12=SD_SCLK、GPIO13=SD_MISO（原文档写反）；② 按键映射纠正——`KEY_STOP` 实际经 SW7→IO14、`KEY_PREV` 实际经 SW5→IO21，删除原错的 IO3(SW2)/IO46(SW5) 双源说法，GPIO 表移除 IO3/IO46 行、新增 IO21 行；③ 补齐 3.4.2 节 SD 卡座（U3）SPI 引脚详述表；④ 同步修正固件 `board_def.h` 中 ESP_SD_PIN_CLK/D0 的反接（CLK=12、D0=13）；⑤ 固件 I2S 引脚按网表修正（BCLK=6/WS=7/DIN=5），并在 `main/config.h`+`main/main.cpp` 新增 GPIO4(SD_MODE) 输出初始化（拉高）** |\n| **1.5** | **2026-07-29** | **—** | **按键 SW 位号勘误（GPIO↔功能网络映射无误，仅 SW 位号标注错误）：按权威确认重排按键表——SW2=KEY_FF(IO41)、SW3=KEY_NEXT(IO47)、SW4=KEY_PLAY(IO9)、SW5=KEY_PREV(IO21)、SW6=KEY_REV(IO42)、SW7=KEY_STOP(IO14)、SW8=BOOT(IO0)。原 1.4 中 SW3=PLAY/SW4=FF/SW9=REV 的 SW 位号有误（SW9 非按键），已修正；GPIO 表相应更新"经 SWx"注释** |
+| **1.6** | **2026-07-29** | **—** | **网表全量一致性复核（基于 `hardware/V1/audio_player.txt` 元件定义 + `*SIGNAL*` 段）：逐信号核对 U1(ESP32-S3-WROOM1) 引脚→GPIO 映射，确认 KEY/SD/I2S/TFT/电源/检测全部一致；发现并修正 3.4.2 节误写的"TFT IO37"——网表证实 TFT_CS(J2.7) 经 R46(10K) 下拉至 GND 恒选、U1.30(IO37) 未接任何网络，与 J2 引脚表 Pin7 及 GPIO 表（无 IO37 行）一致，故删除"TFT IO37"表述** |\n| **1.7** | **2026-07-29** | **—** | **代码-文档一致性收尾（依据代码修正 DESIGN）：① 显示规格更正为 ST7789 控制器、320×240（横屏）；② 磁带速度档位依代码改为 1.5x/2.0x/3.0x/8.0x（原误写 2.5x/4.0x），同步修正采样率/跳帧/时序表；③ 默认目标模块改为 ESP32-S3-WROOM-1 N16R8（Kconfig 默认 + 本文档模块型号/PSRAM/WS2812 电平域），Kconfig `USE_U8G2` 帮助文本由 I2C OLED 改为 SPI TFT 离线渲染；④ 固件补全 WS2812(IO48) 驱动（led_strip/RMT，状态色：蓝=充电/红=极低/橙=低/绿=播放/灭=空闲）；⑤ 清理死代码：移除未引用的 `u8g2_esp32_hal` 与 `tapebook_board` 组件及其 CMake 依赖，audio_player.cpp 过时注释 4.0x→8.0x** |
+| **1.8** | **2026-07-29** | **—** | **显示层迁移到原生 esp_lcd + LVGL（Phase 1）：① 弃用自写 ST7789 SPI 驱动与 u8g2 1bpp 离线渲染（"esp_lcd_st7789 不存在"的前提在 IDF v5.5.3 已过时——`esp_lcd_panel_st7789` 为 IDF 内置）；② `display.cpp` 重写为 `esp_lcd_new_panel_io_spi`(SPI3_HOST) + `esp_lcd_new_panel_st7789` + LVGL 9.5.0（idf component manager 拉取），保留原 `display_*` API；③ `config.h` 新增 `DISPLAY_ORIENTATION` 方向开关（0=横屏 320×240 默认 / 1=竖屏 240×320，方向经 `swap_xy/mirror` 设置，后期可改）；④ 新增 `main/lv_conf.h`（RGB565/16 位色深/FreeRTOS）；⑤ `main/CMakeLists.txt` REQUIRES 去 u8g2、加 lvgl+esp_lcd，`idf_component.yml` 加 `lvgl/lvgl >=9.0.0`；⑥ 勘误 3.4.2 节"SD 与 TFT 共用 SPI2_HOST"表述——实际 TFT 走独立 SPI3_HOST（IO8/IO18），与 SD 的 SPI2_HOST（IO10-13）互不共用；⑦ 另：ADF 选板改为项目内 `components/audio_board` 覆盖的自定义 tapebook 板（`CONFIG_ESP_TAPEBOOK_BOARD=y`，见 §10.1.1）。详见 `docs/PLAN_LVGL_ESP_LCD_MIGRATION.md`** |

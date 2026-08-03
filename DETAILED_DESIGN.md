@@ -40,9 +40,9 @@
      │manager  │ │control │ │player│ │       │ │        │ │        │
      └─────────┘ └────────┘ └──────┘ └──────┘ └────────┘ └──────┘
                                          │           │        │
-                                    ┌────▼──┐   ┌───▼──┐   ┌─▼──┐
-                                    │u8g2   │   │FATFS │   │NVS │
-                                    └───────┘   └──────┘   └────┘
+                                    ┌────▼──────┐ ┌───▼──┐  ┌─▼──┐
+                                    │LVGL+esp_lcd│ │FATFS │  │NVS │
+                                    └───────────┘ └──────┘  └────┘
 
      ┌──────────┐  ┌──────────┐  ┌──────────┐  (V1.1+ / V1.2+)
      │bookmark  │  │power_mgmt│  │voice_    │
@@ -59,7 +59,7 @@
 | tape_control | P1 | 业务逻辑 | ✅ 已完成 | 磁带档位管理 |
 | playlist | P1 | 业务逻辑 | ✅ 已完成 | 结构体排序 + 递归扫描 |
 | audio_player | P1 | 音频引擎 | ⚠️ 需完善 | 管道事件监听缺失 |
-| display | P1 | 业务逻辑 | ⚠️ 需完善 | 底部提示行对齐、锁定图标 |
+| display | P1 | 业务逻辑 | ⚠️ 需完善 | 底部提示行对齐 |
 | main | P1 | 应用层 | ⚠️ 需完善 | 曲目播完处理、NVS 恢复 |
 | settings | P1 | 业务逻辑 | ❌ 未实现 | NVS 读断点/音量/模式 |
 | bookmark | P2 | 业务逻辑 | ❌ 未实现 | 书签增删查 |
@@ -276,13 +276,21 @@ int settings_load_auto_off(void)
 
 | 时机 | 触发位置 | 调用 |
 |------|---------|------|
-| 用户停止播放 | `main.cpp stop_playback()` | `settings_save_position(idx, pos, name)` |
+| 用户停止播放 | `main.cpp stop_playback()` | `settings_save_position(idx, pos, name)`；并缓存 `g_seek_on_play_position`，STOPPED→播放沿用该位置续播（不再归零） |
 | 切换曲目 | `main.cpp play_current_track()` | 先保存旧位置 |
 | 曲目自然播完 | `main.cpp` 音频回调 | 保存旧位置（标记 ≥95% 清零） |
 | 每 30 秒自动 | `main.cpp` 主循环计时 | `settings_save_position(...)` |
 | 低电关机 | `power_mgmt` | 紧急保存 |
 | 音量变化松开 | `main.cpp` Prev/Next RELEASE | `settings_save_volume(vol)` |
 | 播放模式切换 | `main.cpp` cycle_play_mode() | `settings_save_play_mode(mode)` |
+
+> **停止即安全停止（续播模型）**：`stop_playback()` 在销毁解码管道**之前**把当前位置读入 `g_seek_on_play_position` 缓存；`APP_STATE_STOPPED` 态按播放不再清零该值，而是从缓存位置续播。因此停止、暂停、关机、唤醒四者行为一致——均从原位置继续，磁带机体验达成。此前 `STOPPED→播放` 处的 `g_seek_on_play_position = 0` 会把**上电/唤醒 NVS 断点一并清零**，本次已修复。
+>
+> **组合键 快退 + 停止 = 跳到当前曲首**：在 250ms（`COMBO_WINDOW_US`）窗口内先后/同按两键触发 `jump_to_track_start()`——播放/暂停/快进退态立即 `seek(0)` 并落盘，停止态则把续播位置置 0。单独 `REWIND` 仍即时倒带（-10s）、单独 `STOP` 仍即时停止（短按即时响应，无延迟）；仅成对出现才跳曲首，未命中只是安全降级（进度不丢）。
+>
+> **FF/RW 态按键互锁（磁带机模型）**：快进/快退为「按住态」，其间 `PLAY/STOP/PREV/NEXT` 一律忽略（其他键不响应，继续走带），仅松开 FF/RW 键（`RELEASE`）才恢复正常速度退回 `PLAYING` 续播。`PREV`/`NEXT` 短按在 `FAST_FORWARD`/`REWIND` 态直接 `break`，不再静默改 `g_current_track`/`playlist_set_index` 导致状态错位；`PLAY` 本就无对应分支，自然忽略。同时**进入与退出 FF/RW 态均清空 `g_combo_rew_us`/`g_combo_stop_us`**，杜绝变速态残留时间戳在 250ms 窗口内误触 `REW+STOP` 组合键。
+>
+> **FF/RW 长按判定（R043 修正）**：进入变速态**仅由 `BTN_EVENT_LONG_PRESS` 触发一次**——该分支调用 `tape_control_ff_press()`/`tape_control_rewind_press()` 置 `APP_STATE_FAST_FORWARD/REWIND` 并清空组合键时间戳；后续每 20ms 的 `BTN_EVENT_HOLD`/`BTN_EVENT_EXTRA_LONG_PRESS` 仅做「保持态速度同步」（`audio_player_set_speed(tape_control_get_speed())`），**不再重复调用 press**（档位升档由 `tape_control_tick()` 按按住时长自动完成）。此前 `LONG_PRESS || HOLD` 合并条件会在保持态重复调 press，已修正。
 
 ---
 
@@ -429,24 +437,23 @@ bool power_mgmt_auto_off_expired(void);
 ### 4.2 电池 ADC 读取
 
 ```c
-// GPIO3 (ADC1_CH2) → 1:1 分压 → 100nF 去耦
-// 18650 满充 4.2V → ADC 读 ~2.1V → 百分比 100%
-// 18650 标称 3.7V → ADC 读 ~1.85V → 百分比 ~50%
-// 18650 截止 3.0V → ADC 读 ~1.5V → 百分比 0%
+// GPIO1 (ADC1_CH0) → LMV321 运放输出 → 电池电压
+// 18650 满充 4.2V → 运放输出 ~ADC 高位
+// 18650 标称 3.7V → 运放输出 ~中间值
+// 18650 截止 3.0V → 运放输出 ~ADC 低位
 
 static int read_battery_percent(void)
 {
-    // ADC1_CH2 对应 GPIO3
+    // ADC1_CH0 对应 GPIO1（原理图 BAT_DET 信号）
     // 使用 esp_adc_cal 读取并校准
-    int raw = adc1_get_raw(ADC1_CHANNEL_2);
+    int raw = adc1_get_raw(ADC1_CHANNEL_0);
     if (raw < 0) return 0;
 
     // 12-bit ADC: raw = 0~4095, 参考电压 ~1.1V
-    // 分压后: V_bat = 2 × V_adc
-    // V_adc = raw × 1.1 / 4095
-    // V_bat = 2 × raw × 1.1 / 4095
-
-    float v_bat = 2.0f * (float)raw * 1.1f / 4095.0f;
+    // 经 LMV321 同相比例放大后:
+    // V_bat = f(raw), 具体增益由运放反馈电阻决定
+    // 此处为简化模型，实际需根据原理图 Rfb/Rin 计算精确映射
+    float v_bat = raw_to_battery_voltage(raw);
 
     // 线性映射: 3.0V=0%, 4.2V=100%（简化模型）
     int pct = (int)((v_bat - 3.0f) / (4.2f - 3.0f) * 100.0f);
@@ -455,6 +462,8 @@ static int read_battery_percent(void)
     return pct;
 }
 ```
+
+> **⚠️ 与旧版差异**：原设计使用 GPIO3 (ADC1_CH2) 接简单分压电路。**原理图 V1 改用 IO1 (ADC1_CH0) + LMV321 运放**作同相比例放大，精度更高。代码需同步修改 `adc1_get_raw()` 的通道号和电压换算公式。
 
 ### 4.2b 屏幕保护与休眠区分
 
@@ -524,83 +533,192 @@ bool power_mgmt_auto_off_expired(void)
 
 ---
 
-## 5. display — OLED 显示完善
+## 5. display — SPI TFT LCD 显示完善
+
+> **⚠️ 与旧版差异**：原理图 V1 确认显示接口为 **SPI TFT**（非 I2C OLED），使用 8pin XH1.5 连接器 (J2)，含 CS/DC/RES/BLK/SCL/SDA 六条控制线。
+>
+> **✅ 2026-07-29 已实施（Phase 1）**：显示层已迁移到 **ESP-IDF 原生 `esp_lcd`（`esp_lcd_panel_st7789`，IDF v5.5.3 内置）+ LVGL v9**（走 SPI3_HOST，独立于 SD 卡的 SPI2_HOST）。原自写 ST7789 SPI 驱动与 u8g2 1bpp 渲染分支已从 `display.cpp` 移除；本章早期的 u8g2 示例代码仅保留布局/交互需求参考价值，实际实现以 `main/display.cpp` 与 `docs/PLAN_LVGL_ESP_LCD_MIGRATION.md` 为准。屏幕方向由 `config.h` 的 `DISPLAY_ORIENTATION` 开关决定（0=横屏 320×240 默认，1=竖屏 240×320）。
 
 ### 5.1 需要修改的要点
 
-1. **底部操作提示行**：与 PRD/DESIGN 对齐
+1. **接口变更**：I2C (SDA/SCL 2线) → SPI (CS/DC/RES/SCL/SDA/BLK 6线)
+2. **GPIO 全面更新**：
+   - 旧：SDA=IO17, SCL=IO18
+   - 新：SCL=IO8, SDA=IO18, DC=IO16, RES=IO17, BLK=IO15, CS=R46(常选)
+3. **电源控制**：新增 IO39 (LCD_POW_EN) 控制 PMOS 软件电源开关
+4. **背光 PWM**：IO15 可做 PWM 调光（替代 OLED 的恒亮/恒灭）
+5. **底部操作提示行**：与 PRD/DESIGN 对齐
 
 ```
 当前显示: "<Prev  Play  Stop  Next>  FF^RW"
 应为:     "RW  <<  >  #  >>  FF   VOL-/+"
 ```
 
-2. **状态栏增加图标**：
+6. **状态栏增加图标**：
 
 ```
-▶ 03/12  L  B85  V70  →
+▶ 03/12  B85  V70  →
 ```
-- L = 锁定图标
-- B85 = 电量百分比
-- V70 = 音量百分比
+- B85 = 电量百分比（图形电池图标，<20% 变红）
+- V70 = 音量百分比（扬声器图标 + 水平音量条）
 - → = 顺序播放模式图标
 
-3. **锁定状态特殊显示**：显示大 `L` 图标居中
+7. **文件名滚动**：长文件名超过 21 字符时水平滚动
 
-4. **文件名滚动**：长文件名超过 21 字符时水平滚动
-
-### 5.2 display_update 完善伪代码
+### 5.2 初始化代码（已实施：原生 esp_lcd + LVGL）
 
 ```c
-void display_update(...)
+// TFT SPI 引脚定义（config.h，以原理图为准）
+// DISPLAY_SPI_HOST = SPI3_HOST（独立于 SD 卡的 SPI2_HOST）
+#define DISPLAY_DC_IO       GPIO_NUM_16   // 数据/命令选择
+#define DISPLAY_RESET_IO    GPIO_NUM_17   // 硬件复位
+#define DISPLAY_SCLK_IO     GPIO_NUM_8    // SPI 时钟
+#define DISPLAY_MOSI_IO     GPIO_NUM_18   // SPI 数据 (MOSI)
+#define DISPLAY_BL_IO       GPIO_NUM_15   // 背光 PWM
+#define LCD_POW_EN_IO       GPIO_NUM_39   // LCD 电源开关 (PMOS 低电平导通)
+// CS：R46 下拉 GND 恒选 → cs_gpio_num = -1
+
+void display_init(void)   // 摘要，完整实现见 main/display.cpp
 {
-    u8g2_ClearBuffer(&u8g2);
+    // 1. LCD 上电（GPIO39 拉低 → PMOS 导通），等待电源稳定
 
-    // === 状态栏 (y=0~10) ===
-    u8g2_SetFont(&u8g2, u8g2_font_5x8_tf);
+    // 2. SPI3 总线初始化
+    spi_bus_config_t buscfg = {
+        .mosi_io_num = DISPLAY_MOSI_IO, .sclk_io_num = DISPLAY_SCLK_IO,
+        .miso_io_num = -1, .max_transfer_sz = DISPLAY_WIDTH * 40 * 2,
+    };
+    spi_bus_initialize(DISPLAY_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
 
-    char status[30];
-    const char *icon = state_icon(state);   // > / || / # / >> / <<
-    const char *mode_icon = mode_str(g_play_mode);  // → / ↻ / ↻1
+    // 3. esp_lcd SPI IO 层（IDF v5.5.3 字段名为 pclk_hz）
+    esp_lcd_panel_io_spi_config_t io_cfg = {
+        .cs_gpio_num = -1, .dc_gpio_num = DISPLAY_DC_IO,
+        .spi_mode = 0, .pclk_hz = 40 * 1000 * 1000,
+        .trans_queue_depth = 10, .lcd_cmd_bits = 8, .lcd_param_bits = 8,
+    };
+    esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)DISPLAY_SPI_HOST,
+                             &io_cfg, &io_handle);
 
-    // 如果锁定，状态栏显示 L
-    if (g_key_locked) {
-        snprintf(status, sizeof(status), "L %02d/%03d", track_idx, total);
-    } else {
-        snprintf(status, sizeof(status), "%s %02d/%03d V%d %s",
-                 icon, track_idx, total, volume, mode_icon);
-    }
-    u8g2_DrawStr(&u8g2, 0, 8, status);
+    // 4. 原生 ST7789 面板驱动（IDF 内置，无第三方）
+    esp_lcd_panel_dev_config_t panel_cfg = {
+        .reset_gpio_num = DISPLAY_RESET_IO,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB, .bits_per_pixel = 16,
+    };
+    esp_lcd_new_panel_st7789(io_handle, &panel_cfg, &panel_handle);
+    esp_lcd_panel_reset(panel_handle);
+    esp_lcd_panel_init(panel_handle);
+    // 方向由 DISPLAY_ORIENTATION 决定（swap_xy/mirror），invert_color 视屏而定
 
-    // === 文件名 (y=14~28) ===
-    u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
-    draw_scrolling_filename(track_name);
-
-    // === 进度条 (y=30~42) ===
-    draw_progress_bar(current_sec, total_sec);
-
-    // === 时间+速度 (y=46~56) ===
-    u8g2_SetFont(&u8g2, u8g2_font_5x8_tf);
-    char time_str[32];
-    format_time(current_sec, cur, sizeof(cur));
-    format_time(total_sec, tot, sizeof(tot));
-    if (gear > 0) {
-        snprintf(time_str, sizeof(time_str), "%s/%s [%s]", cur, tot, gear_str(gear));
-    } else {
-        snprintf(time_str, sizeof(time_str), "%s/%s", cur, tot);
-    }
-    u8g2_DrawStr(&u8g2, 0, 54, time_str);
-
-    // === 底部提示 (y=58~64) ===
-    u8g2_SetFont(&u8g2, u8g2_font_4x6_tf);
-    u8g2_DrawStr(&u8g2, 0, 63, "RW << > # >> FF VOL-/+");
-    // 或在音量调节时临时显示 "VOL: 45%"
-
-    u8g2_SendBuffer(&u8g2);
+    // 5. 背光 PWM（LEDC 5kHz），LVGL 初始化（draw buffer 在 PSRAM，
+    //    flush_cb = esp_lcd_panel_draw_bitmap）
 }
 ```
 
-### 5.3 播放模式图标映射
+### 5.3 display_update 实现方式（LVGL widget）
+
+`display_update()` 不再逐帧手绘，而是把数据写入常驻的 LVGL widget，
+由 LVGL 脏区机制自动局部重绘：
+
+| 界面区域 | LVGL widget | 更新方式 |
+|---------|-------------|---------|
+| 状态栏（播放图标/曲目号/锁定 L/电量/音量/模式） | `lv_label` | `lv_label_set_text_fmt` |
+| 文件名（长名滚动） | `lv_label` + `LV_LABEL_LONG_SCROLL_CIRCULAR` | `lv_label_set_text` |
+| 进度条 | `lv_bar`（范围 0~1000 千分比） | `lv_bar_set_value` |
+| 时间 + 速度档位 | `lv_label` | `lv_label_set_text_fmt` |
+| 底部按键提示 / 音量临时提示 | `lv_label` | `lv_label_set_text` |
+
+```c
+void display_update(...)   // 摘要，完整实现见 main/display.cpp
+{
+    lvgl_lock();                                  // LVGL 非线程安全，需互斥
+    lv_label_set_text_fmt(lbl_status, "%s %02d/%03d V%d %s",
+                          icon, track_idx, total, volume, mode_icon);
+    lv_label_set_text(lbl_filename, track_name);  // 长名自动循环滚动
+    update_progress_bar(bar_progress, current_sec, total_sec);
+    lv_label_set_text_fmt(lbl_time, "%s/%s [%s]", cur, tot, gear_str(gear));
+    lvgl_unlock();
+    // 实际推屏由 LVGL 定时器任务经 flush_cb → esp_lcd_panel_draw_bitmap 完成
+}
+
+### 5.3.1 实际界面布局（横屏 320×240，已实现于 main/display.cpp，全中文）
+
+配色：背景 `#0a0e17`（深蓝黑）、卡片 `#16203a`、强调青 `#2dd4bf`、琥珀 `#f5a623`、次文字 `#8a93a6`、主文字白。
+字体层级：状态栏/时间 14px、标题/百分比/提示 12px、文件名 16px（中文子集字体 ui_font_12/14/16，LV_FONT_DEFAULT=&lv_font_chinese_14）。
+
+```
+┌──────────────────────────────────────────────────┐ y=6   状态栏
+│ 播放中 003/128 顺序播放        [电量图标] ⚡ [音量:扬声器+条]   │ 左=状态/曲目/模式 右=图形电量/音量
+├──────────────────────────────────────────────────┤ y=34
+│ 正在播放                                        │ lbl_title (12px 青)
+│ The_Great_Gatsby_Chapter_01.mp3  (超长省略号截断)        │ lbl_track (16px 白, LONG_DOT 静态不滚动)
+├──────────────────────────────────────────────────┤ y=86  磁带卷轴装饰
+│   ◖ 左卷轴 ◗                ◖ 右卷轴 ◗  (偏心点旋转)  │ reel_l / reel_r
+│  01:23              [2.0x]              45:30      │ lbl_cur(左)/lbl_gear(中,琥珀)/lbl_dur(右)
+├──────────────────────────────────────────────────┤ y=150 进度
+│  ▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░            │ lv_bar (青, range 0~1000)
+│                                          42%      │ lbl_percent (12px 白, 右)
+├──────────────────────────────────────────────────┤ y=180 (仅快进退显示) 读秒
+│             快进 2.0x → 05:30 (琥珀, 居中)            │ lbl_seek
+├──────────────────────────────────────────────────┤ y=220 底部 按键(物理顺序)
+│ 快退 播放 快进 停止 ｜ 上一首 下一首                │ lbl_hint (主操作高亮)
+└──────────────────────────────────────────────────┘
+```
+
+- 状态栏格式：`%s %03d/%03d %s`（状态词 / 曲目 x/y / 模式），电量与音量改为**图形图标**：
+  - `%s` = `state_word`（播放中 / 已暂停 / 已停止 / 快退中 / 快进中）
+  - 模式 = 顺序播放 / 列表循环 / 单曲循环，由 `display_set_play_mode()` 同步
+  - **图形电量**：外框 `batt_frame` + 填充 `batt_fill`（宽度随百分比，<20% 变红）+ 充电标记 `batt_charge`（"充"，仅充电时显示）
+  - **图形音量**：扬声器图标（箱体+锥体）+ 水平音量条，填充宽度随音量（0~100）
+- 文件名：`LV_LABEL_LONG_DOT` 超长省略号截断（静态，不滚动）；进度条 30s 无数据变化则降亮度屏保。
+- 浏览界面（`display_show_browse`）：居中多行 `浏览 x/y` + 列表，选中行 `>` 前缀。
+- 提示界面（splash / 无卡 / 无文件）：`g_msg` 居中多行。
+- **磁带卷轴动画**：`reel_anim_cb`（50ms 定时器）按状态设置 `transform_angle` 方向与速度——播放=正向匀速、快进=快速正向、**快退=反向（与快进同速）**、暂停/停止=静止；偏心琥珀点使旋转可见。
+- **快进/快退读秒**：`lbl_seek` 居中醒目（琥珀 16px），格式 `快进/快退 N.Nx → mm:ss`，仅快进退时显示，便于掌握跳转位置。
+- **按键与物理位置对应**：底部 `lbl_hint` 按物理按键左→右排列——`快退 播放 快进 停止 ｜ 上一首 下一首`（走带四键居左成组、选曲两键在右），当前主操作高亮（青底）；操作映射以固件为准——**播放短按=播放/暂停、长按=切换模式（顺序/列表循环/单曲循环）**、**停止短按=停止、长按=进入浏览**（快退/快进短按上/下翻页、长按跳到列表头/尾、上一首/下一首短按上/下移一曲、长按连续快速移动、播放确认、停止退出）、**浏览中停止长按=给选中曲加书签**、**上一首/下一首长按=音量 −/+（仅非浏览态）**；已移除「按键锁定」功能，原双击操作改为长按/移入浏览界面，且播放/停止键关闭双击检测使短按即时响应；详见第 ⑪ 屏「按键位置参考」；新增 **快退+停止组合键＝跳到当前曲首（从头重听）**，单独按键零延迟、仅 250ms 内成对按下触发；**快进/快退为按住态，其间其他键一律忽略、继续走带，仅松手才恢复正常续播（磁带机互锁）**；**新增专用音量键**（LCK-TG001A-G1 拨轮开关，左拨 a-b=GPIO0 = 音量-、右拨 a-d=GPIO3 = 音量+，a 公共端接 GND、b/d 经 10kΩ 上拉到 3.3V；下按 a-c 为纯机械电源开关不进 GPIO）——短按 ±1 级、`RELEASE` 存 NVS、`LONG`/`HOLD` 兜底 100ms/级连续调；GPIO0/GPIO3 为 Strapping 引脚，外部 10kΩ 上拉保证上电瞬间为高（=SPI Boot、=默认 JTAG 信号源），LCK 自复位+按下/拨动机械互锁，开机时无长按风险；**同步移除** `PREV`/`NEXT` 长按/持续按住/释放上的音量调节逻辑，音量路径统一由专用键负责。
+- 竖屏：`DISPLAY_ORIENTATION=1` 时 `DISPLAY_WIDTH/HEIGHT` 自动切换，布局按 W/H 比例重排，无需改代码。
+
+### 5.4 LCD 电源管理（新增）
+
+```c
+// LCD 低功耗状态管理
+typedef enum {
+    LCD_STATE_ON,           // 正常显示
+    LCD_STATE_DIM,          // 背光渐暗（无操作 2 分钟）
+    LCD_STATE_OFF,          // PMOS 断电（深度休眠前）
+} lcd_state_t;
+
+static lcd_state_t g_lcd_state = LCD_STATE_ON;
+
+void display_power_on(void)
+{
+    if (g_lcd_state == LCD_STATE_ON) return;
+    gpio_set_level(LCD_POW_EN, 0);       // PMOS 导通
+    vTaskDelay(pdMS_TO_TICKS(50));
+    gpio_set_level(TFT_RES_IO, 0);       // 复位脉冲
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(TFT_RES_IO, 1);
+    vTaskDelay(pdMS_TO_TICKS(120));
+    // 重新初始化 TFT 寄存器...
+    g_lcd_state = LCD_STATE_ON;
+}
+
+void display_power_off(void)
+{
+    if (g_lcd_state == LCD_STATE_OFF) return;
+    // 先关闭背光
+    ledc_set_duty(TFT_BLK_IO, 0);
+    // 再断开 LCD 电源
+    gpio_set_level(LCD_POW_EN, 1);       // PMOS 关断
+    g_lcd_state = LCD_STATE_OFF;
+}
+
+void display_dim_backlight(uint8_t pct)
+{
+    // pct: 0~100
+    ledc_set_duty(TFT_BLK_IO, pct);
+}
+```
+
+### 5.5 播放模式图标映射
 
 ```c
 static const char *mode_icon_str(int mode)
@@ -613,6 +731,8 @@ static const char *mode_icon_str(int mode)
     }
 }
 ```
+
+> 注：TFT 屏幕可支持更丰富的图形显示（彩色图标、进度条渐变等），上述 ASCII 图标为最小实现方案。后续可升级为位图图标。
 
 ---
 
@@ -669,16 +789,19 @@ void audio_player_tick(void)
 }
 ```
 
-### 6.2 快退时 1.5x/2.5x 也需 seek
+### 6.2 快退时所有档位都需 seek
 
-当前跳帧逻辑：
+当前跳帧逻辑（R044 后 3 档：2x/4x/8x）：
 
 ```c
-bool need_seek = (abs_speed >= 4.0f) || (mode == TAPE_MODE_REWIND);
+bool need_seek = (abs_speed >= tape_control_get_max_gear_speed())  // 快进仅最高档(8x)跳帧
+              || (mode == TAPE_MODE_REWIND);                         // 快退所有档位都 seek
 ```
 
-快退所有档位都 seek（正确，因为没有"倒放"能力），但快进 1.5x/2.5x 不跳帧（仅变速）。
-这是正确的设计——1.5x/2.5x 靠 I2S 采样率提高实现变调加速，无需 seek。
+快退所有档位都 seek（正确，因为没有"倒放"能力），但快进 2x/4x 不跳帧（仅 I2S 变调加速）。
+这是正确的设计——2x/4x 靠 I2S 采样率提高实现变调快放（4x 正好到采样率上限），无需 seek；8x 才走跳帧。
+
+档位时序（R045，长按 ≥800ms 进入变速态后，累计按住时长）：进入即 2x（无 1x 缓冲）→ 5.0s 进 4x → 8.0s 进 8x。短按（<800ms）不进变速态，仅跳 5 秒（快进 +5s / 快退 -5s）。**R046 修正断层**：长按进入变速态时先补 `skip_seconds(±5)` 继承短按基准跳退，再开始 2x 变速走带；故 801ms 长按 ≈ 5 秒 + 2ms，与 799ms 短按平滑衔接，按越久倒越多。
 
 ### 6.3 SD 卡挂载需在 main.cpp 中完成
 
@@ -845,22 +968,12 @@ if (g_app_state == APP_STATE_PLAYING) {
 }
 ```
 
-### 7.4 按键锁定解锁后恢复正确状态
+### 7.4 按键锁定功能（已移除，R036）
 
-当前解锁后硬设为 `APP_STATE_PLAYING`，应恢复锁定前的状态：
-
-```c
-static app_state_t g_state_before_lock = APP_STATE_STOPPED;
-
-// 锁定时
-g_key_locked = true;
-g_state_before_lock = g_app_state;
-g_app_state = APP_STATE_LOCKED;
-
-// 解锁时
-g_key_locked = false;
-g_app_state = g_state_before_lock;
-```
+原设计的「按键锁定」（`APP_STATE_LOCKED` / `g_key_locked` / 播放超长按）已按需求移除：
+- 删除枚举 `APP_STATE_LOCKED`、全局变量 `g_key_locked` / `g_state_before_lock` 及相关处理分支；
+- 原「播放双击=切换模式」「停止双击=书签」的双击操作不友好，改为：**播放长按=切换模式**、**停止长按=进入浏览**，并将**书签移入浏览界面（浏览中停止长按=给选中曲加书签）**；
+- 因不再使用双击，`button_manager` 中播放/停止键的 `dbl_click_en` 置 `false`，短按即时响应。
 
 ### 7.5 完善的主循环流程图
 
@@ -1212,6 +1325,8 @@ idf_component_register(
         esp_timer
         fatfs
         esp_adc_cal    # 新增：电池ADC校准
+        lvgl           # 显示：LVGL v9 GUI（idf component manager 拉取）
+        esp_lcd        # 显示：原生 ST7789 面板驱动（IDF 内置）
 )
 ```
 

@@ -1,0 +1,14 @@
+menu "Audio HAL"
+
+choice AUDIO_BOARD
+    prompt "Audio board"
+    default ESP_TAPEBOOK_BOARD
+    help
+        Select an audio board to use with the ESP-ADF
+
+config ESP_TAPEBOOK_BOARD
+    bool "Tapebook (custom)"
+
+endchoice
+
+endmenu

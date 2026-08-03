@@ -2,7 +2,13 @@
  * @file settings.cpp
  * @brief NVS 持久化设置实现
  *
- * NVS 命名空间: "tapebook"（与 DESIGN 5.5.1 一致）
+ * NVS 命名空间: "tape_settings"（S1：与 bookmark 的 "tapebook" 分离）
+ *
+ * 修复原因：原代码 fallback 调用 nvs_flash_erase() 是分区级擦除，
+ * 会清空 bookmark 命名空间，导致书签数据风险（S1, P0）。
+ * 改为：与 bookmark 各自独立 namespace；满页(NO_FREE_PAGES)场景仅重试
+ * nvs_flash_init 而不整擦，保留书签（数据安全优先于 settings 可用性）。
+ * 版本变更(NEW_VERSION_FOUND)因旧格式不可读仍需整分区擦除，已加明确日志（R032-101）。
  *
  * 断点校验：保存时连带存文件名；恢复时比对播放列表，
  * 若文件已删除则从第一首开始，不崩溃。
@@ -13,28 +19,53 @@
 #include "playlist.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_partition.h"
 #include "esp_log.h"
 #include <string.h>
 
 static const char *TAG = "settings";
+static const char *SETTINGS_NAMESPACE = "tape_settings";   // S1：与 bookmark 命名空间隔离
 static nvs_handle_t g_nvs_handle = 0;
 
 void settings_init(void)
 {
     g_nvs_handle = 0;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &g_nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open NVS namespace '%s' (0x%x), erasing...", NVS_NAMESPACE, err);
-        g_nvs_handle = 0;
-        nvs_flash_erase();
-        err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &g_nvs_handle);
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        // 版本变更：旧格式 NVS 数据整体无法读取，必须整分区擦除重建。
+        // 注意：此操作会清空同分区内所有命名空间（含 "tapebook" 书签），属 NVS 库固有限制。
+        const esp_partition_t *default_part = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+        if (default_part) {
+            ESP_LOGW(TAG, "NVS version changed, erasing whole NVS partition (bookmarks in 'tapebook' namespace will be lost)");
+            esp_partition_erase_range(default_part, 0, default_part->size);
+        } else {
+            ESP_LOGE(TAG, "Default NVS partition not found");
+            return;
+        }
+        err = nvs_flash_init();
+    } else if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // 满页：NVS 库无法单独擦除某个 namespace，整分区擦除会误清书签。
+        // 优先直接重试 init（数据安全优先于 settings 可用性），不再无条件整擦。
+        ESP_LOGW(TAG, "NVS no free pages, retrying init without erase (bookmarks preserved)");
+        err = nvs_flash_init();
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "NVS still failed after erase, system may be unstable");
-            g_nvs_handle = 0;
+            ESP_LOGE(TAG, "nvs_flash_init still failed (0x%x); settings unavailable, bookmarks preserved", err);
             return;
         }
     }
-    ESP_LOGI(TAG, "NVS namespace '%s' opened", NVS_NAMESPACE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_init failed: 0x%x", err);
+        return;
+    }
+
+    err = nvs_open(SETTINGS_NAMESPACE, NVS_READWRITE, &g_nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS namespace '%s' (0x%x)", SETTINGS_NAMESPACE, err);
+        g_nvs_handle = 0;
+        return;
+    }
+    ESP_LOGI(TAG, "NVS namespace '%s' opened", SETTINGS_NAMESPACE);
 }
 
 void settings_save_position(int track_idx, int position_s, const char *file_name)
@@ -92,6 +123,12 @@ bool settings_load_position(int *track_idx_out, int *position_s_out)
     char saved_name[FILENAME_MAX_LEN] = "";
     size_t required_size = FILENAME_MAX_LEN;
     err = nvs_get_str(g_nvs_handle, key, saved_name, &required_size);
+
+    // M8：buffer 不足导致 ESP_ERR_NVS_INVALID_LENGTH 时输出日志，便于调试历史数据
+    if (err == ESP_ERR_NVS_INVALID_LENGTH) {
+        ESP_LOGW(TAG, "saved_name at '%s' exceeds buffer (%zu), truncated",
+                 key, required_size);
+    }
 
     if (err == ESP_OK && saved_name[0] != '\0') {
         char current_name[FILENAME_MAX_LEN] = "";
@@ -159,8 +196,8 @@ int settings_load_play_mode(void)
 void settings_save_auto_off(int minutes)
 {
     if (!g_nvs_handle) return;
-    esp_err_t err = nvs_set_u8(g_nvs_handle, "auto_off_min", (uint8_t)minutes);
-    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(auto_off_min) failed: 0x%x", err);
+    esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_AUTO_OFF, (uint8_t)minutes);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_AUTO_OFF, err);
     // 不立即 commit：由 save_position 统一提交
 }
 
@@ -168,7 +205,7 @@ int settings_load_auto_off(void)
 {
     if (!g_nvs_handle) return 0;
     uint8_t min = 0;
-    esp_err_t err = nvs_get_u8(g_nvs_handle, "auto_off_min", &min);
+    esp_err_t err = nvs_get_u8(g_nvs_handle, NVS_KEY_AUTO_OFF, &min);
     if (err != ESP_OK) {
         min = 0;
     }

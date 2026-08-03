@@ -1,9 +1,10 @@
-﻿@echo off
+@echo off
 REM configure.bat - 一键切换目标模组
 REM
 REM 用法:
 REM   configure.bat                       交互式选择（菜单）
 REM   configure.bat wroom-1-n16r8        直接选 WROOM-1 N16R8
+REM   configure.bat wroom-1-n16r16va     直接选 WROOM-1 N16R16VA
 REM   configure.bat wroom-2-n32r16v      直接选 WROOM-2 N32R16V (默认)
 
 setlocal EnableDelayedExpansion
@@ -13,6 +14,7 @@ set "CONFIGS_DIR=%PROJECT_DIR%configs"
 
 if /I "%~1"=="" goto :menu
 if /I "%~1"=="wroom-1-n16r8"     set "TARGET=wroom-1-n16r8"     & goto :apply
+if /I "%~1"=="wroom-2-n32r16v"   set "TARGET=wroom-2-n32r16v"   & goto :apply
 if /I "%~1"=="wroom-2-n32r16v"   set "TARGET=wroom-2-n32r16v"   & goto :apply
 if /I "%~1"=="-h" goto :help
 if /I "%~1"=="--help" goto :help

@@ -9,6 +9,7 @@
 #include "playlist.h"
 #include "config.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
@@ -24,7 +25,7 @@
 /* --- 数据结构：名称与路径绑定，排序后不错乱 --- */
 typedef struct {
     char display_name[FILENAME_MAX_LEN];       // 显示名（可含子目录前缀）
-    char full_path[FILENAME_MAX_LEN * 2];       // 完整路径（用于打开文件）
+    char full_path[FILENAME_MAX_LEN * 4];       // 完整路径（用于打开文件）// R032-001: 扩到 *4 避免深层目录路径截断
 } playlist_item_t;
 
 static playlist_item_t *g_items = NULL;
@@ -98,7 +99,7 @@ static void scan_dir_recursive(const char *path, const char *prefix, int depth)
             strcasecmp(entry->d_name, "$RECYCLE.BIN") == 0)
             continue;
 
-        char full_entry_path[FILENAME_MAX_LEN * 2];
+        char full_entry_path[FILENAME_MAX_LEN * 4];  // R032-001: 扩到 *4 避免递归拼接路径截断导致文件被误跳过
         snprintf(full_entry_path, sizeof(full_entry_path), "%s/%s", path, entry->d_name);
 
         bool is_reg = (entry->d_type == DT_REG);
@@ -121,6 +122,10 @@ static void scan_dir_recursive(const char *path, const char *prefix, int depth)
                     strncpy(g_items[g_count].display_name, entry->d_name,
                             FILENAME_MAX_LEN - 1);
                     g_items[g_count].display_name[FILENAME_MAX_LEN - 1] = '\0';
+                    // R033-308：文件名超长被静默截断，给出告警便于排查
+                    if (strlen(entry->d_name) >= FILENAME_MAX_LEN - 1) {
+                        ESP_LOGW("playlist", "name truncated: %s", entry->d_name);
+                    }
                 }
                 /* full_path：完整路径 */
                 strncpy(g_items[g_count].full_path, full_entry_path,
@@ -156,8 +161,14 @@ int playlist_scan(const char *base_path)
         sizeof(playlist_item_t) * PLAYLIST_TRACK_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!g_items) {
         // PSRAM 失败时回退到普通 DRAM
+        ESP_LOGW("playlist", "PSRAM heap_caps_malloc failed, fallback to DRAM for playlist");
         g_items = (playlist_item_t *)malloc(sizeof(playlist_item_t) * PLAYLIST_TRACK_MAX);
-        if (!g_items) return 0;
+        if (!g_items) {
+            // S4：malloc 失败需清计数与指针，避免后续 g_items==NULL + g_count>0 的解引用
+            g_count = 0;
+            g_current = 0;
+            return 0;
+        }
     }
 
     g_count = 0;

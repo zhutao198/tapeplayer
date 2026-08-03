@@ -1,0 +1,2595 @@
+=== PAGE 1 ===
+ESP32-S3-WROOM-1
+ESP32-S3-WROOM-1U
+技术规格书
+版本 1.8
+2.4 GHz Wi-Fi (802.11b/g/n) + 蓝牙 ® 5 模组
+内置 ESP32-S3 系列芯片，Xtensa® 双核 32 位 LX7 处理器
+Flash 最大可选 16 MB，PSRAM 最大可选 16 MB
+最多 36 个 GPIO，丰富的外设
+板载 PCB 天线或外部天线连接器
+ESP32-S3-WROOM-1 ESP32-S3-WROOM-1U
+www.espressif.com
+=== PAGE 2 ===
+1 模组概述
+1 模组概述
+说明：
+点击链接或扫描二维码确保您使用的是最新版本的文档：
+https://www.espressif.com/documentation/esp32-s3-wroom-1_wroom-1u_datasheet_cn.pdf
+1.1 特性
+CPU 和片上存储器 – 4个作为strapping管脚
+• SPI、LCD、Camera接口、UART、I2C、I2S、红
+• 内置ESP32-S3系列芯片，Xtensa® 双核32位
+外遥控、脉冲计数器、LEDPWM、全速USB2.0
+LX7微处理器(支持单精度浮点运算单元)，支持
+OTG、USB串口/JTAG控制器、MCPWM、SD/
+高达240MHz的时钟频率
+MMC主机控制器、GDMA、TWAI® 控制器（兼容
+• 384KBROM ISO11898-1）、ADC、触摸传感器、温度传感器、
+• 512KBSRAM 定时器和看门狗
+• 16KBRTCSRAM 模组集成元件
+• 最大16MBPSRAM
+• 40MHz集成晶振
+Wi-Fi • 最大16MBQuadSPIflash
+• 802.11b/g/n 天线选型
+• 802.11n模式下数据速率高达150Mbps
+• ESP32-S3-WROOM-1：板载PCB天线
+• 帧聚合(TX/RXA-MPDU,TX/RXA-MSDU)
+• ESP32-S3-WROOM-1U：通过连接器连接外部天
+• 0.4µs保护间隔 线
+• 工作信道中心频率范围：2412~2484MHz
+工作条件
+蓝牙
+• 工作电压/供电电压：3.0~3.6V
+• 低功耗蓝牙(BluetoothLE)：Bluetooth5、 • 工作环境温度：
+Bluetoothmesh
+– 65°C版模组：–40~65°C
+• 速率支持125Kbps、500Kbps、1Mbps、2
+– 85°C版模组：–40~85°C
+Mbps
+– 105°C版模组：–40~105°C
+• 广播扩展(AdvertisingExtensions)
+• 多广播(MultipleAdvertisementSets) 认证
+• 信道选择(ChannelSelectionAlgorithm#2) • RF认证：见证书
+• Wi-Fi与蓝牙共存，共用同一个天线 • 环保认证：RoHS/REACH
+外设 测试
+• 36个GPIO • HTOL/HTSL/uHAST/TCT/ESD
+乐鑫信息科技 2 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 3 ===
+1 模组概述
+1.2 型号对比
+ESP32-S3-WROOM-1和ESP32-S3-WROOM-1U是两款通用型Wi-Fi+低功耗蓝牙MCU模组，搭载ESP32-S3
+系列芯片。除具有丰富的外设接口外，模组还拥有强大的神经网络运算能力和信号处理能力，适用于AIoT领域
+的多种应用场景，例如唤醒词检测和语音命令识别、人脸检测和识别、智能家居、智能家电、智能控制面板、
+智能扬声器等。
+ESP32-S3-WROOM-1采用PCB板载天线，ESP32-S3-WROOM-1U采用连接器连接外部天线。两款模组均有多
+种型号可供选择，具体见表1-1和1-2。其中，ESP32-S3-WROOM-1-H4和ESP32-S3-WROOM-1U-H4的工作环
+境温度为–40~105°C，内置ESP32-S3R8和ESP32-S3R16V的模组工作环境温度为–40~65°C，其他型号的
+工作环境温度均为–40~85°C。请注意，针对R8和R16V系列模组(内置OctalSPIPSRAM)，若开启PSRAM
+ECC功能，模组最大环境温度可以提高到85°C，但是PSRAM的可用容量将减少1/16。
+表1-1.ESP32-S3-WROOM-1系列型号对比1
+环境温度5 模组尺寸6
+物料编号2
+Flash
+3,4
+PSRAM
+4
+(°C) (mm)
+ESP32-S3-WROOM-1-N4 4MB(QuadSPI) - –40~85
+ESP32-S3-WROOM-1-N8 8MB(QuadSPI) - –40~85
+ESP32-S3-WROOM-1-N16 16MB(QuadSPI) - –40~85
+18.0
+ESP32-S3-WROOM-1-H4 4MB(QuadSPI) - –40~105
+×
+ESP32-S3-WROOM-1-N4R2 4MB(QuadSPI) 2MB(QuadSPI) –40~85
+25.5
+ESP32-S3-WROOM-1-N8R2 8MB(QuadSPI) 2MB(QuadSPI) –40~85
+×
+ESP32-S3-WROOM-1-N16R2 16MB(QuadSPI) 2MB(QuadSPI) –40~85
+3.1
+ESP32-S3-WROOM-1-N4R8 4MB(QuadSPI) 8MB(OctalSPI) –40~65
+ESP32-S3-WROOM-1-N8R8 8MB(QuadSPI) 8MB(OctalSPI) –40~65
+ESP32-S3-WROOM-1-N16R8 16MB(QuadSPI) 8MB(OctalSPI) –40~65
+7
+ESP32-S3-WROOM-1-N16R16VA 16MB(QuadSPI) 16MB(OctalSPI) –40~65
+1
+本表格中的注释内容与表1-2一致。
+表1-2.ESP32-S3-WROOM-1U系列型号对比
+环境温度5 模组尺寸6
+物料编号2
+Flash
+3,4
+PSRAM
+4
+(°C) (mm)
+ESP32-S3-WROOM-1U-N4 4MB(QuadSPI) - –40~85
+ESP32-S3-WROOM-1U-N8 8MB(QuadSPI) - –40~85
+ESP32-S3-WROOM-1U-N16 16MB(QuadSPI) - –40~85
+18.0
+ESP32-S3-WROOM-1U-H4 4MB(QuadSPI) - –40~105
+×
+ESP32-S3-WROOM-1U-N4R2 4MB(QuadSPI) 2MB(QuadSPI) –40~85
+19.2
+ESP32-S3-WROOM-1U-N8R2 8MB(QuadSPI) 2MB(QuadSPI) –40~85
+×
+ESP32-S3-WROOM-1U-N16R2 16MB(QuadSPI) 2MB(QuadSPI) –40~85
+3.2
+ESP32-S3-WROOM-1U-N4R8 4MB(QuadSPI) 8MB(OctalSPI) –40~65
+ESP32-S3-WROOM-1U-N8R8 8MB(QuadSPI) 8MB(OctalSPI) –40~65
+ESP32-S3-WROOM-1U-N16R8 16MB(QuadSPI) 8MB(OctalSPI) –40~65
+7
+ESP32-S3-WROOM-1U-N16R16VA 16MB(QuadSPI) 16MB(OctalSPI) –40~65
+乐鑫信息科技 3 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 4 ===
+1 模组概述
+2
+如需定制ESP32-S3-WROOM-1-H4、ESP32-S3-WROOM-1U-H4或ESP32-S3-WROOM-1U-N16R16VA模
+组，请联系我们。
+3
+默认情况下，模组 SPI flash 支持的最大时钟频率为 80 MHz，且不支持自动暂停功能。如需使用 120
+MHz的flash时钟频率或需要flash自动暂停功能，请联系我们。
+4 该模组使用封装在芯片中的PSRAM。更多关于存储器规格的信息，请参考章节6.5存储器规格。
+5
+环境温度指乐鑫模组外部的推荐环境温度。
+6 更多关于模组尺寸的信息，请参考章节10.1模组尺寸。
+7
+注意，仅ESP32-S3-WROOM-1-N16R16VA和ESP32-S3-WROOM-1U-N16R16VA的VDD_SPI电压为1.8
+V。
+两款模组采用的是ESP32-S3系列芯片。ESP32-S3系列芯片搭载Xtensa®32位LX7双核处理器（支持单精度
+浮点运算单元），工作频率高达240MHz。CPU电源可被关闭，利用低功耗协处理器监测外设的状态变化或某
+些模拟量是否超出阈值。
+说明：
+关于ESP32-S3的更多信息请参考《ESP32-S3系列芯片技术规格书》。
+关于芯片版本识别、特定芯片版本的ESP-IDF支持版本以及其他芯片版本信息，请参考《ESP32-S3系列芯片勘误表》
+>章节芯片版本标识。
+1.3 应用
+• 智能家居 • 通用低功耗IoT传感器集线器
+• 工业自动化 • 通用低功耗IoT数据记录器
+• 医疗保健 • 摄像头视频流传输
+• 消费电子产品 • USB设备
+• 智慧农业 • 语音识别
+• POS机 • 图像识别
+• 服务机器人 • Wi-Fi+蓝牙网卡
+• 音频设备 • 触摸和接近感应
+乐鑫信息科技 4 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 5 ===
+目录
+目录
+1 模组概述
+2
+1.1 特性 2
+1.2 型号对比 3
+1.3 应用 4
+2 功能框图
+9
+3 管脚定义
+10
+3.1 管脚布局 10
+3.2 管脚描述 11
+4 启动配置项
+13
+4.1 芯片启动模式控制 14
+4.2 VDD_SPI电压控制 15
+4.3 ROM日志打印控制 15
+4.4 JTAG信号源控制 15
+4.5 芯片上电和复位 16
+5 外设
+17
+5.1 外设概述 17
+5.2 外设描述 17
+5.2.1 通讯接口 17
+5.2.1.1 UART控制器 17
+5.2.1.2 I2C接口 18
+5.2.1.3 I2S接口 18
+5.2.1.4 LCD与Camera控制器 18
+5.2.1.5 串行外设接口(SPI) 19
+5.2.1.6 双线汽车接口(TWAI®) 20
+5.2.1.7 USB2.0OTG全速接口 21
+5.2.1.8 USB串口/JTAG控制器 22
+5.2.1.9 SD/MMC主机控制器 22
+5.2.1.10 LEDPWM控制器 23
+5.2.1.11 电机控制脉宽调制器(MCPWM) 23
+5.2.1.12 红外遥控(RMT) 24
+5.2.1.13 脉冲计数控制器(PCNT) 24
+5.2.2 模拟信号处理 25
+5.2.2.1 SARADC 25
+5.2.2.2 温度传感器 25
+5.2.2.3 触摸传感器 25
+6 电气特性
+26
+6.1 绝对最大额定值 26
+6.2 建议工作条件 26
+乐鑫信息科技 5 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 6 ===
+目录
+6.3 直流电气特性(3.3V,25°C) 26
+6.4 功耗特性 27
+6.4.1 Active模式下的功耗 27
+6.4.2 其他功耗模式下的功耗 27
+6.5 存储器规格 29
+7 射频特性
+30
+7.1 Wi-Fi射频 30
+7.1.1 Wi-Fi射频发射器(TX)特性 30
+7.1.2 Wi-Fi射频接收器(RX)特性 31
+7.2 低功耗蓝牙射频 32
+7.2.1 低功耗蓝牙射频发射器(TX)特性 32
+7.2.2 低功耗蓝牙射频接收器(RX)特性 34
+8 模组原理图
+37
+9 外围设计原理图
+39
+10 尺寸规格
+40
+10.1 模组尺寸 40
+10.2 外部天线连接器尺寸 41
+11 PCB 布局建议
+43
+11.1 PCB封装图形 43
+11.2 PCB设计中的模组位置摆放 44
+12 产品处理
+45
+12.1 存储条件 45
+12.2 静电放电(ESD) 45
+12.3 回流焊温度曲线 45
+12.4 超声波振动 46
+技术规格书版本号管理
+47
+相关文档和资源
+48
+修订历史
+49
+乐鑫信息科技 6 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 7 ===
+表格
+表格
+1
+1-1 ESP32-S3-WROOM-1系列型号对比 3
+1-2 ESP32-S3-WROOM-1U系列型号对比 3
+3-1 管脚定义 11
+4-1 Strapping管脚的默认配置 13
+4-2 Strapping管脚的时序参数说明 14
+4-3 芯片启动模式控制 14
+4-4 VDD_SPI电压控制 15
+4-5 JTAG信号源控制 15
+4-6 上电和复位时序参数说明 16
+6-1 绝对最大额定值 26
+6-2 建议工作条件 26
+6-3 直流电气特性(3.3V,25°C) 26
+6-4 Active模式下Wi-Fi(2.4GHz)功耗特性 27
+6-5 Active模式下低功耗蓝牙功耗特性 27
+6-6 Modem-sleep模式下的功耗 28
+6-7 低功耗模式下的功耗 28
+6-8 Flash规格 29
+6-9 PSRAM规格 29
+7-1 Wi-Fi射频规格 30
+7-2 频谱模板和EVM符合802.11标准时的发射功率 30
+1
+7-3 发射EVM测试 30
+7-4 接收灵敏度 31
+7-5 最大接收电平 32
+7-6 接收邻道抑制 32
+7-7 低功耗蓝牙射频规格 32
+7-8 低功耗蓝牙-发射器特性-1Mbps 32
+7-9 低功耗蓝牙-发射器特性-2Mbps 33
+7-10 低功耗蓝牙-发射器特性-125Kbps 33
+7-11 低功耗蓝牙-发射器特性-500Kbps 33
+7-12 低功耗蓝牙-接收器特性-1Mbps 34
+7-13 低功耗蓝牙-接收器特性-2Mbps 34
+7-14 低功耗蓝牙-接收器特性-125Kbps 35
+7-15 低功耗蓝牙-接收器特性-500Kbps 35
+乐鑫信息科技 7 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 8 ===
+插图
+插图
+2-1 ESP32-S3-WROOM-1功能框图 9
+2-2 ESP32-S3-WROOM-1U功能框图 9
+3-1 管脚布局（顶视图） 10
+4-1 Strapping管脚的时序参数图 14
+4-2 上电和复位时序参数图 16
+8-1 ESP32-S3-WROOM-1原理图 37
+8-2 ESP32-S3-WROOM-1U原理图 38
+9-1 外围设计原理图 39
+10-1 ESP32-S3-WROOM-1模组尺寸 40
+10-2 ESP32-S3-WROOM-1U模组尺寸 40
+10-3 外部天线连接器尺寸图 41
+11-1 ESP32-S3-WROOM-1推荐PCB封装图 43
+11-2 ESP32-S3-WROOM-1U推荐PCB封装图 44
+12-1 回流焊温度曲线 45
+乐鑫信息科技 8 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 9 ===
+ESP32-S3-WROOM-1U
+40 MHz
+3V3 Crystal Antenna
+ESP32-S3
+RF Matching
+ESP32-S3R2
+ESP32-S3R8
+EN ESP32-S3R16V GPIOs
+2 功能框图
+2 功能框图
+ESP32-S3-WROOM-1
+40 MHz
+3V3 Crystal Antenna
+RF Matching
+EN GPIOs
+QSPI Flash
+0SCIPS KLCIPS
+DIPS QIPS
+DHIPS PWIPS
+IPS_DDV
+QSPI Flash
+0SCIPS KLCIPS
+DIPS QIPS
+DHIPS PWIPS
+IPS_DDV
+PSRAM(opt.)
+(QSPIOSPI)
+ESP32-S3
+ESP32-S3R2
+ESP32-S3R8
+ESP32-S3R16V
+PSRAM(opt.)
+(QSPIOSPI)
+图2-1.ESP32-S3-WROOM-1功能框图
+ESP32-S3-WROOM-1U
+40 MHz
+3V3 Crystal Antenna
+ESP32-S3
+RF Matching
+ESP32-S3R2
+ESP32-S3R8
+EN ESP32-S3R16V GPIOs
+ESP32-S3-WROOM-1
+40 MHz
+3V3 Crystal Antenna
+RF Matching
+EN GPIOs
+QSPI Flash
+0SCIPS KLCIPS
+DIPS QIPS
+DHIPS PWIPS
+IPS_DDV
+QSPI Flash
+0SCIPS KLCIPS
+DIPS QIPS
+DHIPS PWIPS
+IPS_DDV
+PSRAM(opt.)
+(QSPIOSPI)
+图2-2.ESP32-S3-WROOM-1U功能框图
+说明：
+关于芯片与封装内PSRAM的管脚对应关系，请参考《ESP32-S3系列芯片技术规格书》>表格芯片与封装内flash/
+PSRAM的管脚对应关系。
+ESP32-S3
+ESP32-S3R2
+ESP32-S3R8
+ESP32-S3R16V
+PSRAM(opt.)
+(QSPIOSPI)
+乐鑫信息科技 9 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 10 ===
+3 管脚定义
+3 管脚定义
+3.1 管脚布局
+管脚布局图显示了模组上管脚的大致位置。按比例绘制的实际布局请参考图10.1模组尺寸。
+Keepout Zone
+GND 40 GND
+3V3 39 IO1
+EN 38 IO2
+IO4 37 TXD0
+IO5 36 RXD0
+IO6 GND GND GND 35 IO42
+IO7 GND G 4 N 1 D GND 34 IO41
+33 IO40
+GND GND GND
+32 IO39
+31 IO38
+30 IO37
+29 IO36
+28 IO35
+IO20 27 IO0 51
+3OI
+61
+64OI
+71
+9OI
+81
+01OI
+91
+11OI
+02
+21OI
+12
+31OI
+22
+41OI
+32
+12OI
+42
+74OI
+52
+84OI
+62
+54OI
+1
+2
+3
+4
+5
+6
+7
+IO15 8
+IO16 9
+IO17 10
+IO18 11
+IO8 12
+IO19 13
+14
+图3-1.管脚布局（顶视图）
+说明：
+ESP32-S3-WROOM-1U的管脚布局与ESP32-S3-WROOM-1相同，但没有天线净空区。
+关于底板上模组天线净空区的更多信息，请查看《ESP32-S3硬件设计指南》>章节基于模组的版图设计通用要点。
+乐鑫信息科技 10 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 11 ===
+3 管脚定义
+3.2 管脚描述
+模组共有41个管脚，具体描述参见表3-1管脚定义。
+管脚名称释义、管脚功能释义、以及外设管脚分配请参考《ESP32-S3系列芯片技术规格书》。
+表3-1.管脚定义
+名称 序号 类型a 功能
+GND 1 P 接地
+3V3 2 P 供电
+高电平：芯片使能；
+EN 3 I 低电平：芯片关闭；
+注意不能让EN管脚浮空。
+IO4 4 I/O/T RTC_GPIO4,GPIO4,TOUCH4,ADC1_CH3
+IO5 5 I/O/T RTC_GPIO5,GPIO5,TOUCH5,ADC1_CH4
+IO6 6 I/O/T RTC_GPIO6,GPIO6,TOUCH6,ADC1_CH5
+IO7 7 I/O/T RTC_GPIO7,GPIO7,TOUCH7,ADC1_CH6
+IO15 8 I/O/T RTC_GPIO15,GPIO15,U0RTS,ADC2_CH4,XTAL_32K_P
+IO16 9 I/O/T RTC_GPIO16,GPIO16,U0CTS,ADC2_CH5,XTAL_32K_N
+IO17 10 I/O/T RTC_GPIO17,GPIO17,U1TXD,ADC2_CH6
+IO18 11 I/O/T RTC_GPIO18,GPIO18,U1RXD,ADC2_CH7,CLK_OUT3
+IO8 12 I/O/T RTC_GPIO8,GPIO8,TOUCH8,ADC1_CH7,SUBSPICS1
+IO19 13 I/O/T RTC_GPIO19,GPIO19,U1RTS,ADC2_CH8,CLK_OUT2,USB_D-
+IO20 14 I/O/T RTC_GPIO20,GPIO20,U1CTS,ADC2_CH9,CLK_OUT1,USB_D+
+IO3 15 I/O/T RTC_GPIO3,GPIO3,TOUCH3,ADC1_CH2
+IO46 16 I/O/T GPIO46
+IO9 17 I/O/T RTC_GPIO9,GPIO9,TOUCH9,ADC1_CH8,FSPIHD,SUBSPIHD
+RTC_GPIO10,GPIO10,TOUCH10,ADC1_CH9,FSPICS0,FSPIIO4,
+IO10 18 I/O/T
+SUBSPICS0
+IO11 19 I/O/T RTC_GPIO11,GPIO11,TOUCH11,ADC2_CH0,FSPID,FSPIIO5,SUBSPID
+RTC_GPIO12,GPIO12,TOUCH12,ADC2_CH1,FSPICLK,FSPIIO6,
+IO12 20 I/O/T
+SUBSPICLK
+IO13 21 I/O/T RTC_GPIO13,GPIO13,TOUCH13,ADC2_CH2,FSPIQ,FSPIIO7,SUBSPIQ
+RTC_GPIO14,GPIO14,TOUCH14,ADC2_CH3,FSPIWP,FSPIDQS,
+IO14 22 I/O/T
+SUBSPIWP
+IO21 23 I/O/T RTC_GPIO21,GPIO21
+c
+IO47 24 I/O/T SPICLK_P_DIFF,GPIO47,SUBSPICLK_P_DIFF
+c
+IO48 25 I/O/T SPICLK_N_DIFF,GPIO48,SUBSPICLK_N_DIFF
+IO45 26 I/O/T GPIO45
+IO0 27 I/O/T RTC_GPIO0,GPIO0
+b
+IO35 28 I/O/T SPIIO6,GPIO35,FSPID,SUBSPID
+b
+IO36 29 I/O/T SPIIO7,GPIO36,FSPICLK,SUBSPICLK
+b
+IO37 30 I/O/T SPIDQS,GPIO37,FSPIQ,SUBSPIQ
+IO38 31 I/O/T GPIO38,FSPIWP,SUBSPIWP
+见下页
+乐鑫信息科技 11 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 12 ===
+3 管脚定义
+表3-1–接上页
+名称 序号 类型a 功能
+IO39 32 I/O/T MTCK,GPIO39,CLK_OUT3,SUBSPICS1
+IO40 33 I/O/T MTDO,GPIO40,CLK_OUT2
+IO41 34 I/O/T MTDI,GPIO41,CLK_OUT1
+IO42 35 I/O/T MTMS,GPIO42
+RXD0 36 I/O/T U0RXD,GPIO44,CLK_OUT2
+TXD0 37 I/O/T U0TXD,GPIO43,CLK_OUT1
+IO2 38 I/O/T RTC_GPIO2,GPIO2,TOUCH2,ADC1_CH1
+IO1 39 I/O/T RTC_GPIO1,GPIO1,TOUCH1,ADC1_CH0
+GND 40 P 接地
+EPAD 41 P 接地
+a P：电源；I：输入；O：输出；T：可设置为高阻。加粗字体为管脚的默认功能。管脚28∼30的默
+认功能由eFuse位决定。
+b
+在集成OctalSPIPSRAM（即内置芯片为ESP32-S3R8或ESP32-S3R16V）的模组中，管脚IO35、
+IO36、IO37已连接至模组内部集成的OctalSPIPSRAM，不可用于其他功能。
+c
+在内置芯片为 ESP32-S3R16V的模组中，由于 ESP32-S3R16V芯片的VDD_SPI电压已设置为 1.8
+V，所以，不同于其他GPIO，VDD_SPI电源域中的GPIO47和GPIO48工作电压也为1.8V。
+乐鑫信息科技 12 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 13 ===
+4 启动配置项
+4 启动配置项
+说明：
+以下内容摘自《ESP32-S3系列芯片技术规格书》>章节启动配置项。芯片Strapping管脚与模组管脚的对应关系，可
+参考章节8模组原理图。
+芯片在上电或硬件复位时，可以通过Strapping管脚和eFuse位配置如下启动参数，无需微处理器的参
+与：
+• 芯片启动模式
+– Strapping管脚：GPIO0和GPIO46
+• VDD_SPI电压
+– Strapping管脚：GPIO45
+– eFuse参数：EFUSE_VDD_SPI_FORCE和EFUSE_VDD_SPI_TIEH
+• ROM日志打印
+– Strapping管脚：GPIO46
+– eFuse参数：EFUSE_UART_PRINT_CONTROL和EFUSE_DIS_USB_SERIAL_JTAG_ROM_PRINT
+• JTAG信号源
+– Strapping管脚：GPIO3
+– eFuse参数：EFUSE_DIS_PAD_JTAG、EFUSE_DIS_USB_JTAG和EFUSE_STRAP_JTAG_SEL
+上述eFuse参数的默认值均为0，也就是说没有烧写过。eFuse只能烧写一次，一旦烧写为1，便不能恢复为
+0。有关烧写eFuse的信息，请参考《ESP32-S3技术参考手册》>章节eFuse控制器。
+上述strapping管脚如果没有连接任何电路或连接的电路处于高阻抗状态，则其默认值（即逻辑电平值）取决于
+管脚内部弱上拉/下拉电阻在复位时的状态。
+表4-1.Strapping管脚的默认配置
+Strapping管脚 默认配置 值
+GPIO0 弱上拉 1
+GPIO3 浮空 –
+GPIO45 弱下拉 0
+GPIO46 弱下拉 0
+要改变strapping管脚的值，可以连接外部下拉/上拉电阻。如果ESP32-S3用作主机MCU的从设备，
+strapping管脚的电平也可通过主机MCU控制。
+所有strapping管脚都有锁存器。系统复位时，锁存器采样并存储相应strapping管脚的值，一直保持到芯片掉
+电或关闭。锁存器的状态无法用其他方式更改。因此，strapping管脚的值在芯片工作时一直可读取，strapping
+管脚在芯片复位后作为普通IO管脚使用。
+Strapping管脚的信号时序需遵循表4-2和图4-1所示的建立时间和保持时间。
+乐鑫信息科技 13 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 14 ===
+4 启动配置项
+表4-2.Strapping管脚的时序参数说明
+参数 说明 最小值(ms)
+t 建立时间，即拉高EN激活芯片前，电源轨达到稳定所需的时间 0
+SU
+保持时间，即EN已拉高、strapping管脚变为普通IO管脚开始工
+t 3
+H
+作前，可读取strapping管脚值的时间
+tSU tH
+VIL_nRST
+EN
+VIH
+Strapping pin
+图4-1.Strapping管脚的时序参数图
+4.1 芯片启动模式控制
+复位释放后，GPIO0和GPIO46共同决定启动模式。详见表4-3芯片启动模式控制。
+表4-3.芯片启动模式控制
+启动模式 GPIO0 GPIO46
+SPIBoot 1 任意值
+2
+JointDownloadBoot 0 0
+1 加粗表示默认值和默认配置。
+2
+JointDownloadBoot模式下支持以下下载
+方式：
+•USBDownloadBoot：
+–USB-Serial-JTAGDownloadBoot
+–USB-OTGDownloadBoot
+•UARTDownloadBoot
+在SPIBoot模式下，ROM引导加载程序通过从SPIflash中读取程序来启动系统。
+在JointDownloadBoot模式下，用户可通过USB或UART0接口将二进制文件下载至flash，或将二进制文件
+下载至SRAM并运行SRAM中的程序。
+除了SPIBoot和JointDownloadBoot模式，ESP32-S3还支持SPIDownloadBoot模式，详见
+《ESP32-S3技术参考手册》>章节芯片Boot控制。
+乐鑫信息科技 14 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 15 ===
+4 启动配置项
+4.2 VDD_SPI 电压控制
+电压有两种控制方式，具体取决于EFUSE_VDD_SPI_FORCE的值。
+表4-4.VDD_SPI电压控制
+VDD_SPI电源2 电压 EFUSE_VDD_SPI_FORCE GPIO45 EFUSE_VDD_SPI_TIEH
+VDD3P3_RTC通过R 供电 3.3V 0
+SPI
+0 忽略
+Flash稳压器 1.8V 1
+Flash稳压器 1.8V 0
+1 忽略
+VDD3P3_RTC通过R 供电 3.3V 1
+SPI
+1 加粗表示默认值和默认配置。
+2 请参考章节《ESP32-S3系列芯片技术规格书》>章节电源管理。
+4.3 ROM 日志打印控制
+系统启动过程中，ROM代码日志可打印至：
+•（默认）UART0和USB串口/JTAG控制器
+• USB串口/JTAG控制器
+• UART0
+通过配置寄存器和eFuse可分别关闭UART和USB串口/JTAG控制器的ROM代码日志打印功能。详细信息请
+参考《ESP32-S3技术参考手册》>章节芯片Boot控制。
+4.4 JTAG 信号源控制
+在系统启动早期阶段，GPIO3可用于控制JTAG信号源。该管脚没有内部上下拉电阻，strapping的值必须由不
+处于高阻抗状态的外部电路控制。
+如表4-5所示，GPIO3与EFUSE_DIS_PAD_JTAG、EFUSE_DIS_USB_JTAG和EFUSE_STRAP_JTAG_SEL共同
+控制JTAG信号源。
+表4-5.JTAG信号源控制
+JTAG信号源 EFUSE_DIS_PAD_JTAG EFUSE_DIS_USB_JTAG EFUSE_STRAP_JTAG_SEL GPIO3
+0 0 0 忽略
+USB串口/JTAG控制器 0 0 1 1
+1 0 忽略 忽略
+0 0 1 0
+2
+JTAG管脚
+0 1 忽略 忽略
+JTAG关闭 1 1 忽略 忽略
+1 加粗表示默认值和默认配置。
+2
+即MTDI、MTCK、MTMS和MTDO。
+乐鑫信息科技 15 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 16 ===
+4 启动配置项
+4.5 芯片上电和复位
+芯片上电后，其电源轨需要一点时间方可稳定。之后，用于上电和复位的管脚EN拉高，激活芯片。更多关于
+EN及上电和复位时序的信息，请见图4-2和表4-6。
+tSTBL tRST
+2.8V
+VDDA,
+VDD3P3,
+VDD3P3_RTC,
+VDD3P3_CPU
+V
+IL_nRST
+EN
+图4-2.上电和复位时序参数图
+表4-6.上电和复位时序参数说明
+参数 说明 最小值(µs)
+EN 管脚拉高激活芯片前，VDDA、VDD3P3、VDD3P3_RTC 和
+t 50
+STBL
+VDD3P3_CPU达到稳定所需的时间
+EN电平低于V （具体数值参考表6-3）从而复位芯片的时
+IL_nRST
+t 50
+RST
+间
+乐鑫信息科技 16 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 17 ===
+5 外设
+5 外设
+5.1 外设概述
+ESP32-S3集成了丰富的外设，包括SPI、LCD、Camera接口、UART、I2C、I2S、红外遥控、脉冲计数器、LED
+PWM、USB串口/JTAG、MCPWM、SD/MMC主机控制器、TWAI® 控制器（兼容ISO11898-1，即CAN规范
+2.0）、ADC、触摸传感器和温度传感器。此外，ESP32-S3还有一个全速USB2.0On-The-Go(OTG)接口用于
+USB通讯。
+关于模组外设的详细信息，请参考《ESP32-S3系列芯片技术规格书》>章节功能描述。
+说明：
+以下内容出自《ESP32-S3系列芯片技术规格书》>章节外设。并非所有IO信号都在模组上引出，因此这些信息不完
+全适用于ESP32-S3-WROOM-1以及ESP32-S3-WROOM-1U。
+关于外设信号的更多信息，可参考《ESP32-S3技术参考手册》>章节GPIO交换矩阵外设信号列表。
+5.2 外设描述
+本章节介绍了芯片上的外设接口，包括扩展芯片功能的通信接口和片上传感器。
+5.2.1 通讯接口
+本章节介绍了芯片与外部设备和网络进行通信和交互的接口。
+5.2.1.1 UART 控制器
+ESP32-S3有三个UART（通用异步收发器）控制器，即UART0、UART1、UART2，支持异步通信（RS232和
+RS485）和IrDA，通信速率可达到5Mbps。
+特性
+• 支持三个可预分频的时钟源
+• 可编程收发波特率
+• 三个UART的发送FIFO以及接收FIFO共享1024x8-bitRAM
+• 全双工异步通信
+• 支持输入信号波特率自检功能
+• 支持5/6/7/8位数据长度
+• 支持1/1.5/2/3个停止位
+• 支持奇偶校验位
+• 支持AT_CMD特殊字符检测
+• 支持RS485协议
+• 支持IrDA协议
+• 支持GDMA高速数据通信
+乐鑫信息科技 17 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 18 ===
+5 外设
+• 支持UART唤醒模式
+• 支持软件流控和硬件流控
+更多信息，请参考《ESP32-S3技术参考手册》>章节UART控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.2 I2C 接口
+ESP32-S3有两个I2C总线接口，根据用户的配置，总线接口可以用作I2C主机或从机模式。
+特性
+• 标准模式(100Kbit/s)
+• 快速模式(400Kbit/s)
+• 速度最高可达800Kbit/s，但受制于SCL和SDA上拉强度
+• 7位寻址模式和10位寻址模式
+• 双地址（从机地址和从机寄存器地址）寻址模式
+用户可以通过I2C硬件提供的指令抽象层更方便地控制I2C接口。
+更多信息，请参考《ESP32-S3技术参考手册》>章节I2C控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.3 I2S 接口
+ESP32-S3有两个标准I2S接口，可以以主机或从机模式，在全双工或半双工模式下工作，并且可被配置为I2S
+串行8/16/24/32位的收发数据模式，支持频率从10kHz到40MHz的BCK时钟。
+I2S接口有专用的DMA控制器。支持TDMPCM、TDMMSB对齐、TDMLSB对齐、TDMPhillips、PDM接
+口。
+更多信息，请参考《ESP32-S3技术参考手册》>章节I2S控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.4 LCD 与 Camera 控制器
+ESP32-S3的LCD与Camera控制器包含独立的LCD模块和Camera模块。
+LCD模块用于发送并行视频数据信号，其总线8位~16位并行RGB、I8080、MOTO6800接口，支持的时钟频
+率小于40MHz。支持RGB565、YUV422、YUV420、YUV411之间的互相转换。
+乐鑫信息科技 18 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 19 ===
+5 外设
+Camera模块用于接收并行视频数据信号，其总线支持8位~16位DVP图像传感器接口，支持的时钟频率小于
+40MHz。支持RGB565、YUV422、YUV420、YUV411之间的互相转换。
+更多信息，请参考《ESP32-S3技术参考手册》>章节LCD与Camera控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.5 串行外设接口 (SPI)
+ESP32-S3具有以下SPI接口：
+• SPI0，供ESP32-S3的GDMA控制器与Cache访问封装内或封装外flash/PSRAM
+• SPI1，供CPU访问封装内或封装外flash/PSRAM
+• SPI2，通用SPI控制器，通过GDMA分配DMA通道进行访问
+• SPI3，通用SPI控制器，通过GDMA分配DMA通道进行访问
+特性
+• SPI0和SPI1：
+– 支持SPI、DualSPI、QuadSPI、OctalSPI、QPI和OPI模式
+– 八线SPI模式支持单倍数据速率(SDR)和双倍数据速率(DDR)
+– 时钟频率可配置，八线SPISDR/DDR模式下最高可达120MHz
+– 数据传输以字节为单位
+• SPI2：
+– 支持主机或从机模式
+– 通过GDMA分配DMA通道进行访问
+– 支持SPI、DualSPI、QuadSPI、OctalSPI、QPI和OPI模式
+– 时钟极性(CPOL)和相位(CPHA)可配置
+– 时钟频率可配置
+– 数据传输以字节为单位
+– 读写数据位序可配置：最高有效位(MSB)优先，或最低有效位(LSB)优先
+– 主机模式
+* 支持双线全双工通信，时钟频率最高可达80MHz
+* 八线SPI全双工模式仅支持单倍数据速率(SDR)
+* 支持单线、双线、四线和八线半双工通信，时钟频率最高可达80MHz
+* 八线SPI半双工模式支持单倍数据速率（最高80MHz）和双倍数据速率（最高40MHz）
+* 具有六个SPI_CS管脚，可与六个独立SPI从机相连
+* CS建立和保持时间可配置
+乐鑫信息科技 19 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 20 ===
+5 外设
+– 从机模式
+* 支持双线全双工通信，时钟频率最高可达60MHz
+* 支持单线、双线和四线半双工通信，时钟频率最高可达60MHz
+* 八线SPI全双工和半双工模式仅支持单倍数据速率(SDR)
+• SPI3：
+– 支持主机或从机模式
+– 通过GDMA分配DMA通道进行访问
+– 支持SPI、DualSPI、QuadSPI和QPI模式
+– 时钟极性(CPOL)和相位(CPHA)可配置
+– 时钟频率可配置
+– 数据传输以字节为单位
+– 读写数据位序可配置：最高有效位(MSB)优先，或最低有效位(LSB)优先
+– 主机模式
+* 支持双线全双工通信，时钟频率最高可达80MHz
+* 支持单线、双线和四线半双工通信，时钟频率最高可达80MHz
+* 具有三个SPI_CS管脚，可与三个独立SPI从机相连
+* CS建立和保持时间可配置
+– 从机模式
+* 支持双线全双工通信，时钟频率最高可达60MHz
+* 支持单线、双线和四线半双工通信，时钟频率最高可达60MHz
+更多信息，请参考《ESP32-S3技术参考手册》>章节SPI控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.6 双线汽车接口 (TWAI®)
+双线汽车接口(Two-WireAutomotiveInterface,TWAI®)协议是一种多主机、多播的通信协议，具有检测错误、
+发送错误信号以及内置报文优先仲裁等功能。ESP32-S3带有一个TWAI控制器。
+特性
+• 兼容ISO11898-1协议（CAN规范2.0）
+• 标准帧格式（11位ID）和扩展帧格式（29位ID）
+• 1Kbit/s到1Mbit/s比特率
+• 多种操作模式：
+– 工作模式
+乐鑫信息科技 20 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 21 ===
+5 外设
+– 监听模式
+– 自检模式（传输无需确认）
+• 64字节接收FIFO
+• 数据接收过滤器（支持单过滤器和双过滤器模式）
+• 错误检测与处理：
+– 错误计数器
+– 可配置的错误中断阈值
+– 错误代码记录
+– 仲裁丢失记录
+更多信息，请参考《ESP32-S3技术参考手册》>章节双线汽车接口。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.7 USB 2.0 OTG 全速接口
+ESP32-S3带有一个集成了收发器的全速USBOTG外设，符合USB2.0规范。
+通用特性
+• 支持全速和低速速率
+• 主机协商协议(HNP)和会话请求协议(SRP)，均可作为A或B设备
+• 动态FIFO(DFIFO)大小
+• 支持多种存储器访问模式
+– Scatter/GatherDMA模式
+– 缓冲(Buffer)DMA模式
+– Slave模式
+• 可选择集成收发器或外部收发器
+• 当仅使用集成收发器时，可通过时分复用技术，和USB串口/JTAG控制器共用集成收发器
+• 当集成收发器和外部收发器同时投入使用时，支持USBOTG和USB串口/JTAG控制器两外设各自挑选不
+同的收发器使用
+设备模式(Devicemode)特性
+• 端点0永远存在（双向控制，由EP0IN和EP0OUT组成）
+• 6个附加端点(1~6)，可配置为IN或OUT
+• 最多5个IN端点同时工作（包括EP0IN）
+• 所有OUT端点共享一个RXFIFO
+乐鑫信息科技 21 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 22 ===
+5 外设
+• 每个IN端点都有专用的TXFIFO
+主机模式(Hostmode)特性
+• 8个通道（管道）
+– 由IN与OUT两个通道组成的一个控制管道，因为IN和OUT必须分开处理。仅支持控制传输类型。
+– 其余7个管道可被配置为IN或OUT，支持批量、同步、中断中的任意传输类型。
+• 所有通道共用一个RXFIFO、一个非周期性TXFIFO、和一个周期性TXFIFO。每个FIFO大小可配置。
+更多信息，请参考《ESP32-S3技术参考手册》>章节USBOTG。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.8 USB 串口/JTAG 控制器
+ESP32-S3集成了一个USB串口/JTAG控制器。
+特性
+• USB全速标准
+• 可配置为使用ESP32-S3内部USBPHY或通过GPIO交换矩阵使用外部PHY
+• 固定功能。包含连接的CDC-ACM（通信设备类抽象控制模型）和JTAG适配器功能
+• 共2个OUT端点、3个IN端点和1个控制端点EP_0，可实现最大64字节的数据载荷
+• 包含内部PHY，基本无需其他外部组件连接主机计算机
+• CDC-ACM的虚拟串行功能在大多数现代操作系统上可实现即插即用
+• JTAG接口可使用紧凑的JTAG指令实现与CPU调试内核的快速通信
+• CDC-ACM支持主机控制芯片复位和进入下载模式
+更多信息，请参考《ESP32-S3技术参考手册》>章节USB串口/JTAG控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.9 SD/MMC 主机控制器
+ESP32-S3集成一个SD/MMC主机控制器。
+特性
+• SD卡3.0和3.01版本
+• SDIO3.0版本
+• CE-ATA1.1版本
+乐鑫信息科技 22 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 23 ===
+5 外设
+• 多媒体卡（MMC4.41版本、eMMC4.5版本和4.51版本）
+• 高达80MHz的时钟输出
+• 3种数据总线模式：
+– 1位
+– 4位（可支持两个SD/SDIO/MMC4.41卡，以及一个以1.8V电压工作的SD卡）
+– 8位
+说明：
+在80MHz工作条件下，时钟相位调节能力受限，仅支持0°和180°两种相位配置。PCB布局设计时应充分考虑该限
+制，以确保时序收敛。
+更多信息，请参考《ESP32-S3技术参考手册》>章节SD/MMC主机控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.10 LED PWM 控制器
+LEDPWM控制器可以用于生成八路独立的数字波形。
+特性
+• 波形的周期和占空比可配置，在信号周期为1ms时，占空比精确度可达14位
+• 多种时钟源选择，包括：APB总线时钟、外置主晶振时钟
+• 可在Light-sleep模式下工作
+• 支持硬件自动步进式地增加或减少占空比，可用于LEDRGB彩色梯度发生器
+更多信息，请参考《ESP32-S3技术参考手册》>章节LEDPWM控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.11 电机控制脉宽调制器 (MCPWM)
+ESP32-S3包含两个MCPWM，可以用于驱动数字马达和智能灯。每个MCPWM外设都包含一个时钟分频器
+（预分频器）、三个PWM定时器、三个PWM操作器和一个捕捉模块。PWM定时器用于生成定时参考。PWM操
+作器将根据定时参考生成所需的波形。通过配置，任一PWM操作器可以使用任一PWM定时器的定时参考。不
+同的PWM操作器可以使用相同的PWM定时器的定时参考来产生PWM信号。此外，不同的PWM操作器也可
+以使用不同的PWM定时器的值来生成单独的PWM信号。不同的PWM定时器也可进行同步。
+更多信息，请参考《ESP32-S3技术参考手册》>章节电机控制脉宽调制器。
+乐鑫信息科技 23 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 24 ===
+5 外设
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.12 红外遥控 (RMT)
+红外遥控(RMT)支持红外控制信号的发射和接收。
+特性
+• 四个通道支持发送
+• 四个通道支持接收
+• 可编程配置多个通道同时发送
+• RMT的八个通道共享384x32-bit的RAM
+• 发送脉冲支持载波调制
+• 接收脉冲支持滤波和载波解调
+• 乒乓发送模式
+• 乒乓接收模式
+• 发射器支持持续发送
+• 发送通道3支持DMA访问
+• 接收通道7支持DMA访问
+更多信息，请参考《ESP32-S3技术参考手册》>章节红外遥控。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.1.13 脉冲计数控制器 (PCNT)
+脉冲计数器(PCNT)通过多种模式捕捉脉冲并对脉冲边沿计数。
+特性
+• 四个脉冲计数控制器（单元），各自独立工作，计数范围是1~65535
+• 每个单元有两个独立的通道，共用一个脉冲计数控制器
+• 所有通道均有输入脉冲信号（如sig_ch0_un）和相应的控制信号（如ctrl_ch0_un）
+• 滤波器独立工作，过滤每个单元输入脉冲信号（sig_ch0_un和sig_ch1_un）控制信号（ctrl_ch0_un和
+ctrl_ch1_un）的毛刺
+• 每个通道参数如下：
+1. 选择在输入脉冲信号的上升沿或下降沿计数
+2. 在控制信号为高电平或低电平时可将计数模式配置为递增、递减或停止计数
+乐鑫信息科技 24 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 25 ===
+5 外设
+更多信息，请参考《ESP32-S3技术参考手册》>章节脉冲计数控制器。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.2 模拟信号处理
+本小节描述芯片上感知和处理现实世界数据的组件。
+5.2.2.1 SAR ADC
+ESP32-S3集成了两个12位SARADC，共支持20个模拟通道输入。为了实现更低功耗，ESP32-S3的ULP协
+处理器也可以在睡眠方式下测量电压，此时，可通过设置阈值或其他触发方式唤醒CPU。
+更多信息，请参考《ESP32-S3技术参考手册》>章节片上传感器与模拟信号处理。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+5.2.2.2 温度传感器
+温度传感器生成一个随温度变化的电压。内部ADC将传感器电压转化为一个数字量。
+温度传感器的测量范围为–40°C到125°C。温度传感器适用于监测芯片内部温度的变化，该温度值会随着微控
+制器时钟频率或IO负载的变化而变化。一般来讲，芯片内部温度会高于外部温度。
+更多信息，请参考《ESP32-S3技术参考手册》>章节片上传感器与模拟信号处理。
+5.2.2.3 触摸传感器
+ESP32-S3提供了多达14个电容式传感GPIO，能够探测由手指或其他物品直接接触或接近而产生的电容差异。
+这种设计具有低噪声和高灵敏度的特点，可以用于支持使用相对较小的触摸板。设计中也可以使用触摸板阵列
+以探测更大区域或更多点。ESP32-S3的触摸传感器同时还支持防水和数字滤波等功能来进一步提高传感器的
+性能。
+说明：
+ESP32-S3触摸传感器目前尚无法通过射频抗扰度测试系统(CS)认证，应用场景有所限制。
+更多信息，请参考《ESP32-S3技术参考手册》>章节片上传感器与模拟信号处理。
+管脚分配
+详见《ESP32-S3系列芯片技术规格书》>章节外设管脚分配。
+乐鑫信息科技 25 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 26 ===
+5 外设
+6 电气特性
+6.1 绝对最大额定值
+超出表6-1绝对最大额定值可能导致器件永久性损坏。这只是强调的额定值，不涉及器件在这些或其它条件下
+超出表6-2建议工作条件技术规格指标的功能性操作。长时间暴露在绝对最大额定条件下可能会影响模组的可
+靠性。
+表6-1.绝对最大额定值
+符号 参数 最小值 最大值 单位
+VDD33 电源管脚电压 –0.3 3.6 V
+T 存储温度 –40 105 °C
+STORE
+6.2 建议工作条件
+表6-2.建议工作条件
+符号 参数 最小值 典型值 最大值 单位
+VDD33 电源管脚电压 3.0 3.3 3.6 V
+I 外部电源的供电电流 0.5 — — A
+VDD
+65°C版 65
+T 环境温度 85°C版 –40 — 85 °C
+A
+105°C版 105
+6.3 直流电气特性 (3.3 V, 25 °C)
+表6-3.直流电气特性(3.3V,25°C)
+参数 说明 最小值 典型值 最大值 单位
+C 管脚电容 — 2 — pF
+IN
+1 1
+V 高电平输入电压 0.75×VDD — VDD +0.3 V
+IH
+1
+V 低电平输入电压 –0.3 — 0.25×VDD V
+IL
+I 高电平输入电流 — — 50 nA
+IH
+I 低电平输入电流 — — 50 nA
+IL
+2 1
+V 高电平输出电压 0.8×VDD — — V
+OH
+2 1
+V 低电平输出电压 — — 0.1×VDD V
+OL
+1
+高电平拉电流(VDD =3.3V,V >=2.64V,
+OH
+I — 40 — mA
+OH
+PAD_DRIVER=3)
+1
+低电平灌电流(VDD =3.3V,V =0.495V,
+OL
+I — 28 — mA
+OL
+PAD_DRIVER=3)
+R 内部弱上拉电阻 — 45 — kΩ
+PU
+R 内部弱下拉电阻 — 45 — kΩ
+PD
+1 1
+V 芯片复位释放电压（EN管脚应满足电压范围） 0.75×VDD — VDD +0.3 V
+IH_nRST
+1
+V 芯片复位电压（EN管脚应满足电压范围） –0.3 — 0.25×VDD V
+IL_nRST
+乐鑫信息科技 26 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 27 ===
+5 外设
+1
+VDD–各个电源域电源管脚的电压。
+2
+V 和V 为负载是高阻条件下的测试值。
+OH OL
+6.4 功耗特性
+6.4.1 Active 模式下的功耗
+因使用了先进的电源管理技术，模组可以在不同的功耗模式之间切换。关于不同功耗模式的描述，详见
+《ESP32-S3系列芯片技术规格书》>电源管理单元章节。
+下列功耗数据是基于3.3V供电电源、25°C环境温度的条件下测得。
+所有发射功耗数据均基于100%占空比测得。
+所有接收功耗数据均是在外设关闭、CPU空闲的条件下测得。
+表6-4.Active模式下Wi-Fi(2.4GHz)功耗特性
+工作模式 射频模式 描述 峰值(mA)
+802.11b,1Mbps,@20.5dBm 355
+802.11g,54Mbps,@18dBm 297
+发射(TX)
+802.11n,HT20,MCS7,@17.5dBm 286
+Active（射频工作）
+802.11n,HT40,MCS7,@17dBm 285
+802.11b/g/n,HT20 95
+接收(RX)
+802.11n,HT40 97
+表6-5.Active模式下低功耗蓝牙功耗特性
+工作模式 射频模式 描述 峰值(mA)
+低功耗蓝牙@20.0dBm 344
+发射(TX) 低功耗蓝牙@9.0dBm 202
+Active(射频工作) 低功耗蓝牙@0dBm 187
+低功耗蓝牙@–15.0dBm 119
+接收(RX) 低功耗蓝牙 93
+说明：
+以下内容摘自《ESP32-S3系列芯片技术规格书》的其他功耗模式下的功耗章节。
+6.4.2 其他功耗模式下的功耗
+请注意，若模组内置芯片封装内有PSRAM，功耗数据可能略高于下表数据。
+乐鑫信息科技 27 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 28 ===
+5 外设
+表6-6.Modem-sleep模式下的功耗
+频率 典型值1 典型值2
+工作模式 说明
+(MHz) (mA) (mA)
+WAITI（双核均空闲） 13.2 18.8
+单核执行32位数据访问指令，另一个核空闲 16.2 21.8
+双核执行32位数据访问指令 18.7 24.4
+40 单核执行128位数据访问指令，另一个核空闲 19.9 25.4
+双核执行128位数据访问指令 23.0 28.8
+WAITI 22.0 36.1
+单核执行32位数据访问指令，另一个核空闲 28.4 42.6
+双核执行32位数据访问指令 33.1 47.3
+80 单核执行128位数据访问指令，另一个核空闲 35.1 49.6
+双核执行128位数据访问指令 41.8 56.3
+WAITI 27.6 42.3
+单核执行32位数据访问指令，另一个核空闲 39.9 54.6
+双核执行32位数据访问指令 49.6 64.1
+160 单核执行128位数据访问指令，另一个核空闲 54.4 69.2
+3
+Modem-sleep
+双核执行128位数据访问指令 66.7 81.1
+WAITI 32.9 47.6
+单核执行32位数据访问指令，另一个核空闲 51.2 65.9
+双核执行32位数据访问指令 66.2 81.3
+240 单核执行128位数据访问指令，另一个核空闲 72.4 87.9
+双核执行128位数据访问指令 91.7 107.9
+1 所有外设时钟关闭时的典型值。
+2 所有外设时钟打开时的典型值。实际情况下，外设在不同工作状态下电流会有所差异。
+3
+Modem-sleep模式下，Wi-Fi设有时钟门控。该模式下，访问flash时功耗会增加。若flash速率为80Mbit/s，
+SPI双线模式下flash的功耗为10mA。
+表6-7.低功耗模式下的功耗
+工作模式 说明 典型值(µA)
+1
+Light-sleep VDD_SPI和Wi-Fi掉电，所有GPIO设置为高阻状态 240
+ULP协处理器处于 ULP-FSM 170
+2
+工作状态 ULP-RISC-V 190
+3
+Deep-sleep 超低功耗传感器监测模式 18
+RTC存储器和RTC外设上电 8
+RTC存储器上电，RTC外设掉电 7
+关闭 EN管脚拉低，芯片关闭 1
+1
+Light-sleep 模式下，SPI 相关管脚上拉。封装内有 PSRAM 的芯片请在典型值的基础上添加相
+应的PSRAM功耗：8MB8线PSRAM(3.3V)为140µA；8MB8线PSRAM(1.8V)为200µA；
+2MB4线PSRAM为40µA。
+2
+Deep-sleep模式下，仅ULP协处理器处于工作状态时，可以操作GPIO及低功耗I2C。
+3
+当系统处于超低功耗传感器监测模式时，ULP协处理器或传感器周期性工作。触摸传感器以1%
+占空比工作，系统功耗典型值为18µA。
+乐鑫信息科技 28 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 29 ===
+5 外设
+6.5 存储器规格
+本节数据来源于存储器供应商的数据手册。以下数值已在设计阶段和/或特性验证中得到确认，但未在生产中进
+行全面测试。设备出厂时，存储器均为擦除状态。
+表6-8.Flash规格
+参数 说明 最小值 典型值 最大值 单位
+电源电压(1.8V) 1.65 1.80 2.00 V
+VCC
+电源电压(3.3V) 2.7 3.3 3.6 V
+F 最大时钟频率 80 — — MHz
+C
+— 编程/擦除周期 100,000 — — 次
+T 数据保留时间 20 — — 年
+RET
+T 页编程时间 — 0.8 5 ms
+PP
+T 扇区擦除时间(4KB) — 70 500 ms
+SE
+T 块擦除时间(32KB) — 0.2 2 s
+BE1
+T 块擦除时间(64KB) — 0.3 3 s
+BE2
+芯片擦除时间(16Mb) — 7 20 s
+芯片擦除时间(32Mb) — 20 60 s
+T 芯片擦除时间(64Mb) — 25 100 s
+CE
+芯片擦除时间(128Mb) — 60 200 s
+芯片擦除时间(256Mb) — 70 300 s
+表6-9.PSRAM规格
+参数 说明 最小值 典型值 最大值 单位
+电源电压(1.8V) 1.62 1.80 1.98 V
+VCC
+电源电压(3.3V) 2.7 3.3 3.6 V
+F 最大时钟频率 80 — — MHz
+C
+乐鑫信息科技 29 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 30 ===
+5 外设
+7 射频特性
+本章提供产品的射频特性表。
+射频数据是在天线端口处连接射频线后测试所得，包含了射频前端电路带来的损耗。带有外部天线连接器的受
+测模组所使用的外部天线具有50Ω阻抗。
+工作信道中心频率范围应符合国家或地区的规范标准。软件可以配置工作信道中心频率范围，具体请参
+考《ESP射频测试指南》。
+除非特别说明，射频测试均是在3.3V(±5%)供电电源、25°C环境温度的条件下完成。
+7.1 Wi-Fi 射频
+表7-1.Wi-Fi射频规格
+名称 描述
+工作信道中心频率范围 2412~2484MHz
+无线标准 IEEE802.11b/g/n
+7.1.1 Wi-Fi 射频发射器 (TX) 特性
+表7-2.频谱模板和EVM符合802.11标准时的发射功率
+最小值 典型值 最大值
+速率
+(dBm) (dBm) (dBm)
+802.11b,1Mbps — 20.5 —
+802.11b,11Mbps — 20.5 —
+802.11g,6Mbps — 20.0 —
+802.11g,54Mbps — 18.0 —
+802.11n,HT20,MCS0 — 19.0 —
+802.11n,HT20,MCS7 — 17.5 —
+802.11n,HT40,MCS0 — 18.5 —
+802.11n,HT40,MCS7 — 17.0 —
+表7-3.发射EVM测试1
+最小值 典型值 标准限值
+速率
+(dB) (dB) (dB)
+802.11b,1Mbps,@20.5dBm — –24.5 –10
+802.11b,11Mbps,@20.5dBm — –24.5 –10
+802.11g,6Mbps,@20dBm — –23.0 –5
+802.11g,54Mbps,@18dBm — –29.5 –25
+802.11n,HT20,MCS0,@19dBm — –24.0 –5
+802.11n,HT20,MCS7,@17.5dBm — –30.5 –27
+802.11n,HT40,MCS0,@18.5dBm — –25.0 –5
+见下页
+乐鑫信息科技 30 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 31 ===
+5 外设
+表7-3–接上页
+最小值 典型值 标准限值
+速率
+(dB) (dB) (dB)
+802.11n,HT40,MCS7,@17dBm — –30.0 –27
+1 发射EVM的每个测试项对应的发射功率为表7-2频谱模板和EVM符
+合802.11标准时的发射功率中提供的典型值。
+7.1.2 Wi-Fi 射频接收器 (RX) 特性
+802.11b标准下的误包率(PER)不超过8%，802.11g/n标准下不超过10%。
+表7-4.接收灵敏度
+最小值 典型值 最大值
+速率
+(dBm) (dBm) (dBm)
+802.11b,1Mbps — –98.2 —
+802.11b,2Mbps — –95.6 —
+802.11b,5.5Mbps — –92.8 —
+802.11b,11Mbps — –88.5 —
+802.11g,6Mbps — –93.0 —
+802.11g,9Mbps — –92.0 —
+802.11g,12Mbps — –90.8 —
+802.11g,18Mbps — –88.5 —
+802.11g,24Mbps — –85.5 —
+802.11g,36Mbps — –82.2 —
+802.11g,48Mbps — –78.0 —
+802.11g,54Mbps — –76.2 —
+802.11n,HT20,MCS0 — –93.0 —
+802.11n,HT20,MCS1 — –90.6 —
+802.11n,HT20,MCS2 — –88.4 —
+802.11n,HT20,MCS3 — –84.8 —
+802.11n,HT20,MCS4 — –81.6 —
+802.11n,HT20,MCS5 — –77.4 —
+802.11n,HT20,MCS6 — –75.6 —
+802.11n,HT20,MCS7 — –74.2 —
+802.11n,HT40,MCS0 — –90.0 —
+802.11n,HT40,MCS1 — –87.5 —
+802.11n,HT40,MCS2 — –85.0 —
+802.11n,HT40,MCS3 — –82.0 —
+802.11n,HT40,MCS4 — –78.5 —
+802.11n,HT40,MCS5 — –74.4 —
+802.11n,HT40,MCS6 — –72.5 —
+802.11n,HT40,MCS7 — –71.2 —
+乐鑫信息科技 31 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 32 ===
+5 外设
+表7-5.最大接收电平
+最小值 典型值 最大值
+速率
+(dBm) (dBm) (dBm)
+802.11b,1Mbps — 5 —
+802.11b,11Mbps — 5 —
+802.11g,6Mbps — 5 —
+802.11g,54Mbps — 0 —
+802.11n,HT20,MCS0 — 5 —
+802.11n,HT20,MCS7 — 0 —
+802.11n,HT40,MCS0 — 5 —
+802.11n,HT40,MCS7 — 0 —
+表7-6.接收邻道抑制
+最小值 典型值 最大值
+速率
+(dB) (dB) (dB)
+802.11b,1Mbps — 35 —
+802.11b,11Mbps — 35 —
+802.11g,6Mbps — 31 —
+802.11g,54Mbps — 14 —
+802.11n,HT20,MCS0 — 31 —
+802.11n,HT20,MCS7 — 13 —
+802.11n,HT40,MCS0 — 19 —
+802.11n,HT40,MCS7 — 8 —
+7.2 低功耗蓝牙射频
+表7-7.低功耗蓝牙射频规格
+名称 描述
+工作信道中心频率范围 2402~2480MHz
+射频发射功率范围 –24.0~20.0dBm
+7.2.1 低功耗蓝牙射频发射器 (TX) 特性
+表7-8.低功耗蓝牙-发射器特性-1Mbps
+参数 描述 最小值 典型值 最大值 单位
+|f | 最大值 — 2.50 — kHz
+n n=0,1,2,..k
+|f 0−f
+n
+|最大值 — 2.00 — kHz
+载波频率偏移和漂移
+|f n−f n−5 |最大值 — 1.40 — kHz
+|f 1−f
+0
+| — 1.00 — kHz
+∆f1 — 249.00 — kHz
+avg
+∆f2 最小值
+max
+调制特性 — 198.00 — kHz
+（至少99.9%的∆f2 ）
+max
+见下页
+乐鑫信息科技 32 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 33 ===
+5 外设
+表7-8–接上页
+参数 描述 最小值 典型值 最大值 单位
+∆f2 /∆f1 — 0.86 — —
+avg avg
+±2MHz偏移 — –37.00 — dBm
+带内杂散发射 ±3MHz偏移 — –42.00 — dBm
+>±3MHz偏移 — –44.00 — dBm
+表7-9.低功耗蓝牙-发射器特性-2Mbps
+参数 描述 最小值 典型值 最大值 单位
+|f | 最大值 — 2.50 — kHz
+n n=0,1,2,..k
+|f 0−f
+n
+|最大值 — 2.00 — kHz
+载波频率偏移和漂移
+|f n−f n−5 |最大值 — 1.40 — kHz
+|f 1−f
+0
+| — 1.00 — kHz
+∆f1 — 499.00 — kHz
+avg
+∆f2 最小值
+max
+调制特性 — 416.00 — kHz
+（至少99.9%的∆f2 ）
+max
+∆f2 /∆f1 — 0.89 — —
+avg avg
+±4MHz偏移 — –42.00 — dBm
+带内杂散发射 ±5MHz偏移 — –44.00 — dBm
+>±5MHz偏移 — –47.00 — dBm
+表7-10.低功耗蓝牙-发射器特性-125Kbps
+参数 描述 最小值 典型值 最大值 单位
+|f | 最大值 — 0.80 — kHz
+n n=0,1,2,..k
+|f 0−f
+n
+|最大值 — 1.00 — kHz
+载波频率偏移和漂移
+|f n−f n−3 | — 0.30 — kHz
+|f 0−f
+3
+| — 1.00 — kHz
+∆f1 — 248.00 — kHz
+avg
+调制特性 ∆f1 最小值
+max
+— 222.00 — kHz
+（至少99.9%的∆f1 ）
+max
+±2MHz偏移 — –37.00 — dBm
+带内杂散发射 ±3MHz偏移 — –42.00 — dBm
+>±3MHz偏移 — –44.00 — dBm
+表7-11.低功耗蓝牙-发射器特性-500Kbps
+参数 描述 最小值 典型值 最大值 单位
+|f | 最大值 — 0.80 — kHz
+n n=0,1,2,..k
+|f 0−f
+n
+|最大值 — 1.00 — kHz
+载波频率偏移和漂移
+|f n−f n−3 | — 0.85 — kHz
+|f 0−f
+3
+| — 0.34 — kHz
+∆f2 — 213.00 — kHz
+avg
+调制特性 ∆f2 最小值
+max
+— 196.00 — kHz
+（至少99.9%的∆f2 ）
+max
+见下页
+乐鑫信息科技 33 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 34 ===
+5 外设
+表7-11–接上页
+参数 描述 最小值 典型值 最大值 单位
+±2MHz偏移 — –37.00 — dBm
+带内杂散发射 ±3MHz偏移 — –42.00 — dBm
+>±3MHz偏移 — –44.00 — dBm
+7.2.2 低功耗蓝牙射频接收器 (RX) 特性
+表7-12.低功耗蓝牙-接收器特性-1Mbps
+参数 描述 最小值 典型值 最大值 单位
+灵敏度@30.8%PER — — –96.5 — dBm
+最大接收信号@30.8%PER — — 8 — dBm
+共信道抑制比C/I F=F0MHz — 8 — dB
+F=F0+1MHz — 4 — dB
+F=F0–1MHz — 4 — dB
+F=F0+2MHz — –23 — dB
+F=F0–2MHz — –23 — dB
+邻道选择性抑制比C/I
+F=F0+3MHz — –34 — dB
+F=F0–3MHz — –34 — dB
+F>F0+3MHz — –36 — dB
+F>F0–3MHz — –37 — dB
+镜像频率 — — –36 — dB
+F=F +1MHz — –39 — dB
+image
+邻道镜像频率干扰
+F=F –1MHz — –34 — dB
+image
+30MHz~2000MHz — –12 — dBm
+2003MHz~2399MHz — –18 — dBm
+带外阻塞
+2484MHz~2997MHz — –16 — dBm
+3000MHz~12.75GHz — –10 — dBm
+互调 — — –29 — dBm
+表7-13.低功耗蓝牙-接收器特性-2Mbps
+参数 描述 最小值 典型值 最大值 单位
+灵敏度@30.8%PER — — –92 — dBm
+最大接收信号@30.8%PER — — 3 — dBm
+共信道干扰C/I F=F0MHz — 8 — dB
+F=F0+2MHz — 4 — dB
+F=F0–2MHz — 4 — dB
+F=F0+4MHz — –27 — dB
+F=F0–4MHz — –27 — dB
+邻道选择性抑制比C/I
+F=F0+6MHz — –38 — dB
+F=F0–6MHz — –38 — dB
+F>F0+6MHz — –41 — dB
+F>F0–6MHz — –41 — dB
+见下页
+乐鑫信息科技 34 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 35 ===
+5 外设
+表7-13–接上页
+参数 描述 最小值 典型值 最大值 单位
+镜像频率 — — –27 — dB
+F=F +2MHz — –38 — dB
+image
+邻道镜像频率干扰
+F=F –2MHz — 4 — dB
+image
+30MHz~2000MHz — –15 — dBm
+2003MHz~2399MHz — –21 — dBm
+带外阻塞
+2484MHz~2997MHz — –21 — dBm
+3000MHz~12.75GHz — –9 — dBm
+互调 — — –29 — dBm
+表7-14.低功耗蓝牙-接收器特性-125Kbps
+参数 描述 最小值 典型值 最大值 单位
+灵敏度@30.8%PER — — –103.5 — dBm
+最大接收信号@30.8%PER — — 8 — dBm
+共信道抑制比C/I F=F0MHz — 4 — dB
+F=F0+1MHz — 1 — dB
+F=F0–1MHz — 2 — dB
+F=F0+2MHz — –26 — dB
+F=F0–2MHz — –26 — dB
+邻道选择性抑制比C/I
+F=F0+3MHz — –36 — dB
+F=F0–3MHz — –39 — dB
+F>F0+3MHz — –42 — dB
+F>F0–3MHz — –43 — dB
+镜像频率 — — –42 — dB
+F=F +1MHz — –43 — dB
+image
+邻道镜像频率干扰
+F=F –1MHz — –36 — dB
+image
+表7-15.低功耗蓝牙-接收器特性-500Kbps
+参数 描述 最小值 典型值 最大值 单位
+灵敏度@30.8%PER — — –100 — dBm
+最大接收信号@30.8%PER — — 8 — dBm
+共信道抑制比C/I F=F0MHz — 4 — dB
+F=F0+1MHz — 1 — dB
+F=F0–1MHz — 0 — dB
+F=F0+2MHz — –24 — dB
+F=F0–2MHz — –24 — dB
+邻道选择性抑制比C/I
+F=F0+3MHz — –37 — dB
+F=F0–3MHz — –39 — dB
+F>F0+3MHz — –38 — dB
+F>F0–3MHz — –42 — dB
+镜像频率 — — –38 — dB
+见下页
+乐鑫信息科技 35 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 36 ===
+5 外设
+表7-15–接上页
+参数 描述 最小值 典型值 最大值 单位
+F=F +1MHz — –42 — dB
+image
+邻道镜像频率干扰
+F=F –1MHz — –37 — dB
+image
+乐鑫信息科技 36 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 37 ===
+5
+外设
+8 模组原理图
+模组内部元件的电路图。在内置PSRAM的模组中，芯片已通过eFuse设置将VDD_SPI电压固定为3.3V或1.8V，因此这些模组的VDD_SPI电压不受GPIO45电平
+影响；但在使用其他模组时，请确保模组上电时外部电路不会将GPIO45拉高。
+5 4 3 2 1
+The values of C1 and C4 vary with
+D the selection of the crystal. D
+The value of R4 varies with the actual PCB board. R4 could be a
+resistor or inductor, the initial value is suggested to be 24 nH.
+GPIO46
+GPIO45
+U0RXD
+U0TXD
+GPIO42
+GPIO41
+GPIO39
+C C
+50 ohm Impedance Control
+RF_ANT LNA_IN
+ESP32-S3-WROOM-1(pin-out)
+GPIO48
+SPID SPIQ
+SPICLK SPICS0 SPIWP SPICS0 SPID
+B SPIHD B SPICLK SPIQ The values of L3, C5, C11, L2 and C12
+vary with the actual PCB board. SPIHD SPIWP
+NC: No component.
+ESP32-S3 ESP32-S3R2
+ESP32-S3R8
+ESP32-S3R16V
+A A
+5 4 3 2 1
+01OIPG 11OIPG 21OIPG 31OIPG 41OIPG 51OIPG 61OIPG 71OIPG 81OIPG 91OIPG 02OIPG 12OIPG
+CHIP_PU GPIO4 GPIO5
+GPIO6
+GPIO7
+GPIO15
+GPIO16
+GPIO17
+GPIO18
+GPIO40
+GPIO38
+GPIO37
+GPIO36
+GPIO35 CHIP_PU
+GPIO0 GPIO1 GPIO47
+GPIO2
+GPIO3 GPIO4
+GPIO5 GPIO6 GPIO7
+GPIO8 GPIO9
+3OIPG 64OIPG 9OIPG 01OIPG 11OIPG 21OIPG 31OIPG 41OIPG 12OIPG 74OIPG 84OIPG 54OIPG
+GND
+GND GND
+VDD33 VDD33 VDD33 GND GND
+U3 ESP32-S3-WROOM-1
+1 40
+2 GND GND 39 GPIO1 3 3V3 IO1 38 GPIO2 GND 4 EN IO2 37 U0TXD VDD33 5 IO4 TXD0 36 U0RXD
+6 IO5 RXD0 35 GPIO42
+7 IO6 IO42 34 GPIO41
+8 IO7 IO41 33 GPIO40
+GND 9 IO15 IO40 32 GPIO39
+10 IO16 IO39 31 GPIO38
+11 IO17 IO38 30 GPIO37
+GPIO8 12 IO18 IO37 29 GPIO36
+VDD33 GPIO19 13 IO8 IO36 28 GPIO35 GND GND GND GPIO20 14 IO19 IO35 27 GPIO0
+IO20 IO0
+VDD33
+GND GND GND GND GND
+VDD_SPI
+GND GND GND R16 0
+GND
+VDD_SPI
+VDD33 GND GND GND
+GND
+TTTiiitttllleee
+<<<EEESSSPPP333222---SSS333---WWWRRROOOOOOMMM---111>>>
+SSSiiizzzeee PPPaaagggeee NNNaaammmeee RRReeevvv
+AAA444 <<<000222___EEESSSPPP333222---SSS333---WWWRRROOOOOOMMM---111>>> VVV111...444 CCCooonnnfffiiidddeeennntttiiiaaalll aaannnddd PPPrrroooppprrriiieeetttaaarrryyy
+DDDaaattteee::: TTTuuueeesssdddaaayyy,,, NNNooovvveeemmmbbbeeerrr 222111,,, 222000222333 SSShhheeeeeettt 222 ooofff 222
+51
+3OI
+61
+64OI
+71
+9OI
+81
+01OI
+91
+11OI
+02
+21OI
+12
+31OI
+22
+41OI
+32
+12OI
+42
+74OI
+52
+84OI
+62
+54OI
+C4
+TBD
+41 EPAD
+C3 R3 499
+1uF
+C9
+0.1uF
+C11 C12
+TBD TBD
+R13 0
+C13 C14
+0.1uF 1uF
+U1
+C15
+0.1uF
+65
+ADDV
+1
+2 LNA_IN
+3 VDD3P3 VDD3P3
+5 6 GPIO0
+7 GPIO1
+8 GPIO2 9 GPIO3
+10 GPIO4 11 GPIO5 12 GPIO6
+GPIO7
+51
+01OIPG
+61
+11OIPG
+71
+21OIPG
+81
+31OIPG
+91
+41OIPG
+02
+CTR_3P3DDV
+12
+P_K23_LATX
+22
+N_K23_LATX
+32
+71OIPG
+42
+81OIPG
+52
+91OIPG
+62
+02OIPG
+36
+SPICLK_N 35 SPID 34
+SPIQ 33 SPICLK 32 SPICS0 31
+SPIWP 29 VDD_SPI
+75
+DNG
+38 GPIO33 37
+SPICLK_P
+45 35
+P_LATX
+25
+N_LATX 64OIPG
+94 84
+DXT0U SMTM
+64 54
+UPC_3P3DDV ODTM
+34
+83OIPG
+4
+CHIP_PU
+55
+ADDV
+74
+IDTM
+13 14 GPIO8 GPIO9
+72
+12OIPG
+82
+1SCIPS
+41
+GPIO36 40 GPIO35 39
+GPIO34
+30 SPIHD
+15 05
+54OIPG DXR0U
+42
+GPIO37
+44
+KCTM
+Y1
+40MHz(±10ppm)
+L1 2.0nH(0.1nH)
+C6
+10uF
+R15 0
+4
+1
+DNG
+NIX
+3
+2
+TUOXDNG
+C10
+0.1uF
+U2 FLASH
+8
+4
+DDV
+DNG
+C1
+TBD
+R1 D1 10K(NC) ESD
+C7
+1uF
+ANT1
+1 L2 TBD
+2
+PCB_ANT
+1 5
+/CS DI 6 2 CLK DO
+7 3 /HOLD /WP
+0
+4R
+C2
+10nF
+C8
+0.1uF
+L3
+TBD
+C5
+TBD R10 0 R14 0
+图8-1.ESP32-S3-WROOM-1原理图
+反馈文档意见
+乐鑫信息科技
+37
+ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+=== PAGE 38 ===
+5
+外设
+5 4 3 2 1
+The values of C1 and C4 vary with
+D the selection of the crystal. D
+The value of R4 varies with the actual PCB board. R4 could be a
+resistor or inductor, the initial value is suggested to be 24 nH.
+GPIO46
+GPIO45
+U0RXD
+U0TXD
+GPIO42
+GPIO41
+GPIO39
+C C
+50 ohm Impedance Control
+RF_ANT LNA_IN
+ESP32-S3-WROOM-1U(pin-out)
+GPIO48
+SPID
+SPIQ
+The values of C11, L2 and C12 SPICLK
+vary with the actual PCB board. SPICS0 SPIWP SPICS0 SPID
+B SPIHD B NC: No component. SPICLK SPIQ
+SPIHD SPIWP
+ESP32-S3 ESP32-S3R2
+ESP32-S3R8
+ESP32-S3R16V
+A A
+5 4 3 2 1
+01OIPG 11OIPG 21OIPG 31OIPG 41OIPG 51OIPG 61OIPG 71OIPG 81OIPG 91OIPG 02OIPG 12OIPG
+CHIP_PU GPIO4 GPIO5
+GPIO6
+GPIO7
+GPIO15
+GPIO16
+GPIO17
+GPIO18
+GPIO40
+GPIO38
+GPIO37
+GPIO36
+GPIO35 CHIP_PU
+GPIO0
+GPIO1 GPIO47
+GPIO2
+GPIO3
+GPIO4
+GPIO5
+GPIO6 GPIO7
+GPIO8 GPIO9
+3OIPG 64OIPG 9OIPG 01OIPG 11OIPG 21OIPG 31OIPG 41OIPG 12OIPG 74OIPG 84OIPG 54OIPG
+GND
+GND GND
+VDD33 VDD33 VDD33 GND GND
+U3 ESP32-S3-WROOM-1U
+1 40
+2 GND GND 39 GPIO1 3 3V3 IO1 38 GPIO2 GND 4 EN IO2 37 U0TXD VDD33 5 IO4 TXD0 36 U0RXD
+6 IO5 RXD0 35 GPIO42
+7 IO6 IO42 34 GPIO41
+8 IO7 IO41 33 GPIO40
+GND 9 IO15 IO40 32 GPIO39
+10 IO16 IO39 31 GPIO38
+11 IO17 IO38 30 GPIO37
+GPIO8 12 IO18 IO37 29 GPIO36
+VDD33 GPIO19 13 IO8 IO36 28 GPIO35
+GND GND GND GPIO20 14 IO19 IO35 27 GPIO0
+IO20 IO0
+VDD33
+GND GND GND GND GND
+C11
+TBD
+VDD_SPI
+GND GND GND
+VDD_SPI
+VDD33 GND GND GND
+GND
+TTTiiitttllleee
+<<<EEESSSPPP333222---SSS333---WWWRRROOOOOOMMM---111UUU>>>
+SSSiiizzzeee PPPaaagggeee NNNaaammmeee RRReeevvv
+AAA444 <<<000222___EEESSSPPP333222---SSS333---WWWRRROOOOOOMMM---111UUU>>> VVV111...555 CCCooonnnfffiiidddeeennntttiiiaaalll aaannnddd PPPrrroooppprrriiieeetttaaarrryyy
+DDDaaattteee::: TTTuuueeesssdddaaayyy,,, NNNooovvveeemmmbbbeeerrr 222111,,, 222000222333 SSShhheeeeeettt 222 ooofff 222
+51
+3OI
+61
+64OI
+71
+9OI
+81
+01OI
+91
+11OI
+02
+21OI
+12
+31OI
+22
+41OI
+32
+12OI
+42
+74OI
+52
+84OI
+62
+54OI
+41 EPAD
+1
+ANT1 C12
+CONN TBD
+R16 0
+2 3
+C4
+TBD
+D1 ESD
+R3 499
+R13 0
+C13 C14
+0.1uF 1uF
+U1
+C15
+0.1uF
+65
+ADDV
+1
+2 LNA_IN
+3 VDD3P3 VDD3P3
+5
+6 GPIO0
+7 GPIO1
+8 GPIO2
+9 GPIO3
+10 GPIO4
+11 GPIO5 12 GPIO6
+GPIO7
+51
+01OIPG
+61
+11OIPG
+71
+21OIPG
+81
+31OIPG
+91
+41OIPG
+02
+CTR_3P3DDV
+12
+P_K23_LATX
+22
+N_K23_LATX
+32
+71OIPG
+42
+81OIPG
+52
+91OIPG
+62
+02OIPG
+36
+SPICLK_N 35
+SPID 34
+SPIQ 33
+SPICLK 32 SPICS0 31
+SPIWP 29 VDD_SPI
+75
+DNG
+38
+GPIO33 37
+SPICLK_P
+45 35
+P_LATX
+25
+N_LATX 64OIPG
+94 84
+DXT0U SMTM
+64 54
+UPC_3P3DDV ODTM
+34
+83OIPG
+4
+CHIP_PU
+55
+ADDV
+74
+IDTM
+13 14 GPIO8 GPIO9
+72
+12OIPG
+82
+1SCIPS
+41
+GPIO36 40 GPIO35 39
+GPIO34
+30 SPIHD
+15 05
+54OIPG DXR0U
+42
+GPIO37
+44
+KCTM
+R1 10K(NC)
+C3
+1uF
+L1 2.0nH(0.1nH)
+C6 C9
+10uF 0.1uF
+R15 0
+U2 FLASH
+8
+4
+DDV
+DNG
+Y1
+40MHz(±10ppm)
+C10
+0.1uF
+1 5
+/CS DI 6 2 CLK DO
+7 3 /HOLD /WP
+4
+1
+DNG
+NIX
+3
+2
+TUOXDNG
+C1
+TBD
+C7
+1uF
+L2 TBD
+R10 0
+0
+4R
+C2
+10nF
+C8
+0.1uF
+R14 0
+图8-2.ESP32-S3-WROOM-1U原理图
+反馈文档意见
+乐鑫信息科技
+38
+ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+=== PAGE 39 ===
+5 4 3 2 1
+9 外围设计原理图
+D D
+9 外围设计原理图
+模组与外围器件（如电源、天线、复位按钮、JTAG接口、UART接口等）连接的应用电路图。
+TXD0
+RXD0
+IO42 TMS
+X1: ESR = Max. 70 K(cid:525) IO41 TDI
+IO40 TDO C IO39 TCK C IO38
+IO37
+IO36
+IO35
+NC: No component. EN
+For ESP32-S3-WROOM-1-N16R16V and ESP32-S3-WROOM-1U-N16R16V, IO47/IO48 operates in the 1.8V voltage domain.
+B B
+A A
+5 4 3 2 1
+3OI
+21OI 31OI 74OI 84OI
+IO6
+IO7
+9OI
+01OI 11OI
+IO15 IO16
+41OI 12OI
+IO1
+IO2
+IO17
+IO18
+USB_D- USB_D+
+54OI
+EN
+IO4
+IO5
+IO19
+IO20 IO0
+64OI
+VDD33 GND GND VDD33
+ESP32-S3-WROOM-1/ESP32-S3-WROOM-1U
+C3 1 40
+2 GND GND 39
+0.1uF 3 3V3 IO1 38
+GND 4 EN IO2 37
+GND GND 5 IO4 TXD0 36 GND
+C4 12pF(NC) 6 IO5 RXD0 35
+GND 7 IO6 IO42 34
+8 IO7 IO41 33 9 IO15 IO40 32 10 IO16 IO39 31
+11 IO17 IO38 30 GND
+GND IO8 12 IO18 IO37 29 JP4
+13 IO8 IO36 28 2
+14 IO19 IO35 27 1 2
+IO20 IO0 1
+Boot Option
+SW1
+U1
+GNDGND GND
+51
+3OI
+61
+64OI
+71
+9OI
+81
+01OI
+91
+11OI
+02
+21OI
+12
+31OI
+22
+41OI
+32
+12OI
+42
+74OI
+52
+84OI
+62
+54OI
+41
+EPAD
+C2 TBD
+X1 32.768KHz(NC)
+R4 0
+R7 0
+1
+2
+R2
+NC
+JP1
+1
+2 1
+C1 R1 TBD 3 2
+4 3
+22uF 4
+UART
+JP2
+1
+2 1
+R3 0(NC) 3 2 R5 0(NC) 4 3 4
+JTAG
+C7 12pF(NC)
+JP3
+1 R6 0 1 2
+2
+USB OTG C6 C5
+TBD TBD C8 0.1uF
+图9-1.外围设计原理图
+• EPAD可以不焊接到底板，但是焊接到底板的GND可以获得更好的散热特性。如果您想将EPAD焊接到底
+板，请确保使用适量焊膏，避免过量焊膏造成模组与底板距离过大，影响管脚与底板之间的贴合。
+• 为确保ESP32-S3芯片上电时的供电正常，EN管脚处需要增加RC延迟电路。RC通常建议为R=10kΩ，
+C=1µF，但具体数值仍需根据模组电源的上电时序和芯片的上电复位时序进行调整。ESP32-S3芯片的
+上电复位时序图可参考章节4.5芯片上电和复位。
+乐鑫信息科技 39 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 40 ===
+10 尺寸规格
+10 尺寸规格
+10.1 模组尺寸
+2.0±5.52
+15.61
+9.0
+x
+04
+5.1
+72.1
+9.0
+x
+04
+18±0.2 3.1±0.15
+15.8
+Top View Side View Bottom View
+6.71
+40 x 0.45 1
+50.1
+0.8
+0.5
+40 x Ø0.55
+3.7
+40 x 0.85
+6
+Unit: mm
+0.9
+5 0.
+Ø
+13.97 1.27 2.015
+ESP32-S3-WROOM-1U Dimensions
+15.61
+9.0
+x
+04
+5.1
+72.1
+18±0.2
+10.75 0.5
+15.65
+3.7
+40 x 0.45 40 x 0.85
+Top View Bottom View
+5.71
+0.9
+Side View
+2.0±2.91
+9.0
+x 04
+0.8
+40 x Ø0.55
+1.08
+64.2
+1.1
+Unit: mm
+3.2±0.15
+3
+13.97 1.27 2.015
+1.31 5 0. Ø 7.5
+9.0
+9.0
+92.01
+92.01
+7.3
+7.3
+7.5
+图10-1.ESP32-S3-WROOM-1模组尺寸
+2.0±5.52
+15.61
+9.0
+x
+04
+5.1
+72.1
+9.0
+x
+04
+18±0.2 3.1±0.15
+15.8
+Top View Side View Bottom View
+6.71
+40 x 0.45 1
+50.1
+0.8
+0.5
+40 x Ø0.55
+3.7
+40 x 0.85
+6
+Unit: mm
+0.9
+5 0.
+Ø
+13.97 1.27 2.015
+ESP32-S3-WROOM-1U Dimensions
+15.61
+9.0
+x
+04
+5.1
+72.1
+18±0.2
+10.75
+0.5
+15.65
+3.7
+40 x 0.45 40 x 0.85
+Top View Bottom View
+5.71
+0.9
+Side View
+2.0±2.91
+9.0
+x 04
+0.8
+40 x Ø0.55
+1.08
+64.2
+1.1
+Unit: mm
+3.2±0.15
+3
+13.97 1.27 2.015
+1.31 5 0. Ø 7.5
+9.0
+9.0
+92.01
+92.01
+7.3
+7.3
+7.5
+图10-2.ESP32-S3-WROOM-1U模组尺寸
+说明：
+有关卷带、载盘和产品标签的信息，请参阅《ESP32-S3模组包装信息》。
+乐鑫信息科技 40 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 41 ===
+10 尺寸规格
+10.2 外部天线连接器尺寸
+ESP32-S3-WROOM-1U采用图10-3外部天线连接器尺寸图所示的第一代外部天线连接器，该连接器兼
+容：
+• 广濑(Hirose)的U.FL系列连接器
+• I-PEX的MHFI连接器
+• 安费诺(Amphenol)的AMC连接器
+Unit: mm
+图10-3.外部天线连接器尺寸图
+ESP32-S3-WROOM-1U在认证测试过程中搭配使用的外部天线为第一代外接单极子天线，料号为
+乐鑫信息科技 41 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 42 ===
+10 尺寸规格
+TFPD05H08750011。
+模组出货时不包含外部天线。请根据自身产品的使用环境与性能需求，选用适配的外部天线。
+如需自行选用，建议选用满足以下要求的天线：
+• 2.4GHz频段
+• 50Ω阻抗
+• 最大增益不超过认证中所用天线的增益2.33dbi
+• 接口规格与模组天线连接器接口匹配，参考图10-3外部天线连接器尺寸图
+说明：
+如选用不同类型或不同增益的外部天线，除乐鑫模组已有的天线测试报告外，可能还需进行包括EMC在内的额外测试，
+具体要求视认证类别而定。
+乐鑫信息科技 42 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 43 ===
+11 PCB布局建议
+11 PCB 布局建议
+11.1 PCB 封装图形
+本章节提供以下资源供您参考：
+• 推荐PCB封装图，标有PCB设计所需的全部尺寸。详见图11-1ESP32-S3-WROOM-1推荐PCB封装图和
+图11-2ESP32-S3-WROOM-1U推荐PCB封装图。
+• 推荐PCB封装图的源文件，用于测量图11-1和11-2中未标注的尺寸。您可用AutodeskViewer查看
+ESP32-S3-WROOM-1和ESP32-S3-WROOM-1U的封装图源文件。
+• ESP32-S3-WROOM-1和ESP32-S3-WROOM-1U的3D模型。请确保下载的3D模型为.STEP格式（注意，
+部分浏览器可能会加.txt后缀）。
+18
+Antenna Area
+1 40
+15 26
+5.52
+40 x1.5
+5.1
+9.0x
+04
+7.3
+9.0
+0.9
+3.7
+7.5
+6
+72.1
+0.5
+ESP32-S3-WROOM-1U Land Pattern
+18
+1
+15 26
+5.1
+2.91
+40 x1.5
+9.0x
+04
+72.1
+40
+0.5
+5.0
+7.3
+3.7 9.0
+Unit: mm
+Via for thermal pad
+Copper
+Unit: mm
+Via for thermal pad
+Copper
+0.9
+0.5
+7.5
+92.01
+94.7
+0.5
+5.0
+1.27
+2.015 2.015
+17.5
+15.61
+92.01
+1.27
+2.015 2.015
+17.5
+15.61
+91.1
+图11-1.ESP32-S3-WROOM-1推荐PCB封装图
+乐鑫信息科技 43 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 44 ===
+18
+Antenna Area
+1 40
+15 26
+11 PCB布局建议
+5.52
+40 x1.5
+5.1
+9.0x
+04
+7.3
+9.0
+0.9
+3.7
+7.5
+6
+72.1
+0.5
+ESP32-S3-WROOM-1U Land Pattern
+18
+1
+15 26
+5.1
+2.91
+40 x1.5
+9.0x
+04
+72.1
+40
+0.5
+5.0
+7.3
+3.7 9.0
+Unit: mm
+Via for thermal pad
+Copper
+Unit: mm
+Via for thermal pad
+Copper
+0.9
+0.5
+7.5
+92.01
+94.7
+0.5
+5.0
+1.27
+2.015 2.015
+17.5
+15.61
+92.01
+1.27
+2.015 2.015
+17.5
+15.61
+91.1
+图11-2.ESP32-S3-WROOM-1U推荐PCB封装图
+11.2 PCB 设计中的模组位置摆放
+如产品采用模组进行on-board设计，则需注意考虑模组在底板的布局，应尽可能地减小底板对模组PCB天线
+性能的影响。
+关于PCB设计中模组位置摆放的更多信息，请参考《ESP32-S3硬件设计指南》>章节基于模组的版图设计
+通用要点。
+乐鑫信息科技 44 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 45 ===
+12 产品处理
+12 产品处理
+12.1 存储条件
+密封在防潮袋(MBB)中的产品应储存在<40°C/90%RH的非冷凝大气环境中。
+模组的潮湿敏感度等级MSL为3级。
+真空袋拆封后，在25±5°C、60%RH下，必须在168小时内使用完毕，否则就需要烘烤后才能二次上线。
+12.2 静电放电 (ESD)
+• 人体放电模式(HBM)：±2000V
+• 充电器件模式(CDM)：±500V
+12.3 回流焊温度曲线
+建议模组只过一次回流焊。
+峰值温度：235 – 250 °C
+峰值时间：30 – 70 s
+温度 (°C )
+焊接时间：＞ 30 s
+焊料：锡银铜合⾦⽆铅焊料 (SAC305)
+250
+230
+217
+200
+180
+150
+100
+50
+升温区 预热区 焊接区 冷却区
+25 – 150 °C 150 – 200 °C ＞ 217 °C ＜ 180 °C
+25
+60 – 90 s 60 – 120 s 60 – 90 s –5 ~ –1 °C/s
+1 – 3 °C/s
+时间 (s)
+0
+50 100 150 200 250
+图12-1.回流焊温度曲线
+乐鑫信息科技 45 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 46 ===
+12 产品处理
+12.4 超声波振动
+请避免将乐鑫模组暴露于超声波焊接机或超声波清洗机等超声波设备的振动中。超声波设备的振动可能与模组
+内部的晶振产生共振，导致晶振故障甚至失灵，进而致使模组无法工作或性能退化。
+乐鑫信息科技 46 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 47 ===
+技术规格书版本号管理
+技术规格书版本号管理
+技术规格书版本 状态 水印 定义
+v0.1~v0.5（不 该技术规格书正在完善。对应产品处于设计阶段，
+草稿 Confidential
+包括v0.5） 产品规格如有变更，恕不另行通知。
+该技术规格书正在积极更新。对应产品处于验证
+v0.5~v1.0（不 初步
+Preliminary 阶段，产品规格可能会在量产前变更，并记录在
+包括v1.0） 发布
+技术规格书的修订历史中。
+该技术规格书已公开发布。对应产品已量产，产
+正式
+v1.0及更高版本 — 品规格已最终确定，重大变更将通过
+发布
+产品变更通知(PCN)进行通知。
+该技术规格书更新频率较低，对应产品不推荐用
+1
+任意版本 — 不推荐用于新设计(NRND)
+于新设计。
+2
+任意版本 — 停产(EOL) 该技术规格书不再维护，对应产品已停产。
+1
+技术规格书涵盖的所有产品型号均不推荐用于新设计时，封面才会添加水印。
+2
+技术规格书涵盖的所有产品型号均停产时，封面才会添加水印。
+乐鑫信息科技 47 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 48 ===
+相关文档和资源
+相关文档和资源
+相关文档
+• 《ESP32-S3技术规格书》–提供ESP32-S3芯片的硬件技术规格。
+• 《ESP32-S3技术参考手册》–提供ESP32-S3芯片的存储器和外设的详细使用说明。
+• 《ESP32-S3硬件设计指南》–提供基于ESP32-S3芯片的产品设计规范。
+• 《ESP32-S3系列芯片勘误表》–描述ESP32-S3系列芯片的已知错误。
+• 证书
+https://espressif.com/zh-hans/support/documents/certificates
+• ESP32-S3产品/工艺变更通知(PCN)
+https://espressif.com/zh-hans/support/documents/pcns?keys=ESP32-S3
+• ESP32-S3公告–提供有关安全、bug、兼容性、器件可靠性的信息
+https://espressif.com/zh-hans/support/documents/advisories?keys=ESP32-S3
+• 文档更新和订阅通知
+https://espressif.com/zh-hans/support/download/documents
+开发者社区
+• 《ESP32-S3ESP-IDF编程指南》–ESP-IDF开发框架的文档中心。
+• ESP-IDF及GitHub上的其它开发框架
+https://github.com/espressif
+• ESP32论坛–工程师对工程师(E2E)的社区，您可以在这里提出问题、解决问题、分享知识、探索观点。
+https://esp32.com/
+• ESP-FAQ–由乐鑫官方推出的针对常见问题的总结。
+https://espressif.com/projects/esp-faq/zh_CN/latest/index.html
+• TheESPJournal–分享乐鑫工程师的最佳实践、技术文章和工作随笔。
+https://blog.espressif.com/
+• SDK和演示、App、工具、AT等下载资源
+https://espressif.com/zh-hans/support/download/sdks-demos
+产品
+• ESP32-S3系列芯片–ESP32-S3全系列芯片。
+https://espressif.com/zh-hans/products/socs?id=ESP32-S3
+• ESP32-S3系列模组–ESP32-S3全系列模组。
+https://espressif.com/zh-hans/products/modules?id=ESP32-S3
+• ESP32-S3系列开发板–ESP32-S3全系列开发板。
+https://espressif.com/zh-hans/products/devkits?id=ESP32-S3
+• ESPProductSelector（乐鑫产品选型工具）–通过筛选性能参数、进行产品对比快速定位您所需要的产品。
+https://products.espressif.com/#/product-selector?language=zh
+联系我们
+• 商务问题、技术支持、电路原理图&PCB设计审阅、购买样品（线上商店）、成为供应商、意见与建议
+https://espressif.com/zh-hans/contact-us/sales-questions
+乐鑫信息科技 48 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 49 ===
+修订历史
+修订历史
+日期 版本 发布说明
+• 将“订购代码”更新为“物料编号”
+• 更新章节5.2外设描述中每个小节的管脚分配部分
+2026-03-02 v1.8 • 在5.2.1.9SD/MMC主机控制器小节增加一条说明
+• 更新表格6-7低功耗模式下的功耗
+• 新增表6-5Active模式下低功耗蓝牙功耗特性
+2025-11-18 v1.7
+• 新增章节4.5芯片上电和复位
+• 新增章节6.5存储器规格
+• 在章节10.2外部天线连接器尺寸新增认证所需的外部天线信息
+2025-07-25 v1.6
+• 新增章节技术规格书版本号管理
+• 其他微小改动
+• 在章节2功能框图中新增关于芯片与封装内flash/PSRAM管脚对应关系
+2025-06-10 v1.5 的注释
+• 将模组型号 ESP32-S3-WROOM-1-N16R16V 和 ESP32-S3-WROOM-1U-
+N16R16V更名为ESP32-S3-WROOM-1-N16R16VA和ESP32-S3-WROOM-
+1U-N16R16VA
+• 在章节1.2型号对比的注释中新增对芯片修订信息的说明
+• 更新章节1.3应用
+• 更新章节Strapping管脚为章节4启动配置项
+• 新增章节5.2外设描述
+2024-11-14 v1.4 • 拆分章节电气特性为章节6电气特性和章节7射频特性，并更新格式和
+措辞
+• 拆分章节模组尺寸和PCB封装图形为章节10尺寸规格和11PCB布局建
+议，并新增章节11.2PCB设计中的模组位置摆放
+• 在章节11.1PCB封装图形中新增ESP32-S3-WROOM-1U的3D模型链接
+• 更新图12-1回流焊温度曲线
+• 其他格式和措辞的次要更新
+• 新增模组型号 ESP32-S3-WROOM-1-N16R16VA 和 ESP32-S3-WROOM-
+1U-N16R16VA并更新相关信息
+• 更新表1-2ESP32-S3-WROOM-1U系列型号对比中的表注
+• 更新章节4.1芯片启动模式控制
+2023-11-24 v1.3
+• 更新章节8模组原理图中的模组原理图
+• 更新章节10.1模组尺寸中的模组尺寸图
+• 其他微小改动
+见下页
+乐鑫信息科技 49 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 50 ===
+修订历史
+接上页
+日期 版本 发布说明
+• 更新章节Strapping管脚
+• 更新章节6.4功耗特性
+• 更新章节 7.2.1 低功耗蓝牙射频发射器 (TX) 特性 中射频发射功率的最小
+值
+2023-03-07 v1.2 • 更新章节9外围设计原理图中的描述
+• 在章节11.1PCB封装图形中增加描述
+• 更新章节12.4
+• 其他微小改动
+• 更新表1-1和1-2
+2022-07-22 v1.1 • 其他微小改动
+• 更新低功耗蓝牙射频数据
+• 更新表6-7内的功耗数据
+2022-04-21 v1.0 • 添加认证和测试信息
+• 更新章节Strapping管脚
+2021-10-29 v0.6 全面更新，针对芯片版本revision1
+2021-07-19 v0.5.1 预发布，针对芯片版本revision0
+乐鑫信息科技 50 ESP32-S3-WROOM-1&WROOM-1U技术规格书v1.8
+反馈文档意见
+=== PAGE 51 ===
+免责声明和版权公告
+本文档中的信息，包括供参考的URL地址，如有变更，恕不另行通知。
+本文档可能引用了第三方的信息，所有引用的信息均为“按现状”提供，乐鑫不对信息的准确性、真实性做任何保证。
+乐鑫不对本文档的内容做任何保证，包括内容的适销性、是否适用于特定用途，也不提供任何其他乐鑫提案、规格书或样
+品在他处提到的任何保证。
+乐鑫不对本文档是否侵犯第三方权利做任何保证，也不对使用本文档内信息导致的任何侵犯知识产权的行为负责。本文档
+在此未以禁止反言或其他方式授予任何知识产权许可，不管是明示许可还是暗示许可。
+Wi-Fi联盟成员标志归Wi-Fi联盟所有。蓝牙标志是BluetoothSIG的注册商标。
+文档中提到的所有商标名称、商标和注册商标均属其各自所有者的财产，特此声明。
+版权归©2026乐鑫信息科技（上海）股份有限公司。保留所有权利。
+www.espressif.com

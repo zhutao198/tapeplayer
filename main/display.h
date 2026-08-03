@@ -1,6 +1,6 @@
 /**
  * @file display.h
- * @brief SSD1306 OLED 显示模块
+ * @brief ST7789 TFT 显示模块 (原生 esp_lcd + LVGL v9)
  */
 
 #pragma once
@@ -22,7 +22,7 @@ typedef enum {
 } player_state_t;
 
 /**
- * @brief 初始化 OLED 显示屏
+ * @brief 初始化 TFT 显示屏 (esp_lcd ST7789 + LVGL)
  */
 void display_init(void);
 
@@ -58,6 +58,24 @@ void display_show_no_files(void);
  * @brief 显示"无 SD 卡"提示
  */
 void display_show_no_card(void);
+
+/**
+ * @brief 设置屏幕背光亮度 (0-100)
+ * @note TFT_BLK (IO15) 由 LEDC PWM 控制
+ */
+void display_set_brightness(int percent);
+
+/**
+ * @brief 控制 LCD 软件电源 (PMOS 软开关, IO39)
+ * @param on true=上电显示, false=断电省电
+ */
+void display_power(bool on);
+
+/**
+ * @brief 设置当前播放模式 (供主界面状态栏显示)
+ * @param mode 0=顺序(SEQ) 1=全部循环(ALL) 2=单曲循环(ONE)
+ */
+void display_set_play_mode(int mode);
 
 #define BROWSE_VISIBLE_LINES 6
 

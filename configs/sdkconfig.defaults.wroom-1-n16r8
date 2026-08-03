@@ -44,3 +44,15 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# FreeRTOS backward compatibility for ESP-ADF
+# ESP-ADF 组件 (audio_pipeline / audio_element) 仍使用旧 FreeRTOS API
+# (xSemaphoreHandle, portTICK_RATE_MS, mutex_* 等)，在 IDF v5.x 中需显式开启向后兼容
+CONFIG_FREERTOS_ENABLE_BACKWARD_COMPATIBILITY=y
+
+# ADF audio_board selection
+# 本项目为自定义 tapebook 硬件，audio_board_init() 实际未被调用（I2S/LCD/SD 均由自写驱动接管），
+# 但 ADF 的 audio_stream 组件 REQUIRES audio_board，故需选定一个板型。
+# 现改为项目内 components/audio_board 覆盖 ADF 自带版本，提供自定义 tapebook 板（桩实现），
+# 不再依赖任何现成开发板（ESP_SD_PIN_* 宏在 tapebook/board_def.h 中定义，值仅用于编译）。
+CONFIG_ESP_TAPEBOOK_BOARD=y

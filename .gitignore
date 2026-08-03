@@ -49,6 +49,12 @@ components/u8g2/
 # macOS 元数据（解压参考设计时引入）
 __MACOSX/
 
+# AI 工具 / IDE 缓存（禁止入库）
+.clangd/
+.codebuddy/
+.opencode/
+.workbuddy/
+
 # 本地工具脚本
 poller.ps1
 

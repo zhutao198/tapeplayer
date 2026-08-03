@@ -36,6 +36,7 @@
 #include "wav_decoder.h"
 #include "esp_timer.h"
 #include "filter_resample.h"
+#include "driver/i2s.h"        // 遗留 I2S 驱动: i2s_set_pin 显式绑定 GPIO
 #include <sys/stat.h>
 // 2026-07-03 R003: 注释 board.h（项目用 MAX98357 + SSD1306 非 ADF 开发板，未配置 audio_board Kconfig，
 //   而代码未实际使用 board.h 中任何 API）
@@ -110,14 +111,21 @@ void audio_player_init(void)
     ESP_LOGI(TAG, "Initializing audio subsystem...");
 
     // 创建 I2S 输出流（跨曲目复用，无需每次重建）
-    // I2S 驱动由 i2s_stream_init 内部管理（L-3: 已验证 OK）
+    // I2S 引脚直接绑定到原理图定义 (BCLK=IO6, WS=IO7, DIN=IO5, MAX98357 U8)
+    // IDF v5 的 i2s_stream 通过 std_cfg.gpio_cfg 配置引脚 (i2s_set_pin 已移除)
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
     i2s_cfg.type = AUDIO_STREAM_WRITER;
+    i2s_cfg.std_cfg.gpio_cfg.bclk = I2S_BCK_IO;
+    i2s_cfg.std_cfg.gpio_cfg.ws   = I2S_WS_IO;
+    i2s_cfg.std_cfg.gpio_cfg.dout = I2S_DOUT_IO;
+    i2s_cfg.std_cfg.gpio_cfg.din  = GPIO_NUM_NC;
     g_i2s_writer = i2s_stream_init(&i2s_cfg);
     if (!g_i2s_writer) {
         ESP_LOGE(TAG, "Failed to create I2S writer stream");
         return;
     }
+    ESP_LOGI(TAG, "I2S pins bound: BCLK=IO%d WS=IO%d DIN=IO%d",
+             I2S_BCK_IO, I2S_WS_IO, I2S_DOUT_IO);
 
     ESP_LOGI(TAG, "Audio subsystem initialized (I2S writer ready)");
 }
@@ -537,9 +545,9 @@ int audio_player_get_volume(void)
 /* ============================================================
  * Tick — 处理管道状态 + 快进/快退跳帧
  *
- * 跳帧策略（C3: 档位 1.5/2.0/3.0 I2S 变速 + 4.0 跳帧模式）：
+ * 跳帧策略（档位 1.5/2.0/3.0 I2S 变速 + 8.0x 跳帧模式）：
  * - 1.5x / 2.0x / 3.0x：仅变速（I2S 采样率），不跳帧
- * - 4.0x（跳帧模式）：正常 I2S + 每 50ms seek 跳帧（跳 7/8 音频）
+ * - 8.0x（跳帧模式）：正常 I2S + 每 50ms seek 跳帧（跳 7/8 音频）
  * - 快退：所有档位都通过向后 seek 模拟
  * ============================================================ */
 void audio_player_tick(void)
