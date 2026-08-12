@@ -107,6 +107,16 @@ void display_show_volume(int volume);
  */
 void display_show_browse(int selected, int total, char lines[][24], int count);
 
+/**
+ * @brief 统一设置菜单显示 (R049)
+ * @param title  当前层标题
+ * @param lines  预格式化显示行数组（含标记+文本，如 "> 播放模式: 顺序播放"）
+ * @param count  总行数
+ * @param sel    当前选中索引 (未使用, 预留)
+ * @param hint   底部操作提示
+ */
+void display_show_menu(const char *title, char lines[][24], int count, int sel, const char *hint);
+
 #ifdef __cplusplus
 }
 #endif

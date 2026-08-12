@@ -35,6 +35,7 @@
 #include "audio_player.h"
 #include "settings.h"
 #include "power_mgmt.h"
+#include "menu.h"
 
 #include "bookmark.h"
 #include "led_strip.h"
@@ -61,6 +62,7 @@ typedef enum {
     APP_STATE_FAST_FORWARD,    // 快进（磁带模式）
     APP_STATE_REWIND,          // 快退（磁带模式）
     APP_STATE_BROWSING,        // 文件夹浏览
+    APP_STATE_MENU,            // 统一设置菜单 (R049)
 } app_state_t;
 
 // 所有全局变量单任务访问，无需 volatile（M-9/L-8: 设计确认 OK）
@@ -86,6 +88,7 @@ static int            g_pending_save_position = 0;
 
 static int            g_browse_index = 0;              // 浏览模式选中索引
 static app_state_t    g_state_before_browse = APP_STATE_STOPPED;
+static app_state_t    g_state_before_menu   = APP_STATE_STOPPED;
 static uint32_t       g_browse_repeat_ms = 0;          // 浏览长按连续移动基准时刻 (hold_ms)
 
 // 组合键 REW+STOP：两键在 COMBO_WINDOW_US 内先后/同时短按 → 跳到当前曲首
@@ -264,12 +267,68 @@ static void on_track_finished(int state, void *user_data)
 }
 
 /* ============================================================
+ * 统一菜单宿主回调 (R049) — 由 menu.cpp 调用
+ * ============================================================ */
+void app_menu_exit(void)
+{
+    menu_close();
+    g_app_state = g_state_before_menu;
+}
+
+void app_enter_browse(void)
+{
+    if (playlist_count() == 0) {
+        menu_close();
+        g_app_state = g_state_before_menu;
+        return;
+    }
+    g_state_before_browse = g_state_before_menu;
+    menu_close();
+    g_app_state = APP_STATE_BROWSING;
+    g_browse_index = g_current_track;
+    ESP_LOGI(TAG, "Enter browse via menu");
+}
+
+int app_get_play_mode(void)
+{
+    return (int)g_play_mode;
+}
+
+void app_set_play_mode(int m)
+{
+    if (m < 0) m = 0;
+    if (m > 2) m = 2;
+    g_play_mode = (play_mode_t)m;
+    settings_save_play_mode(m);
+    display_set_play_mode(m);
+}
+
+/* ============================================================
  * 处理按键事件
  * ============================================================ */
 static void handle_button_events(void)
 {
     btn_event_info_t events[8];
     int n = button_manager_scan(events, sizeof(events) / sizeof(events[0]));
+
+    /* 统一菜单路由 (R049): 菜单打开时所有按键交给菜单处理 */
+    if (menu_is_open()) {
+        menu_handle_button(events, n);
+        return;
+    }
+
+    /* 统一菜单入口: 长按 STOP 在播放相关态打开菜单 (取代原"长按 STOP 进浏览") */
+    for (int j = 0; j < n; j++) {
+        if (events[j].id == BTN_ID_STOP &&
+            events[j].event == BTN_EVENT_LONG_PRESS &&
+            (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
+             g_app_state == APP_STATE_STOPPED)) {
+            g_state_before_menu = g_app_state;
+            menu_open();
+            g_app_state = APP_STATE_MENU;
+            return;
+        }
+    }
 
     /* 组合键 REW+STOP 跳曲首：先检测本帧是否两键同时短按（排除浏览/空闲态） */
     uint64_t now = esp_timer_get_time();
@@ -611,6 +670,10 @@ static void update_display(void)
     if ((now - g_last_display_update) < 200000) return;
     g_last_display_update = now;
 
+    if (g_app_state == APP_STATE_MENU) {
+        return;  // 菜单由自身渲染 (menu_render → display_show_menu)
+    }
+
     if (g_app_state == APP_STATE_BROWSING) {
         int total = playlist_count();
         int scroll = g_browse_index - (BROWSE_VISIBLE_LINES / 2);
@@ -785,6 +848,7 @@ static void init_hardware(void)
 
     // 4. 按键
     button_manager_init();
+    menu_init();
 
     // 5. 磁带控制器
     tape_control_init();

@@ -818,3 +818,30 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
                     "\n上翻页/下翻页 翻页  上一首/下一首 移动  确认 播放  退出 停止");
     ui_show_msg(buf);
 }
+
+void display_show_menu(const char *title, char lines[][24], int count, int sel, const char *hint)
+{
+    (void)sel;
+    if (!g_display_initialized || count <= 0) return;
+
+    static char buf[256];
+    int len = 0;
+    len += snprintf(buf + len, sizeof(buf) - len, "%s\n",
+                    (title && title[0]) ? title : "菜单");
+
+    int shown = count;
+    if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
+    for (int i = 0; i < shown; i++) {
+        len += snprintf(buf + len, sizeof(buf) - len, "%s\n", lines[i]);
+    }
+    if (hint) {
+        len += snprintf(buf + len, sizeof(buf) - len, "\n%s", hint);
+    }
+
+    /* 菜单为活跃界面, 唤醒背光 */
+    if (g_display_sleep) {
+        display_set_brightness(s_last_brightness);
+        g_display_sleep = false;
+    }
+    ui_show_msg(buf);
+}

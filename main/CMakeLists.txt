@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.cpp"
+        "menu.cpp"
         "button_manager.cpp"
         "tape_control.cpp"
         "playlist.cpp"
