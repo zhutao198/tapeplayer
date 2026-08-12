@@ -117,6 +117,13 @@ void display_show_browse(int selected, int total, char lines[][24], int count);
  */
 void display_show_menu(const char *title, char lines[][24], int count, int sel, const char *hint);
 
+/**
+ * @brief 通用信息屏 (R049c 桩功能提示，如 OTA/USB/关于)
+ * @param title 标题（居中首行）
+ * @param text  多行正文（'\n' 分隔，居中）
+ */
+void display_show_info(const char *title, const char *text);
+
 #ifdef __cplusplus
 }
 #endif

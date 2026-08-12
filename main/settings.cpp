@@ -212,6 +212,53 @@ int settings_load_auto_off(void)
     return (int)min;
 }
 
+/* R049c / R049d：按键提示音、语音播报、EQ（桩，持久化无效果） */
+void settings_save_key_beep(int on)
+{
+    if (!g_nvs_handle) return;
+    esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_KEY_BEEP, (uint8_t)(on ? 1 : 0));
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_KEY_BEEP, err);
+}
+
+int settings_load_key_beep(void)
+{
+    if (!g_nvs_handle) return 0;
+    uint8_t v = 0;
+    if (nvs_get_u8(g_nvs_handle, NVS_KEY_KEY_BEEP, &v) != ESP_OK) v = 0;
+    return (int)v;
+}
+
+void settings_save_voice(int on)
+{
+    if (!g_nvs_handle) return;
+    esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_VOICE, (uint8_t)(on ? 1 : 0));
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_VOICE, err);
+}
+
+int settings_load_voice(void)
+{
+    if (!g_nvs_handle) return 0;
+    uint8_t v = 0;
+    if (nvs_get_u8(g_nvs_handle, NVS_KEY_VOICE, &v) != ESP_OK) v = 0;
+    return (int)v;
+}
+
+void settings_save_eq(int mode)
+{
+    if (!g_nvs_handle) return;
+    esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_EQ, (uint8_t)mode);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_EQ, err);
+}
+
+int settings_load_eq(void)
+{
+    if (!g_nvs_handle) return 0;
+    uint8_t v = 0;
+    if (nvs_get_u8(g_nvs_handle, NVS_KEY_EQ, &v) != ESP_OK) v = 0;
+    if (v > 4) v = 0;
+    return (int)v;
+}
+
 void settings_flush(void)
 {
     if (!g_nvs_handle) return;

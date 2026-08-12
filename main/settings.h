@@ -66,6 +66,14 @@ void settings_save_auto_off(int minutes);
  */
 int settings_load_auto_off(void);
 
+/* R049c / R049d：按键提示音、语音播报、EQ */
+void settings_save_key_beep(int on);
+int  settings_load_key_beep(void);
+void settings_save_voice(int on);
+int  settings_load_voice(void);
+void settings_save_eq(int mode);
+int  settings_load_eq(void);
+
 /**
  * @brief 提交所有未保存的设置（批量 flush，降低 flash 磨损）
  */

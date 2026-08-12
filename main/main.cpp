@@ -95,6 +95,12 @@ static uint32_t       g_browse_repeat_ms = 0;          // 浏览长按连续移�
 static uint64_t       g_combo_rew_us = 0;
 static uint64_t       g_combo_stop_us = 0;
 
+// R049c：信息屏覆盖（OTA/USB/关于等桩提示，1.5s 后自动消失）
+static char     g_info_title[32] = {0};
+static char     g_info_text[64] = {0};
+static uint64_t g_info_until_us = 0;
+static bool     g_info_active = false;
+
 /**
  * 浏览模式长按连续移动的间隔 (ms/曲)：随按住时长加速缩短。
  * 刚进入长按用 BROWSE_REPEAT_MS_INIT，超过 BROWSE_HOLD_ACCEL_MS 后用最快间隔。
@@ -303,6 +309,26 @@ void app_set_play_mode(int m)
     display_set_play_mode(m);
 }
 
+/* R049c：信息屏（桩功能提示） */
+void app_show_info(const char *title, const char *text)
+{
+    strncpy(g_info_title, title ? title : "", sizeof(g_info_title) - 1);
+    g_info_title[sizeof(g_info_title) - 1] = '\0';
+    strncpy(g_info_text, text ? text : "", sizeof(g_info_text) - 1);
+    g_info_text[sizeof(g_info_text) - 1] = '\0';
+    g_info_until_us = esp_timer_get_time() + 1500000;  // 显示 1.5s
+    g_info_active = true;
+    ESP_LOGI(TAG, "Info: %s", title);
+}
+
+/* R049c：按键提示音（设置开启且非播放态时在菜单/浏览/停止态播放） */
+void app_play_beep(void)
+{
+    if (settings_load_key_beep()) {
+        audio_player_play_beep();
+    }
+}
+
 /* ============================================================
  * 处理按键事件
  * ============================================================ */
@@ -451,6 +477,7 @@ static void handle_button_events(void)
         /* --- 播放/暂停 --- */
         case BTN_ID_PLAY_PAUSE:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
+                app_play_beep();  // R049c 按键提示音
                 if (g_app_state == APP_STATE_STOPPED || g_app_state == APP_STATE_IDLE) {
                     g_current_track = playlist_current_index();
                     // 不再清零：沿用 stop_playback/init_storage 缓存的位置（0 = 从头）
@@ -471,6 +498,7 @@ static void handle_button_events(void)
         /* --- 停止 --- */
         case BTN_ID_STOP:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
+                app_play_beep();  // R049c 按键提示音
                 if (combo_done) {
                     // 本帧已作为组合键处理（两键同按），跳过单独逻辑，避免重复 stop/skip
                 } else if (g_combo_rew_us && (now - g_combo_rew_us) < COMBO_WINDOW_US) {
@@ -496,6 +524,7 @@ static void handle_button_events(void)
         /* --- 上一首 --- */
         case BTN_ID_PREV:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
+                app_play_beep();  // R049c 按键提示音
                 if (g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND)
                     break;   // 按住快进/快退期间忽略切歌（磁带机互锁）
                 save_current_position();  // 切换前保存旧位置
@@ -515,6 +544,7 @@ static void handle_button_events(void)
         /* --- 下一首 --- */
         case BTN_ID_NEXT:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
+                app_play_beep();  // R049c 按键提示音
                 if (g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND)
                     break;   // 按住快进/快退期间忽略切歌（磁带机互锁）
                 save_current_position();
@@ -666,6 +696,16 @@ static void handle_button_events(void)
  * ============================================================ */
 static void update_display(void)
 {
+    // R049c：信息屏覆盖优先（OTA/USB/关于等桩提示），不受 200ms 节流限制
+    if (g_info_active) {
+        uint64_t t = esp_timer_get_time();
+        if (t < g_info_until_us) {
+            display_show_info(g_info_title, g_info_text);
+            return;
+        }
+        g_info_active = false;
+    }
+
     uint64_t now = esp_timer_get_time();
     if ((now - g_last_display_update) < 200000) return;
     g_last_display_update = now;

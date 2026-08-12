@@ -113,6 +113,29 @@ void audio_player_tick(void);
  */
 void audio_player_set_callback(audio_status_cb_t cb, void *user_data);
 
+/* ============================================================
+ * A-B 区间复读 (R049b)
+ * ============================================================ */
+/** 在当前播放位置标记 A 点（若已标记 B 则清除 B 重新选择） */
+void audio_player_mark_a(void);
+/** 在当前播放位置标记 B 点（需先标记 A） */
+void audio_player_mark_b(void);
+/** 清除 A/B 标记并关闭复读 */
+void audio_player_clear_ab(void);
+/** 开启/关闭复读（标记仍存在，仅控制是否循环） */
+void audio_player_set_ab_enabled(bool en);
+/** 复读是否开启 */
+bool audio_player_is_ab_enabled(void);
+/** A 点位置(ms)，未标记返回 -1 */
+int  audio_player_ab_a_ms(void);
+/** B 点位置(ms)，未标记返回 -1 */
+int  audio_player_ab_b_ms(void);
+
+/* ============================================================
+ * 按键提示音 (R049c) — 仅在非播放态（菜单/浏览/停止）有效
+ * ============================================================ */
+void audio_player_play_beep(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -184,6 +184,9 @@
 #define NVS_KEY_VOLUME      "volume"          // 音量 0~14 (15 档逻辑音量)
 #define NVS_KEY_PLAY_MODE   "play_mode"       // 播放模式 0=顺序
 #define NVS_KEY_AUTO_OFF    "auto_off_min"    // 自动关机 (分钟, 0=禁用)
+#define NVS_KEY_KEY_BEEP    "key_beep"        // 按键提示音 0/1 (R049c)
+#define NVS_KEY_VOICE       "voice"           // 语音播报 0/1 (R049d stub)
+#define NVS_KEY_EQ          "eq"              // EQ 模式 0..4 (R049d stub)
 
 /* ============================================================
  * 按键阈值

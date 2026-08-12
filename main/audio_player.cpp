@@ -29,6 +29,7 @@
 // R035-014：审计确认 audio_common.h 不是间接依赖（注释后构建通过 exit 0），正式删除
 #include "fatfs_stream.h"
 #include "i2s_stream.h"
+#include "raw_stream.h"
 #include "mp3_decoder.h"
 #include "aac_decoder.h"
 #include "flac_decoder.h"
@@ -38,6 +39,8 @@
 #include "filter_resample.h"
 #include "driver/i2s.h"        // 遗留 I2S 驱动: i2s_set_pin 显式绑定 GPIO
 #include <sys/stat.h>
+#include <stdlib.h>
+#include <math.h>
 // 2026-07-03 R003: 注释 board.h（项目用 MAX98357 + SSD1306 非 ADF 开发板，未配置 audio_board Kconfig，
 //   而代码未实际使用 board.h 中任何 API）
 // #include "board.h"
@@ -63,6 +66,11 @@ static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
 static int64_t      g_play_offset_us = 0;              // pause 时锁存的已播放时长，resume 时叠加
 static uint64_t     g_last_scrub_us = 0;               // M1: 上次跳帧时间戳（模块级全局）
+
+/* R049b：A-B 区间复读状态（ms，-1=未标记） */
+static int  g_ab_a_ms = -1;
+static int  g_ab_b_ms = -1;
+static bool g_ab_enabled = false;
 
 static audio_status_cb_t g_status_cb = NULL;
 static void              *g_user_data = NULL;
@@ -143,6 +151,11 @@ bool audio_player_play(const char *filepath)
 
     ESP_LOGI(TAG, "Playing: %s", filepath);
     audio_player_stop(); // 确保上一个管道已销毁
+
+    // R049b：新曲目清空 A-B 标记（避免跨文件失效）
+    g_ab_a_ms = -1;
+    g_ab_b_ms = -1;
+    g_ab_enabled = false;
 
     // 1. 创建 pipeline
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
@@ -572,6 +585,17 @@ void audio_player_tick(void)
         ESP_LOGD(TAG, "Duration estimated from file size: %d ms", g_total_duration_ms);
     }
 
+    // R049b：A-B 区间复读循环（仅在播放中、已开且 A<B 时生效）
+    if (g_ab_enabled && g_ab_a_ms >= 0 && g_ab_b_ms > g_ab_a_ms) {
+        int cur = audio_player_get_position_ms();
+        if (cur >= g_ab_b_ms) {
+            ESP_LOGD(TAG, "AB loop: seek back to A (%d ms)", g_ab_a_ms);
+            audio_pipeline_pause(g_pipeline);
+            audio_player_seek_ms_internal(g_ab_a_ms);
+            audio_pipeline_resume(g_pipeline);
+        }
+    }
+
     // 快进/快退跳帧处理
     tape_mode_t mode = tape_control_get_mode();
     if (mode == TAPE_MODE_NORMAL) return;
@@ -624,6 +648,128 @@ void audio_player_set_callback(audio_status_cb_t cb, void *user_data)
     g_user_data = user_data;
 }
 
+/* ============================================================
+ * R049b：A-B 区间复读
+ * ============================================================ */
+void audio_player_mark_a(void)
+{
+    if (!g_is_playing) {
+        ESP_LOGW(TAG, "AB mark A: not playing");
+        return;
+    }
+    g_ab_a_ms = audio_player_get_position_ms();
+    g_ab_b_ms = -1;   // 重新标记 B
+    ESP_LOGI(TAG, "AB mark A = %d ms", g_ab_a_ms);
+}
+
+void audio_player_mark_b(void)
+{
+    if (g_ab_a_ms < 0) {
+        ESP_LOGW(TAG, "AB mark B: A not set");
+        return;
+    }
+    g_ab_b_ms = audio_player_get_position_ms();
+    if (g_ab_b_ms <= g_ab_a_ms) g_ab_b_ms = g_ab_a_ms + 1000; // 保证 B>A
+    ESP_LOGI(TAG, "AB mark B = %d ms (span %d ms)", g_ab_b_ms, g_ab_b_ms - g_ab_a_ms);
+}
+
+void audio_player_clear_ab(void)
+{
+    g_ab_a_ms = -1;
+    g_ab_b_ms = -1;
+    g_ab_enabled = false;
+    ESP_LOGI(TAG, "AB cleared");
+}
+
+void audio_player_set_ab_enabled(bool en)
+{
+    // 未标记 A/B 时强制关闭，避免无效循环
+    if (en && (g_ab_a_ms < 0 || g_ab_b_ms <= g_ab_a_ms)) {
+        ESP_LOGW(TAG, "AB enable ignored: A/B not set");
+        return;
+    }
+    g_ab_enabled = en;
+    ESP_LOGI(TAG, "AB enabled = %d", g_ab_enabled);
+}
+
+bool audio_player_is_ab_enabled(void) { return g_ab_enabled; }
+int  audio_player_ab_a_ms(void) { return g_ab_a_ms; }
+int  audio_player_ab_b_ms(void) { return g_ab_b_ms; }
+
+/* ============================================================
+ * R049c：按键提示音
+ * 复用空闲的 g_i2s_writer 播放一段内存 PCM（raw_stream → i2s），
+ * 与音乐互斥（仅非播放态调用），避免 I2S 冲突。
+ * ============================================================ */
+static bool g_beep_busy = false;
+
+void audio_player_play_beep(void)
+{
+    if (g_beep_busy)   return;
+    if (g_is_playing)  return;     // 播放音乐时不提示（避免打断音乐）
+    if (!g_i2s_writer) return;
+    g_beep_busy = true;
+
+    const int rate = 44100, ch = 2, bits = 16, ms = 60;
+    const int n = rate * ch * (bits / 8) * ms / 1000;
+    static uint8_t *buf = NULL;
+    static int      buf_cap = 0;
+    if (!buf || buf_cap < n) {
+        if (buf) free(buf);
+        buf = (uint8_t *)malloc(n);
+        buf_cap = n;
+    }
+    if (!buf) { g_beep_busy = false; return; }
+
+    int16_t *pcm = (int16_t *)buf;
+    int nsamp = n / 2;
+    float PI = 3.14159265f;
+    int fade = (int)(0.002f * rate);   // 2ms 淡入淡出防爆音
+    if (fade < 1) fade = 1;
+    for (int i = 0; i < nsamp; i++) {
+        float t = (float)i / (float)rate;
+        float env = 1.0f;
+        if (i < fade)            env = (float)i / fade;
+        else if (i > nsamp - fade) env = (float)(nsamp - i) / fade;
+        pcm[i] = (int16_t)(sinf(2.0f * PI * 880.0f * t) * 6000.0f * env);
+    }
+
+    audio_pipeline_cfg_t pcfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
+    audio_pipeline_handle_t p = audio_pipeline_init(&pcfg);
+    if (!p) { g_beep_busy = false; return; }
+
+    raw_stream_cfg_t rcfg = RAW_STREAM_CFG_DEFAULT();
+    rcfg.type = AUDIO_STREAM_WRITER;
+    audio_element_handle_t raw = raw_stream_init(&rcfg);
+    if (!raw) { audio_pipeline_deinit(p); g_beep_busy = false; return; }
+
+    audio_pipeline_register(p, raw, "raw");
+    audio_pipeline_register(p, g_i2s_writer, "i2s");
+    const char *tags[2] = {"raw", "i2s"};
+    audio_pipeline_link(p, tags, 2);
+    i2s_stream_set_clk(g_i2s_writer, rate, bits, ch);
+    audio_pipeline_run(p);
+
+    int off = 0, left = n;
+    while (left > 0) {
+        int w = raw_stream_write(raw, (char *)buf + off, left);
+        if (w <= 0) break;
+        off += w; left -= w;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    audio_element_set_ringbuf_done(raw);
+
+    vTaskDelay(pdMS_TO_TICKS(ms + 60));   // 等播放完
+
+    audio_pipeline_stop(p);
+    audio_pipeline_unregister(p, raw);
+    audio_pipeline_unregister(p, g_i2s_writer);  // 保留 g_i2s_writer 不销毁
+    audio_pipeline_deinit(p);
+    audio_element_deinit(raw);
+
+    g_beep_busy = false;
+}
+
 #else // 不使用 ESP-ADF 的简易占位实现
 
 #include "esp_log.h"
@@ -653,5 +799,15 @@ void audio_player_set_volume(int volume) {}
 int  audio_player_get_volume(void) { return AUDIO_OUTPUT_VOL; }  // R032-303：使用默认音量常量，消除硬编码耦合
 void audio_player_tick(void) {}
 void audio_player_set_callback(audio_status_cb_t cb, void *user_data) {}
+
+/* R049b / R049c stub */
+void audio_player_mark_a(void) {}
+void audio_player_mark_b(void) {}
+void audio_player_clear_ab(void) {}
+void audio_player_set_ab_enabled(bool en) { (void)en; }
+bool audio_player_is_ab_enabled(void) { return false; }
+int  audio_player_ab_a_ms(void) { return -1; }
+int  audio_player_ab_b_ms(void) { return -1; }
+void audio_player_play_beep(void) {}
 
 #endif // CONFIG_USE_ESP_ADF

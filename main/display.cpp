@@ -845,3 +845,23 @@ void display_show_menu(const char *title, char lines[][24], int count, int sel, 
     }
     ui_show_msg(buf);
 }
+
+void display_show_info(const char *title, const char *text)
+{
+    if (!g_display_initialized) return;
+
+    static char buf[256];
+    int len = 0;
+    len += snprintf(buf + len, sizeof(buf) - len, "%s\n\n",
+                    (title && title[0]) ? title : "信息");
+    if (text) {
+        len += snprintf(buf + len, sizeof(buf) - len, "%s", text);
+    }
+    len += snprintf(buf + len, sizeof(buf) - len, "\n\n（按任意键返回）");
+
+    if (g_display_sleep) {
+        display_set_brightness(s_last_brightness);
+        g_display_sleep = false;
+    }
+    ui_show_msg(buf);
+}
