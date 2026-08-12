@@ -36,7 +36,7 @@ void display_init(void);
  * @param total_sec   总时长秒数 (0=未知)
  * @param speed       播放速度倍率
  * @param gear        加速档位 (0=正常)
- * @param volume      音量 0-100
+ * @param volume      音量 level 0..14 (15 档逻辑音量)
  */
 void display_update(player_state_t state,
                     const char *track_name,
@@ -60,6 +60,18 @@ void display_show_no_files(void);
 void display_show_no_card(void);
 
 /**
+ * @brief 设置 TF 卡在位状态 (状态栏 SD 图标 + 插拔瞬时提示)
+ * @param present true=已插入, false=已弹出
+ */
+void display_set_sd_present(bool present);
+
+/**
+ * @brief 仅初始化 TF 卡图标状态 (无插拔提示, 用于开机)
+ * @param present true=已插入, false=已弹出
+ */
+void display_set_sd_present_init(bool present);
+
+/**
  * @brief 设置屏幕背光亮度 (0-100)
  * @note TFT_BLK (IO15) 由 LEDC PWM 控制
  */
@@ -76,6 +88,13 @@ void display_power(bool on);
  * @param mode 0=顺序(SEQ) 1=全部循环(ALL) 2=单曲循环(ONE)
  */
 void display_set_play_mode(int mode);
+
+/**
+ * @brief 触发音量条显示 (调节音量时调用)
+ * @note 调用后音量条立即显示最新音量, 并在停止调节 3 秒后自动隐藏
+ * @param volume 当前音量 level 0..VOLUME_LEVEL_MAX (15 档逻辑音量)
+ */
+void display_show_volume(int volume);
 
 #define BROWSE_VISIBLE_LINES 6
 

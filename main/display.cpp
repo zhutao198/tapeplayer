@@ -72,11 +72,19 @@ static lv_obj_t *reel_r      = NULL; // 磁带右卷轴装饰
 static lv_obj_t *batt_frame  = NULL; // 电量外框
 static lv_obj_t *batt_fill   = NULL; // 电量填充
 static lv_obj_t *batt_charge = NULL; // 充电标记 "充"
-static lv_obj_t *vol_box     = NULL; // 音量容器 (扬声器图标 + 水平音量条)
+static lv_obj_t *vol_box     = NULL; // 音量容器 (右侧竖向: 扬声器图标 + 竖向音量条)
 static lv_obj_t *vol_spk_box = NULL; // 扬声器箱体 (小矩形)
 static lv_obj_t *vol_cone    = NULL; // 扬声器锥体 (三角线, 指向右)
-static lv_obj_t *vol_lvl     = NULL; // 水平音量条 (0-100)
+static lv_obj_t *vol_lvl     = NULL; // 竖向音量条 (level 0..14)
 static lv_obj_t *lbl_seek    = NULL; // 快进/快退 读秒（居中醒目）
+
+/* TF 卡状态图标与插拔提示 */
+static lv_obj_t *sd_icon_box = NULL;  // TF 卡图标: 卡片外形 (青色=在位, 灰=弹出)
+static lv_obj_t *sd_icon_lbl = NULL;  // "TF" 文字
+static lv_obj_t *lbl_sd_toast = NULL; // 插拔瞬时提示 (居中, 由 LVGL 定时器控制显隐)
+static int64_t   g_sd_toast_until = 0;
+
+static int64_t   g_vol_hide_until = 0; // 音量条自动隐藏截止时间 (停止调节 3s 后隐藏)
 
 static int s_play_mode = 0;          // 0=SEQ 1=ALL 2=ONE
 
@@ -304,7 +312,7 @@ static void ui_create(void)
     /* 状态栏: 左=状态/曲目/模式  右=图形电量+音量 */
     lbl_status = lv_label_create(g_player);
     lv_obj_set_pos(lbl_status, M, 6);
-    lv_obj_set_width(lbl_status, W - 2 * M - 118);
+    lv_obj_set_width(lbl_status, W - 2 * M - 136);
     lv_label_set_long_mode(lbl_status, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_status, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl_status, &lv_font_chinese_14, 0);
@@ -332,49 +340,94 @@ static void ui_create(void)
     lv_obj_set_style_bg_color(batt_nub, lv_color_white(), 0);
     lv_obj_set_style_border_width(batt_nub, 0, 0);
     lv_obj_clear_flag(batt_nub, LV_OBJ_FLAG_CLICKABLE);
-    batt_charge = lv_label_create(g_player);        // 充电标记
-    lv_obj_align_to(batt_charge, batt_frame, LV_ALIGN_OUT_LEFT_MID, -4, 0);
-    lv_label_set_text(batt_charge, "充");
-    lv_obj_set_style_text_color(batt_charge, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_text_font(batt_charge, &lv_font_chinese_12, 0);
+    /* 充电标记: 绿色闪电符号 (矢量线绘制, 不依赖字体字形) */
+    batt_charge = lv_obj_create(g_player);
+    lv_obj_set_size(batt_charge, 12, 16);
+    lv_obj_align_to(batt_charge, batt_frame, LV_ALIGN_OUT_LEFT_MID, -6, 0);
+    lv_obj_set_style_bg_opa(batt_charge, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(batt_charge, 0, 0);
+    lv_obj_clear_flag(batt_charge, LV_OBJ_FLAG_CLICKABLE);
+    static lv_point_precise_t bolt_pts[] = {
+        {7, 0}, {2, 7}, {5, 7}, {3, 14}, {9, 6}, {6, 6}, {7, 0}
+    };
+    lv_obj_t *bolt = lv_line_create(batt_charge);
+    lv_line_set_points(bolt, bolt_pts, 7);
+    lv_obj_align(bolt, LV_ALIGN_TOP_LEFT, 1, 1);
+    lv_obj_set_style_line_width(bolt, 2, 0);
+    lv_obj_set_style_line_color(bolt, lv_color_hex(0x22c55e), 0); /* 绿色闪电 */
+    lv_obj_set_style_line_rounded(bolt, true, 0);
+    lv_obj_clear_flag(bolt, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
 
-    /* 图形音量图标: 扬声器(箱体+锥体) + 水平音量条, 避免像信号强度竖条 */
+    /* 图形音量: 屏幕右侧竖向条 (扬声器图标 + 竖向音量条) */
     vol_box = lv_obj_create(g_player);
-    lv_obj_set_size(vol_box, 52, 14);
-    lv_obj_align_to(vol_box, batt_charge, LV_ALIGN_OUT_LEFT_MID, -8, 0);
+    lv_obj_set_size(vol_box, 18, 90);
+    lv_obj_align(vol_box, LV_ALIGN_RIGHT_MID, -6, -18);  // 右侧竖向, 避开状态栏(上)与进度条(下)
     lv_obj_set_style_bg_opa(vol_box, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(vol_box, 0, 0);
     lv_obj_clear_flag(vol_box, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(vol_box, LV_OBJ_FLAG_HIDDEN);  // 默认隐藏, 调节音量时显示
 
-    /* 扬声器箱体 (小矩形) */
+    /* 扬声器图标 (箱体 + 锥体, 置于竖向条顶部作为标识) */
     vol_spk_box = lv_obj_create(vol_box);
-    lv_obj_set_size(vol_spk_box, 6, 10);
-    lv_obj_align(vol_spk_box, LV_ALIGN_LEFT_MID, 1, 0);
+    lv_obj_set_size(vol_spk_box, 6, 8);
+    lv_obj_align(vol_spk_box, LV_ALIGN_TOP_LEFT, 3, 5);
     lv_obj_set_style_bg_color(vol_spk_box, lv_color_hex(0x2dd4bf), 0);
     lv_obj_set_style_border_width(vol_spk_box, 0, 0);
     lv_obj_set_style_radius(vol_spk_box, 1, 0);
     lv_obj_clear_flag(vol_spk_box, LV_OBJ_FLAG_CLICKABLE);
 
-    /* 扬声器锥体 (三角线, 指向右) */
-    static lv_point_precise_t cone_pts[] = {{8, 1}, {8, 13}, {16, 7}, {8, 1}};
+    static lv_point_precise_t cone_pts[] = {{0, 0}, {0, 8}, {7, 4}, {0, 0}};
     vol_cone = lv_line_create(vol_box);
     lv_line_set_points(vol_cone, cone_pts, 4);
+    lv_obj_align(vol_cone, LV_ALIGN_TOP_LEFT, 9, 5);
     lv_obj_set_style_line_width(vol_cone, 2, 0);
     lv_obj_set_style_line_color(vol_cone, lv_color_hex(0x2dd4bf), 0);
     lv_obj_set_style_line_rounded(vol_cone, true, 0);
     lv_obj_clear_flag(vol_cone, LV_OBJ_FLAG_CLICKABLE);
 
-    /* 水平音量条 (填充宽度=音量, 区别于竖条信号) */
+    /* 竖向音量条 (填充自底向上 = 音量 level 0..VOLUME_LEVEL_MAX) */
     vol_lvl = lv_bar_create(vol_box);
-    lv_obj_set_size(vol_lvl, 26, 6);
-    lv_obj_align(vol_lvl, LV_ALIGN_LEFT_MID, 24, 0);
-    lv_bar_set_range(vol_lvl, 0, 100);
+    lv_obj_set_size(vol_lvl, 6, 64);
+    lv_obj_align(vol_lvl, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_bar_set_orientation(vol_lvl, LV_BAR_ORIENTATION_VERTICAL);
+    lv_bar_set_range(vol_lvl, 0, VOLUME_LEVEL_MAX);
     lv_bar_set_value(vol_lvl, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(vol_lvl, lv_color_hex(0x16203a), 0);
     lv_obj_set_style_bg_color(vol_lvl, lv_color_hex(0x2dd4bf), LV_PART_INDICATOR);
     lv_obj_set_style_radius(vol_lvl, 3, 0);
     lv_obj_clear_flag(vol_lvl, LV_OBJ_FLAG_CLICKABLE);
+
+    /* TF 卡图标 (状态栏: 插入=青色卡片, 弹出=灰) —— 位于充电标记左侧 */
+    sd_icon_box = lv_obj_create(g_player);
+    lv_obj_set_size(sd_icon_box, 24, 14);
+    lv_obj_align_to(sd_icon_box, batt_charge, LV_ALIGN_OUT_LEFT_MID, -6, 0);
+    lv_obj_set_style_bg_color(sd_icon_box, lv_color_hex(0x33405e), 0);  // 默认弹出(灰)
+    lv_obj_set_style_border_width(sd_icon_box, 0, 0);
+    lv_obj_set_style_radius(sd_icon_box, 2, 0);
+    lv_obj_set_style_pad_all(sd_icon_box, 0, 0);
+    lv_obj_clear_flag(sd_icon_box, LV_OBJ_FLAG_CLICKABLE);
+    /* 右上角缺角 (深色三角模拟 SD 卡斜切特征) */
+    static lv_point_precise_t sd_notch[] = {{18, 0}, {24, 6}, {24, 0}, {18, 0}};
+    lv_obj_t *sd_line = lv_line_create(sd_icon_box);
+    lv_line_set_points(sd_line, sd_notch, 4);
+    lv_obj_set_style_line_width(sd_line, 2, 0);
+    lv_obj_set_style_line_color(sd_line, lv_color_hex(0x0a0e17), 0);
+    lv_obj_set_style_line_rounded(sd_line, false, 0);
+    lv_obj_clear_flag(sd_line, LV_OBJ_FLAG_CLICKABLE);
+    sd_icon_lbl = lv_label_create(sd_icon_box);
+    lv_label_set_text(sd_icon_lbl, "");   // 默认弹出: 空
+    lv_obj_center(sd_icon_lbl);
+    lv_obj_set_style_text_color(sd_icon_lbl, lv_color_hex(0x0a0e17), 0);
+    lv_obj_set_style_text_font(sd_icon_lbl, &lv_font_chinese_12, 0);
+    lv_obj_clear_flag(sd_icon_lbl, LV_OBJ_FLAG_CLICKABLE);
+
+    /* 插拔瞬时提示 (居中, 状态栏下方; 由 LVGL 定时器控制显隐) */
+    lbl_sd_toast = lv_label_create(g_player);
+    lv_obj_align(lbl_sd_toast, LV_ALIGN_TOP_MID, 0, 26);
+    lv_obj_set_style_text_color(lbl_sd_toast, lv_color_hex(0xf5a623), 0);
+    lv_obj_set_style_text_font(lbl_sd_toast, &lv_font_chinese_14, 0);
+    lv_obj_add_flag(lbl_sd_toast, LV_OBJ_FLAG_HIDDEN);
 
     /* 正在播放 小标题 */
     lbl_title = lv_label_create(g_player);
@@ -524,6 +577,8 @@ static void format_time(int seconds, char *buf, size_t size)
 /* ============================================================
  * 公共 API
  * ============================================================ */
+static void sd_toast_timer_cb(lv_timer_t *t);  // 前向声明 (display_init 中注册)
+static void vol_hide_timer_cb(lv_timer_t *t);   // 音量条自动隐藏定时器
 void display_init(void)
 {
     lcd_backlight_init();
@@ -555,6 +610,8 @@ void display_init(void)
 
     ui_create();
     lv_timer_create(reel_anim_cb, 50, NULL);   // 磁带卷轴旋转动画 (50ms/帧)
+    lv_timer_create(sd_toast_timer_cb, 100, NULL);  // 插拔提示显隐控制 (100ms)
+    lv_timer_create(vol_hide_timer_cb, 200, NULL);  // 音量条停止调节 3s 后自动隐藏
     ui_show_msg("正在初始化...");
 
     xTaskCreate(lvgl_task, "lvgl", 8192, NULL, 5, NULL);
@@ -580,6 +637,65 @@ void display_show_no_card(void)
 {
     if (!g_display_initialized) return;
     ui_show_msg("未检测到 SD 卡\n请插入 SD 卡");
+}
+
+static void sd_icon_update(bool present)
+{
+    if (!g_display_initialized) return;
+    lv_color_t c = present ? lv_color_hex(0x2dd4bf) : lv_color_hex(0x33405e);
+    lv_obj_set_style_bg_color(sd_icon_box, c, 0);
+    lv_label_set_text(sd_icon_lbl, present ? "TF" : "");
+}
+
+/* 仅初始化图标状态, 不弹提示 (用于开机, 避免误报插拔) */
+void display_set_sd_present_init(bool present)
+{
+    sd_icon_update(present);
+}
+
+/* 设置 TF 卡在位状态: 更新图标 + 弹插拔瞬时提示 */
+void display_set_sd_present(bool present)
+{
+    sd_icon_update(present);
+    lv_label_set_text(lbl_sd_toast, present ? "已插入 TF 卡" : "已弹出 TF 卡");
+    g_sd_toast_until = esp_timer_get_time() + 1500 * 1000;  // 显示 1.5s
+}
+
+/* 插拔瞬时提示显隐控制 (独立于 display_update 的脏区判定, 保证提示及时出现/消失) */
+static void sd_toast_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!g_display_initialized || !lbl_sd_toast) return;
+    if (esp_timer_get_time() < g_sd_toast_until) {
+        lv_obj_clear_flag(lbl_sd_toast, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(lbl_sd_toast, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/* 音量条自动隐藏: 停止调节 3 秒后隐藏 (由 vol_hide_timer_cb 每 200ms 检查) */
+static void vol_hide_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!g_display_initialized || !vol_box) return;
+    if (esp_timer_get_time() >= g_vol_hide_until) {
+        lv_obj_add_flag(vol_box, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/* 触发音量条显示: 立即刷新音量条与扬声器图标, 并重置 3 秒隐藏计时 */
+void display_show_volume(int volume)
+{
+    if (!g_display_initialized || !vol_box) return;
+    /* 立即刷新 (不依赖周期刷新, 保证出现即最新) */
+    lv_color_t vol_col = (volume <= 0) ? lv_color_hex(0x33405e) : lv_color_hex(0x2dd4bf);
+    lv_obj_set_style_bg_color(vol_spk_box, vol_col, 0);
+    lv_obj_set_style_line_color(vol_cone, vol_col, 0);
+    int vol_clamped = volume < 0 ? 0 : (volume > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : volume);
+    lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
+    /* 显示 + 重置 3 秒隐藏倒计时 */
+    lv_obj_clear_flag(vol_box, LV_OBJ_FLAG_HIDDEN);
+    g_vol_hide_until = esp_timer_get_time() + 3000 * 1000;
 }
 
 void display_update(player_state_t state,
@@ -639,11 +755,11 @@ void display_update(player_state_t state,
     if (power_mgmt_is_charging()) lv_obj_clear_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
     else                          lv_obj_add_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
 
-    /* 图形音量: 扬声器随静音变灰 + 水平音量条填充=音量 */
+    /* 图形音量: 扬声器随静音变灰 + 右侧竖向音量条填充=音量 level */
     lv_color_t vol_col = (volume <= 0) ? lv_color_hex(0x33405e) : lv_color_hex(0x2dd4bf);
     lv_obj_set_style_bg_color(vol_spk_box, vol_col, 0);
     lv_obj_set_style_line_color(vol_cone, vol_col, 0);
-    int vol_clamped = volume < 0 ? 0 : (volume > 100 ? 100 : volume);
+    int vol_clamped = volume < 0 ? 0 : (volume > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : volume);
     lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
 
     /* 文件名 (超长省略号截断, 静态不滚动) */

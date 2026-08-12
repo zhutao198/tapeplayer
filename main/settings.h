@@ -40,7 +40,7 @@ void settings_save_volume(int volume);
 
 /**
  * @brief 加载音量
- * @return 音量值 0-100，默认 AUDIO_OUTPUT_VOL
+ * @return 音量 level 0..14 (15 档)，默认 AUDIO_OUTPUT_VOL
  */
 int settings_load_volume(void);
 

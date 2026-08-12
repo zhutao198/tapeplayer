@@ -28,10 +28,14 @@ static uint64_t g_auto_off_start_us = 0;
 static int      g_tick_count = 0;
 
 /* 电池电压换算系数。
- * 原理图: 电池 → 分压/运放(LMV321) → IO1(ADC1_CH0, 0~3.3V)。
- * 默认假设运放前为 1:1 分压, ADC 读电池电压的一半 (BAT_ADC_GAIN=2.0)。
- * ⚠️ 须根据实际 LMV321 电阻网络标定该增益。 */
-#define BAT_ADC_GAIN       2.0f
+ * 原理图电池分压 (经 LMV321 电压跟随器送入 IO1/ADC1_CH0):
+ *   VBAT → R34(45.3K, 上) → 分压点 → R35(110K, 下) → GND
+ *   分压点电压 = VBAT × R35/(R34+R35) = VBAT × 110/155.3 ≈ VBAT × 0.708
+ *   还原系数 = (R34+R35)/R35 = 155.3/110 ≈ 1.412 (原 2.0 假设 1:1 分压, 错误)。
+ * ⚠️ 若改电阻值, 仅修改下列两值, 增益自动重算。 */
+#define BAT_DIV_R_TOP   45.3f   // R34 上分压电阻 (KΩ)
+#define BAT_DIV_R_BOT   110.0f  // R35 下分压电阻/对地 (KΩ)
+#define BAT_ADC_GAIN    ((BAT_DIV_R_TOP + BAT_DIV_R_BOT) / BAT_DIV_R_BOT)  // ≈ 1.412
 #define BAT_V_MIN          3.0f    // 0% 对应电压
 #define BAT_V_MAX          4.2f    // 100% 对应电压
 #define BAT_ADC_MAX_RAW    4095

@@ -138,6 +138,10 @@
 #define CHRG_DET_IO         GPIO_NUM_2    // 充电状态指示 (U1.38)
 #define WS2812_IO           GPIO_NUM_48   // RGB 状态指示灯 (U1.25, 3.3V 域 GPIO 推挽, 硬件经电平转换驱动灯珠)
 #define SD_CD_IO            GPIO_NUM_38   // SD 卡在位检测 (U1.31, SD_SD)
+/* SD_CD 电气: TF-015 机械 CD 开关 + 外部 10K 上拉(R6)到 3.3V。
+ * 插入卡片时开关闭合把 SD_CD 拉低 → 低电平=已插入 (active-low)。
+ * 若实际插座极性相反, 将 SD_CD_ACTIVE_LEVEL 改为 1 即可。 */
+#define SD_CD_ACTIVE_LEVEL  0   // 0=低电平表示卡在位 (active-low)
 #define POW_EN_IO           GPIO_NUM_40   // 电源锁存 (U1.33)
 #define LCD_POW_EN_IO       GPIO_NUM_39   // LCD 软电源开关 (U1.32)
 
@@ -159,7 +163,11 @@
  * 音频配置
  * ============================================================ */
 #define AUDIO_SAMPLE_RATE   44100
-#define AUDIO_OUTPUT_VOL    70             // 默认音量 0-100
+
+/* 逻辑音量档位 (V1.2): 15 档 (level 0..VOLUME_LEVEL_MAX), 线性 dB 映射 -96..+12 */
+#define VOLUME_LEVELS       15            // 逻辑音量档位数
+#define VOLUME_LEVEL_MAX    (VOLUME_LEVELS - 1)  // = 14, level 有效范围 0..14
+#define AUDIO_OUTPUT_VOL    10            // 默认音量 (0..14, 约 -18.9 dB)
 
 /* ============================================================
  * 播放列表
@@ -173,7 +181,7 @@
 #define NVS_NAMESPACE       "tapebook"
 #define NVS_KEY_POSITION    "last_position"   // 播放位置(s)
 #define NVS_KEY_TRACK       "last_track_idx"  // 当前曲目索引
-#define NVS_KEY_VOLUME      "volume"          // 音量 0~100
+#define NVS_KEY_VOLUME      "volume"          // 音量 0~14 (15 档逻辑音量)
 #define NVS_KEY_PLAY_MODE   "play_mode"       // 播放模式 0=顺序
 #define NVS_KEY_AUTO_OFF    "auto_off_min"    // 自动关机 (分钟, 0=禁用)
 

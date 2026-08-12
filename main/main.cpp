@@ -109,6 +109,9 @@ static uint32_t browse_repeat_interval(uint32_t hold_ms)
 
 static sdmmc_card_t   *g_sd_card = NULL;  // SD 卡句柄
 static uint64_t    g_last_sd_check_us = 0;
+static bool        g_sd_inserted = false; // SD 卡在位(去抖后提交状态)
+static int         g_sd_cd_raw = -1;      // SD_CD 原始电平(去抖用)
+static int         g_sd_cd_stable_cnt = 0;// 同电平连续采样次数
 
 #define AUTO_SAVE_INTERVAL_US  (30 * 1000000)  // 30 秒自动保存
 #define SD_CHECK_INTERVAL_US   (5 * 1000000)   // 5 秒检查 SD 卡状态
@@ -476,6 +479,7 @@ static void handle_button_events(void)
                 int vol = audio_player_get_volume();
                 if (vol > 0) {
                     audio_player_set_volume(vol - 1);
+                    display_show_volume(audio_player_get_volume());
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS ||
                        e->event == BTN_EVENT_HOLD ||
@@ -486,6 +490,7 @@ static void handle_button_events(void)
                     int vol = audio_player_get_volume();
                     if (vol > 0) {
                         audio_player_set_volume(vol - 1);
+                        display_show_volume(audio_player_get_volume());
                     }
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
@@ -499,8 +504,9 @@ static void handle_button_events(void)
             if (e->event == BTN_EVENT_SHORT_PRESS) {
                 g_vol_up_counter = 0;
                 int vol = audio_player_get_volume();
-                if (vol < 100) {
+                if (vol < VOLUME_LEVEL_MAX) {
                     audio_player_set_volume(vol + 1);
+                    display_show_volume(audio_player_get_volume());
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS ||
                        e->event == BTN_EVENT_HOLD ||
@@ -508,8 +514,9 @@ static void handle_button_events(void)
                 g_vol_up_counter++;
                 if (g_vol_up_counter % 5 == 0) {
                     int vol = audio_player_get_volume();
-                    if (vol < 100) {
+                    if (vol < VOLUME_LEVEL_MAX) {
                         audio_player_set_volume(vol + 1);
+                        display_show_volume(audio_player_get_volume());
                     }
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
@@ -796,6 +803,18 @@ static void init_hardware(void)
         gpio_set_level(MAX98357_SD_MODE_GPIO, MAX98357_SD_MODE_LEVEL);
     }
 
+    // 5.6 SD 卡在位检测 (IO38): 输入, 外部 10K 上拉(R6)到 3.3V, active-low(插入=低)
+    {
+        gpio_config_t cd_cfg = {
+            .pin_bit_mask = (1ULL << SD_CD_IO),
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        ESP_ERROR_CHECK(gpio_config(&cd_cfg));
+    }
+
     // 6. 音频播放器
     audio_player_init();
     audio_player_set_callback(on_track_finished, NULL);
@@ -882,6 +901,15 @@ extern "C" void app_main(void)
 {
     init_hardware();
     init_storage();
+
+    // 初始化 SD 卡在位状态 (避免启动误报插拔提示)
+    {
+        int boot_lvl = gpio_get_level(SD_CD_IO);
+        g_sd_cd_raw = boot_lvl;
+        g_sd_cd_stable_cnt = 3;   // 视为已稳定, 不触发插入/弹出事件
+        g_sd_inserted = (boot_lvl == SD_CD_ACTIVE_LEVEL);
+        display_set_sd_present_init(g_sd_inserted);
+    }
 
     ESP_LOGI(TAG, "System ready. Waiting for user input...");
 
@@ -1032,8 +1060,54 @@ extern "C" void app_main(void)
             power_mgmt_record_activity();
         }
 
-        // 8. SD 卡状态监测（每 5 秒轮询挂载点）
+        // 8. SD 卡插拔管理 (基于 SD_CD 机械开关实时检测, 软件去抖)
         {
+            int lvl = gpio_get_level(SD_CD_IO);
+            // 去抖: 同一电平需连续稳定若干次(≈60ms)才提交
+            if (lvl != g_sd_cd_raw) {
+                g_sd_cd_raw = lvl;
+                g_sd_cd_stable_cnt = 0;
+            } else if (g_sd_cd_stable_cnt < 255) {
+                g_sd_cd_stable_cnt++;
+            }
+
+            if (g_sd_cd_stable_cnt >= 3) {
+                bool present = (lvl == SD_CD_ACTIVE_LEVEL);
+                if (present && (g_sd_card == NULL)) {
+                    // 插入事件: 挂载 + 扫描
+                    ESP_LOGI(TAG, "SD card inserted");
+                    if (mount_sd_card()) {
+                        int count = playlist_scan(SD_MOUNT_POINT);
+                        ESP_LOGI(TAG, "Found %d audio files on SD card", count);
+                        if (count > 0) {
+                            g_current_track = 0;
+                            playlist_set_index(0);
+                            g_app_state = APP_STATE_STOPPED;
+                        } else {
+                            display_show_no_files();
+                            g_app_state = APP_STATE_IDLE;
+                        }
+                    } else {
+                        display_show_no_card();
+                        g_app_state = APP_STATE_IDLE;
+                    }
+                    display_set_sd_present(true);
+                } else if (!present && g_sd_inserted) {
+                    // 弹出事件: 停止 + 卸载
+                    ESP_LOGI(TAG, "SD card removed");
+                    if (g_sd_card != NULL) {
+                        audio_player_stop();
+                        esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, g_sd_card);
+                        g_sd_card = NULL;
+                    }
+                    display_show_no_card();
+                    g_app_state = APP_STATE_IDLE;
+                    display_set_sd_present(false);
+                }
+                g_sd_inserted = present;
+            }
+
+            // 后备: 已挂载时每 5 秒读扇区 0 探测异常拔出 (脏拔/读错误)
             uint64_t now = esp_timer_get_time();
             if ((now - g_last_sd_check_us) >= SD_CHECK_INTERVAL_US) {
                 g_last_sd_check_us = now;
@@ -1041,13 +1115,13 @@ extern "C" void app_main(void)
                     uint32_t buf;
                     esp_err_t ret = sdmmc_read_sectors(g_sd_card, (uint8_t *)&buf, 0, 1);
                     if (ret != ESP_OK) {
-                        ESP_LOGW(TAG, "SD card removed!");
+                        ESP_LOGW(TAG, "SD card removed (read fail)!");
                         audio_player_stop();
                         display_show_no_card();
                         g_app_state = APP_STATE_IDLE;
-                        // R035-019 fix: 卸载 VFS 并释放 sdmmc 资源，否则下次挂载会失败
                         esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, g_sd_card);
                         g_sd_card = NULL;
+                        // 不改动 g_sd_inserted: 由 SD_CD 去抖逻辑决定后续(重新挂载或置灰)
                     }
                 }
             }

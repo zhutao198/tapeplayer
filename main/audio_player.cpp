@@ -53,6 +53,10 @@ static audio_element_handle_t   g_i2s_writer = NULL;   // 跨曲目复用
 static bool         g_is_playing = false;
 static bool         g_is_paused = false;
 static int          g_volume = AUDIO_OUTPUT_VOL;
+
+/* V1.2 音量 dB 线性映射边界 (MAX98357A ALC 范围) */
+#define VOL_DB_MIN  (-96)   // 静音
+#define VOL_DB_MAX  (12)    // 最大增益
 static int          g_total_duration_ms = 0;
 static uint32_t     g_total_file_bytes = 0;
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采样率缓存
@@ -508,31 +512,27 @@ void audio_player_set_speed(float speed)
 
 void audio_player_set_volume(int volume)
 {
-    // R023/M3 ALC 硬件限制说明：
-    // MAX98357A ALC 音量范围：-96..+12 dB（i2s_alc_volume_set）
-    // vol=0   → alc_vol = -96 dB（静音）
-    // vol=1..50  → alc_vol = -47..0 dB（每 vol 步 ≈ 1 dB，连续）
-    // vol=50..100 → alc_vol = 0..+12 dB（每 vol 步 ≈ 0.24 dB）
-    // → vol=51..58 实测仅映射到 0..2 dB 总变化（8 档合并到 3 档）
-    // 根因：ALC 范围有限（12 dB），vol 步进过密，整数化后必有相邻合并
-    // 详见 docs/FIX_PLAN_R019.md §M3 + docs/CODE_AUDIT_R018.md H-3
+    // V1.2 音量模型：15 档逻辑音量 (level 0..VOLUME_LEVEL_MAX)，线性 dB 映射 -96..+12 dB
+    // 覆盖 MAX98357A ALC 全动态范围 (i2s_alc_volume_set 范围 -96..+12 dB)。
+    // dB(level) = -96 + level * (12 - (-96)) / 14，四舍五入。
+    //   level 0  → -96 dB（静音）
+    //   level 14 → +12 dB（最大增益，约每档 7.7 dB，等感知步进）
     if (volume < 0) volume = 0;
-    if (volume > 100) volume = 100;
+    if (volume > VOLUME_LEVEL_MAX) volume = VOLUME_LEVEL_MAX;
     g_volume = volume;
 
     // MAX98357A 无硬件音量控制；通过 I2S ALC 软件音量实现
-    // 映射：vol=0→-96dB(mute), vol=50→0dB(默认), vol=100→+12dB
     if (g_i2s_writer) {
         int alc_vol;
         if (volume <= 0) {
-            alc_vol = -96;
-        } else if (volume <= 50) {
-            // 低音量段：vol=0→-48dB, vol=50→0dB；整数四舍五入避免截断（H-3 修复）
-            alc_vol = ((volume - 50) * 48 + 25) / 50;
+            alc_vol = VOL_DB_MIN;                          // -96 dB 静音
         } else {
-            // 高音量段：vol=50→0dB, vol=100→+12dB；整数四舍五入避免截断（H-3 修复）
-            alc_vol = ((volume - 50) * 12 + 25) / 50;
+            // 线性 dB：level 0..14 映射到 -96..+12，四舍五入
+            alc_vol = VOL_DB_MIN + (volume * (VOL_DB_MAX - VOL_DB_MIN) + VOLUME_LEVEL_MAX / 2) / VOLUME_LEVEL_MAX;
         }
+        // 安全钳位 (i2s_alc_volume_set 仅接受 -96..+12)
+        if (alc_vol < VOL_DB_MIN) alc_vol = VOL_DB_MIN;
+        if (alc_vol > VOL_DB_MAX) alc_vol = VOL_DB_MAX;
         i2s_alc_volume_set(g_i2s_writer, alc_vol);
     }
 }

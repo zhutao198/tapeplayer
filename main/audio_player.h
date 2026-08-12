@@ -94,7 +94,7 @@ bool audio_player_is_paused(void);
 void audio_player_set_speed(float speed);
 
 /**
- * @brief 设置音量 (0-100)
+ * @brief 设置音量 (level 0..14, 15 档逻辑音量, 线性 dB -96..+12)
  */
 void audio_player_set_volume(int volume);
 
