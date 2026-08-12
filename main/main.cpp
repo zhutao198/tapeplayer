@@ -36,6 +36,8 @@
 #include "settings.h"
 #include "power_mgmt.h"
 #include "menu.h"
+#include "ota_sd.h"
+#include "esp_ota_ops.h"
 
 #include "bookmark.h"
 #include "led_strip.h"
@@ -63,6 +65,7 @@ typedef enum {
     APP_STATE_REWIND,          // 快退（磁带模式）
     APP_STATE_BROWSING,        // 文件夹浏览
     APP_STATE_MENU,            // 统一设置菜单 (R049)
+    APP_STATE_OTA,             // TF 卡固件升级向导 (R049c 真实化)
 } app_state_t;
 
 // 所有全局变量单任务访问，无需 volatile（M-9/L-8: 设计确认 OK）
@@ -100,6 +103,7 @@ static char     g_info_title[32] = {0};
 static char     g_info_text[64] = {0};
 static uint64_t g_info_until_us = 0;
 static bool     g_info_active = false;
+static bool     g_ota_in_progress = false;  // OTA 写入中：独占 SD 卡，屏蔽主循环插拔处理
 
 /**
  * 浏览模式长按连续移动的间隔 (ms/曲)：随按住时长加速缩短。
@@ -329,6 +333,24 @@ void app_play_beep(void)
     }
 }
 
+/* R049c：进入/退出 TF 卡固件升级向导（由 menu.cpp 的 app_ota_enter 调用） */
+void app_enter_ota(void)
+{
+    // 升级前确保停止播放，独占 SD 卡
+    save_current_position();
+    audio_player_stop();
+    g_ota_in_progress = true;
+    menu_close();
+    g_app_state = APP_STATE_OTA;
+    ota_sd_begin();
+}
+
+void app_ota_exit(void)
+{
+    g_ota_in_progress = false;
+    g_app_state = g_state_before_menu;
+}
+
 /* ============================================================
  * 处理按键事件
  * ============================================================ */
@@ -340,6 +362,12 @@ static void handle_button_events(void)
     /* 统一菜单路由 (R049): 菜单打开时所有按键交给菜单处理 */
     if (menu_is_open()) {
         menu_handle_button(events, n);
+        return;
+    }
+
+    /* R049c OTA 升级向导路由：独立于菜单，确认/锁死/任意键重启 */
+    if (g_app_state == APP_STATE_OTA) {
+        ota_sd_handle_button(events, n);
         return;
     }
 
@@ -706,6 +734,12 @@ static void update_display(void)
         g_info_active = false;
     }
 
+    /* R049c OTA 升级界面：优先渲染，不受 200ms 节流限制 */
+    if (g_app_state == APP_STATE_OTA) {
+        ota_sd_render();
+        return;
+    }
+
     uint64_t now = esp_timer_get_time();
     if ((now - g_last_display_update) < 200000) return;
     g_last_display_update = now;
@@ -1006,6 +1040,16 @@ extern "C" void app_main(void)
     init_hardware();
     init_storage();
 
+    /* OTA 启动回滚确认：若从 OTA 分区启动且运行健康，标记有效（防 boot loop 假死砖） */
+    {
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        if (running && (running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0 ||
+                        running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1)) {
+            esp_ota_mark_app_valid_cancel_rollback();
+            ESP_LOGI(TAG, "Marked OTA app valid (rollback cancelled)");
+        }
+    }
+
     // 初始化 SD 卡在位状态 (避免启动误报插拔提示)
     {
         int boot_lvl = gpio_get_level(SD_CD_IO);
@@ -1165,7 +1209,8 @@ extern "C" void app_main(void)
         }
 
         // 8. SD 卡插拔管理 (基于 SD_CD 机械开关实时检测, 软件去抖)
-        {
+        //    OTA 写入期间独占 SD 卡：跳过插拔/读校验处理，避免与升级写竞争
+        if (!g_ota_in_progress) {
             int lvl = gpio_get_level(SD_CD_IO);
             // 去抖: 同一电平需连续稳定若干次(≈60ms)才提交
             if (lvl != g_sd_cd_raw) {

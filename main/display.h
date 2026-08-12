@@ -124,6 +124,13 @@ void display_show_menu(const char *title, char lines[][24], int count, int sel, 
  */
 void display_show_info(const char *title, const char *text);
 
+/* ---- SD-OTA 升级界面（R049c 真实化）---- */
+void display_show_ota_confirm(const char *cur_ver, const char *new_ver,
+                              long size_kb, const char *img_name, bool battery_ok);
+void display_show_ota_progress(int percent);
+void display_show_ota_done(void);
+void display_show_ota_error(const char *msg);
+
 #ifdef __cplusplus
 }
 #endif

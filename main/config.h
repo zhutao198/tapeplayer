@@ -188,6 +188,11 @@
 #define NVS_KEY_VOICE       "voice"           // 语音播报 0/1 (R049d stub)
 #define NVS_KEY_EQ          "eq"              // EQ 模式 0..4 (R049d stub)
 
+/* 固件版本号：用于 OTA 防降级校验 (R049c 真实化) */
+#ifndef APP_VERSION_STR
+#define APP_VERSION_STR "1.1.0"
+#endif
+
 /* ============================================================
  * 按键阈值
  * R047：移除 BTN_DOUBLE_CLICK_MS（双击检测已从 button_manager 删除）；

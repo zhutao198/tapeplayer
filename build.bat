@@ -45,5 +45,15 @@ echo.
 idf.py %*
 
 set RC=%ERRORLEVEL%
+
+REM === R049c SD 卡升级包生成（build 成功后，供 TF 卡升级使用）===
+if exist build\audiobook_player.bin (
+    copy /Y build\audiobook_player.bin build\TAPEBOOK.BIN >nul
+    for /f "tokens=3" %%v in ('findstr /r "#define APP_VERSION_STR" main\config.h') do set VER=%%~v
+    if defined VER (echo %VER% > build\TAPEBOOK.VER)
+    certutil -hashfile build\TAPEBOOK.BIN SHA256 > build\TAPEBOOK.SHA256
+    echo [OK] SD 升级包: build\TAPEBOOK.BIN + TAPEBOOK.VER + TAPEBOOK.SHA256
+)
+
 popd
 endlocal & exit /b %RC%

@@ -56,6 +56,14 @@ static lv_color_t *s_lv_buf = NULL;
 static lv_obj_t *g_player = NULL;   // 播放界面容器
 static lv_obj_t *g_msg    = NULL;   // 居中消息标签 (splash/提示)
 
+/* SD-OTA 升级界面 (R049c 真实化) */
+static lv_obj_t *g_ota     = NULL;  // 升级界面容器
+static lv_obj_t *ota_title = NULL;  // 标题
+static lv_obj_t *ota_body  = NULL;  // 正文(摘要/状态, 多行)
+static lv_obj_t *ota_bar   = NULL;  // 写入进度条
+static lv_obj_t *ota_pct   = NULL;  // 进度百分比
+static lv_obj_t *ota_hint  = NULL;  // 底部操作提示
+
 static lv_obj_t *lbl_status  = NULL; // 状态栏: 播放态/曲目/模式/电池/音量
 static lv_obj_t *lbl_title   = NULL; // "正在播放" 小标题
 static lv_obj_t *lbl_track   = NULL; // 当前曲目名 (大号, 滚动)
@@ -501,12 +509,56 @@ static void ui_create(void)
     lv_obj_set_style_text_font(g_msg, &lv_font_chinese_16, 0);
     lv_obj_align(g_msg, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+
+    /* ---- SD-OTA 升级界面 ---- */
+    g_ota = lv_obj_create(scr);
+    lv_obj_set_size(g_ota, W, H);
+    lv_obj_set_style_bg_color(g_ota, lv_color_hex(0x0a0e17), 0);
+    lv_obj_set_style_border_width(g_ota, 0, 0);
+    lv_obj_set_style_pad_all(g_ota, 0, 0);
+    lv_obj_clear_flag(g_ota, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
+
+    ota_title = lv_label_create(g_ota);
+    lv_obj_set_pos(ota_title, M, 12);
+    lv_obj_set_style_text_color(ota_title, lv_color_hex(0x2dd4bf), 0);
+    lv_obj_set_style_text_font(ota_title, &lv_font_chinese_16, 0);
+
+    ota_body = lv_label_create(g_ota);
+    lv_obj_set_pos(ota_body, M, 54);
+    lv_obj_set_width(ota_body, W - 2 * M);
+    lv_label_set_long_mode(ota_body, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(ota_body, lv_color_white(), 0);
+    lv_obj_set_style_text_font(ota_body, &lv_font_chinese_14, 0);
+
+    ota_bar = lv_bar_create(g_ota);
+    lv_obj_set_size(ota_bar, W - 2 * M, 16);
+    lv_obj_set_pos(ota_bar, M, 132);
+    lv_bar_set_range(ota_bar, 0, 100);
+    lv_bar_set_value(ota_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(ota_bar, lv_color_hex(0x16203a), 0);
+    lv_obj_set_style_bg_color(ota_bar, lv_color_hex(0x2dd4bf), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(ota_bar, 4, 0);
+    lv_obj_add_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
+
+    ota_pct = lv_label_create(g_ota);
+    lv_obj_set_pos(ota_pct, W - M, 150);
+    lv_obj_set_style_text_align(ota_pct, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_color(ota_pct, lv_color_white(), 0);
+    lv_obj_set_style_text_font(ota_pct, &lv_font_chinese_12, 0);
+    lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
+
+    ota_hint = lv_label_create(g_ota);
+    lv_obj_set_pos(ota_hint, M, H - 20);
+    lv_obj_set_style_text_color(ota_hint, lv_color_hex(0x8a93a6), 0);
+    lv_obj_set_style_text_font(ota_hint, &lv_font_chinese_12, 0);
 }
 
 static void ui_show_player(void)
 {
     lv_obj_clear_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void ui_show_msg(const char *txt)
@@ -514,6 +566,7 @@ static void ui_show_msg(const char *txt)
     lv_label_set_text(g_msg, txt);
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
 }
 
 void display_set_play_mode(int mode)
@@ -864,4 +917,84 @@ void display_show_info(const char *title, const char *text)
         g_display_sleep = false;
     }
     ui_show_msg(buf);
+}
+
+/* ============================================================
+ * SD-OTA 升级界面 (R049c 真实化)
+ * ============================================================ */
+static void ui_show_ota(void)
+{
+    lv_obj_clear_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+    if (g_display_sleep) {
+        display_set_brightness(s_last_brightness);
+        g_display_sleep = false;
+    }
+}
+
+void display_show_ota_confirm(const char *cur_ver, const char *new_ver,
+                              long size_kb, const char *img_name, bool battery_ok)
+{
+    if (!g_display_initialized) return;
+
+    static char buf[160];
+    int len = 0;
+    len += snprintf(buf + len, sizeof(buf) - len, "当前版本  %s\n",
+                    cur_ver ? cur_ver : "?");
+    len += snprintf(buf + len, sizeof(buf) - len, "新版本    %s\n",
+                    (new_ver && new_ver[0]) ? new_ver : "未知");
+    len += snprintf(buf + len, sizeof(buf) - len, "镜像      %s\n",
+                    img_name ? img_name : "");
+    len += snprintf(buf + len, sizeof(buf) - len, "大小      %ld KB\n", size_kb);
+    len += snprintf(buf + len, sizeof(buf) - len, "电量      %s",
+                    battery_ok ? "正常" : "低，请先充电");
+
+    lv_label_set_text(ota_title, "固件升级");
+    lv_label_set_text(ota_body, buf);
+    lv_obj_add_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(ota_hint, battery_ok ? "PLAY 确认升级   STOP 取消"
+                                           : "电量过低，无法升级（STOP 返回）");
+    ui_show_ota();
+}
+
+void display_show_ota_progress(int percent)
+{
+    if (!g_display_initialized) return;
+
+    lv_label_set_text(ota_title, "固件升级");
+    lv_label_set_text(ota_body, "正在写入固件…\n请勿断电 · 勿拔 TF 卡");
+    lv_obj_clear_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    lv_bar_set_value(ota_bar, percent, LV_ANIM_OFF);
+    char p[8];
+    snprintf(p, sizeof(p), "%d%%", percent);
+    lv_label_set_text(ota_pct, p);
+    lv_label_set_text(ota_hint, "");
+    ui_show_ota();
+}
+
+void display_show_ota_done(void)
+{
+    if (!g_display_initialized) return;
+    lv_label_set_text(ota_title, "升级成功");
+    lv_label_set_text(ota_body, "新固件已写入\n重启后生效");
+    lv_obj_add_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(ota_hint, "按任意键重启设备");
+    ui_show_ota();
+}
+
+void display_show_ota_error(const char *msg)
+{
+    if (!g_display_initialized) return;
+    lv_label_set_text(ota_title, "升级失败");
+    lv_label_set_text(ota_body, msg ? msg : "未知错误");
+    lv_obj_add_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(ota_hint, "STOP 返回   PLAY 重试");
+    ui_show_ota();
 }

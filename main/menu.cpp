@@ -24,6 +24,7 @@ int  app_get_play_mode(void);
 void app_set_play_mode(int m);
 void app_show_info(const char *title, const char *text);
 void app_play_beep(void);
+void app_enter_ota(void);
 
 /* R049b / R049c 菜单动作（本文件实现，调用 audio_player / main） */
 void app_ab_mark_a(void);
@@ -129,7 +130,7 @@ static const int g_root_count = 4;
 void app_ab_mark_a(void)   { audio_player_mark_a(); }
 void app_ab_mark_b(void)   { audio_player_mark_b(); }
 void app_ab_clear(void)    { audio_player_clear_ab(); }
-void app_ota_enter(void)   { app_show_info("固件升级", "OTA 升级需联网\n本机无 WiFi\n功能未开放"); }
+void app_ota_enter(void)   { app_enter_ota(); }
 void app_usb_enter(void)   { app_show_info("USB 存储", "大容量存储模式\n需 USB OTG\n功能未开放"); }
 void app_about_enter(void) { app_show_info("关于", "有声书播放器\nESP32-S3\nV1.1 · R049"); }
 void app_bookmark_enter(void) { app_show_info("书签", "书签列表管理\n开发中 (R049d)"); }

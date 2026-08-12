@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.cpp"
         "menu.cpp"
+        "ota_sd.cpp"
         "button_manager.cpp"
         "tape_control.cpp"
         "playlist.cpp"
@@ -31,6 +32,8 @@ idf_component_register(
         esp_lcd
         # WS2812 状态指示灯（led_strip 组件使用 RMT 驱动单颗 WS2812）
         led_strip
+        # TF 卡固件升级 (R049c 真实化): app_update 组件提供 esp_ota_ops OTA 写/校验 API
+        app_update
     )
 
 # 传递目标模块选择为编译宏

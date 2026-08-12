@@ -56,3 +56,7 @@ CONFIG_FREERTOS_ENABLE_BACKWARD_COMPATIBILITY=y
 # 现改为项目内 components/audio_board 覆盖 ADF 自带版本，提供自定义 tapebook 板（桩实现），
 # 不再依赖任何现成开发板（ESP_SD_PIN_* 宏在 tapebook/board_def.h 中定义，值仅用于编译）。
 CONFIG_ESP_TAPEBOOK_BOARD=y
+
+# OTA 启动回滚：新固件启动成功后需 app_main 标记有效，否则自动回退上一分区
+# （防 boot loop 假死砖, R049c 真实化）
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
