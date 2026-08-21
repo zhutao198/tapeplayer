@@ -130,11 +130,22 @@ bool audio_player_is_ab_enabled(void);
 int  audio_player_ab_a_ms(void);
 /** B 点位置(ms)，未标记返回 -1 */
 int  audio_player_ab_b_ms(void);
+/** 直接设置 A 点位置(ms)（菜单微调用；负无效；若越过 B 则 B 顺延） */
+void audio_player_set_ab_a_ms(int ms);
+/** 直接设置 B 点位置(ms)（菜单微调用；自动保证 B>A+1000ms） */
+void audio_player_set_ab_b_ms(int ms);
 
 /* ============================================================
  * 按键提示音 (R049c) — 仅在非播放态（菜单/浏览/停止）有效
  * ============================================================ */
 void audio_player_play_beep(void);
+
+/* ============================================================
+ * 蓝牙音箱 (A2DP Sink) 控制接口 — 需 CONFIG_USE_BT_SPEAKER
+ * ============================================================ */
+bool audio_player_start_bt(void);
+void audio_player_stop_bt(void);
+bool audio_player_is_bt_active(void);
 
 #ifdef __cplusplus
 }

@@ -10,11 +10,12 @@
 ## 2026-07-29：WS2812 状态指示灯改用 ESP-IDF Component Manager 的 led_strip 组件
 ##   （ESP-IDF v5.5 起 led_strip 已移出内置组件，需经 idf component manager 拉取）。
 
-version: "1.0.0"
-description: "audiobook_player main firmware component"
+version: 1.0.0
+description: audiobook_player main firmware component
 
 dependencies:
   espressif/led_strip:
-    version: "^3.0.0"
+    version: ^3.0.0
   lvgl/lvgl:
-    version: ">=9.0.0"
+    version: '>=9.0.0'
+  espressif/freetype: '*'

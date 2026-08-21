@@ -93,4 +93,15 @@ config USE_U8G2
         When disabled, display output goes to serial log only.
         Requires u8g2 and u8g2_esp32_hal components (included in components/).
 
+config USE_BT_SPEAKER
+    bool "Enable Bluetooth Speaker (A2DP Sink)"
+    default n
+    depends on USE_ESP_ADF
+    help
+        Bluetooth speaker mode: device acts as A2DP Sink; phone streams
+        audio over Bluetooth to the I2S/MAX98357 output.
+        Requires ESP-ADF bluetooth_service component.
+        The BT build flavor (configure.bat <target>-bt) enables BT and
+        disables Wi-Fi to avoid 2.4GHz coexistence interference.
+
 endmenu

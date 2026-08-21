@@ -27,6 +27,12 @@ typedef enum {
 void display_init(void);
 
 /**
+ * @brief 启动 LVGL 渲染任务（须在 display_init 及所有初始化期 LVGL 写操作完成、
+ *        进入主循环前调用，避免 main_task 与 lvgl_task 并发访问 LVGL 对象树死锁）
+ */
+void display_start_lvgl_task(void);
+
+/**
  * @brief 更新屏幕显示
  * @param state       播放状态
  * @param track_name  曲目名称
@@ -118,11 +124,49 @@ void display_show_browse(int selected, int total, char lines[][24], int count);
 void display_show_menu(const char *title, char lines[][24], int count, int sel, const char *hint);
 
 /**
+ * @brief A-B 复读状态屏 (R051)：迷你进度条(白A/橙B) + 实时状态 + 动作列表
+ * @param title     标题（如 "A-B 复读"）
+ * @param lines     动作行（含标记前缀，如 "> 标记 A 点"），每行 ≤23 字节
+ * @param count     行数
+ * @param sel       当前选中索引
+ * @param edit      编辑态（复读开关）
+ * @param scrub     微调态：0=无, 1=A, 2=B
+ * @param ab_a_ms   A 点(ms)，-1 未标记
+ * @param ab_b_ms   B 点(ms)，-1 未标记
+ * @param ab_on     复读开关是否开启
+ * @param total_ms  总时长(ms)，0=未知（此时不定位 A/B 标记）
+ * @param cur_ms    当前播放位置(ms)，用于进度条填充
+ * @param hint      底部操作提示
+ */
+void display_show_ab_menu(const char *title, char lines[][24], int count, int sel,
+                          bool edit, int scrub,
+                          int ab_a_ms, int ab_b_ms, bool ab_on,
+                          int total_ms, int cur_ms, const char *hint);
+
+/**
  * @brief 通用信息屏 (R049c 桩功能提示，如 OTA/USB/关于)
  * @param title 标题（居中首行）
  * @param text  多行正文（'\n' 分隔，居中）
  */
 void display_show_info(const char *title, const char *text);
+
+/**
+ * @brief 打印 PSRAM/DRAM 堆水位与当前屏 LVGL 对象数（内存诊断，每 10s 自动触发）
+ */
+void display_mem_report(void);
+
+/* ---- 蓝牙音箱状态屏（R050-BT）---- */
+void display_show_bt_status(const char *device_name, bool connected, int volume);
+
+/**
+ * @brief 注册主循环显示更新回调（由 lvgl_task 持有 LVGL 锁时调用）
+ * @note 用于消除 main_task 与 lvgl_task 并发访问 LVGL 导致的死锁与看门狗超时。
+ *       main 不再直接调 LVGL API，改设为 dirty 由 lvgl_task 在自己的循环里调度。
+ */
+typedef void (*display_main_tick_fn_t)(void);
+void display_register_main_tick(display_main_tick_fn_t fn);
+/** 设置 dirty 标志，请求 lvgl_task 在下一帧调用注册的 main tick 回调 */
+void display_request_main_tick(void);
 
 /* ---- SD-OTA 升级界面（R049c 真实化）---- */
 void display_show_ota_confirm(const char *cur_ver, const char *new_ver,

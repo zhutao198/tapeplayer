@@ -68,16 +68,36 @@
 /* 屏幕方向（后期可切换，无需改驱动）：
  *   0 = 横屏 (320x240)  —— 当前默认，匹配原 u8g2 布局
  *   1 = 竖屏 (240x320)
- * ST7789 物理面板为 240x320，方向由 esp_lcd 的 swap_xy/mirror 在初始化时设置。 */
+ * ST7789 物理面板 GRAM 寻址为 240 列 x 320 行(厂家 CASET=0..239, RASET=0..319)。
+ * 横屏逻辑 320x240 必须 swap_xy=true (MV=1)，让 LVGL "第 X 列" 落到 GRAM "第 X 行"
+ * (GRAM 物理仍 240x320，但读出顺序变成 320 行 x 240 列)，避免 320 列写入物理 240
+ * 列 GRAM 时第 241~320 列溢出导致 1/4 花屏。
+ *
+ * mirror(x,y) 用于微调横屏起点 / 镜像：
+ *   - 横屏 swap_xy=true 时，不同模组批次可能需要 mirror_x/mirror_y 反转起点
+ *   - 烧录后若内容旋转/镜像，再调下面宏的具体值即可（无需改驱动代码） */
 #ifndef DISPLAY_ORIENTATION
 #define DISPLAY_ORIENTATION 0
 #endif
 #if DISPLAY_ORIENTATION == 1
 #define DISPLAY_WIDTH   240
 #define DISPLAY_HEIGHT  320
+/* 竖屏 240x320: GRAM 默认列扫描，无需 swap */
+#define DISPLAY_SWAP_XY    0
+#define DISPLAY_MIRROR_X   0
+#define DISPLAY_MIRROR_Y   0
 #else
 #define DISPLAY_WIDTH   320
 #define DISPLAY_HEIGHT  240
+/* 横屏 320x240 (R052 最终固化值，用户对比确认 mirror_x=1 修文字镜像):
+ * - swap_xy=true (MV=1): 必填, 否则 LVGL 320 列写入物理 240 列 GRAM 完全错位 (花屏)
+ * - mirror_x=true (MX=1): 修正 MV=1 导致的文字水平镜像 (用户实测对比确认)
+ * - mirror_y=false: 无需垂直镜像
+ * - rgb_ele_order=BGR (display.cpp): 颜色顺序与 LCD 实际匹配
+ * 最终 MADCTL = 0x60 (MV=1, MX=1, MY=0, BGR=1) */
+#define DISPLAY_SWAP_XY    1
+#define DISPLAY_MIRROR_X   1
+#define DISPLAY_MIRROR_Y   0
 #endif
 
 /* ============================================================
@@ -145,6 +165,13 @@
 #define POW_EN_IO           GPIO_NUM_40   // 电源锁存 (U1.33)
 #define LCD_POW_EN_IO       GPIO_NUM_39   // LCD 软电源开关 (U1.32)
 
+/* 电源锁存硬件旁路开关。
+ * =0（默认）: 正常通过 IO40 脉冲拉低释放电源锁存实现软关机；
+ * =1: 用户已用跳线旁路开关机硬件电路，IO40 拉低会产生 latch 误触风险，
+ *     此时 power_mgmt_power_off() 只打警告、不操作 IO40、不进入 deep-sleep。
+ *     真正"关机"由用户在外部断电完成（电池低时仅警告不强行断电）。 */
+#define TAPEBOOK_POWER_LATCH_BYPASSED  1
+
 /* ============================================================
  * 磁带机加速参数
  * ============================================================ */
@@ -168,6 +195,9 @@
 #define VOLUME_LEVELS       15            // 逻辑音量档位数
 #define VOLUME_LEVEL_MAX    (VOLUME_LEVELS - 1)  // = 14, level 有效范围 0..14
 #define AUDIO_OUTPUT_VOL    10            // 默认音量 (0..14, 约 -18.9 dB)
+
+/* 蓝牙音箱 (A2DP Sink) 设备名 — 手机扫描时显示 (R050-BT) */
+#define BT_SPEAKER_DEVICE_NAME   "TapeBook"
 
 /* ============================================================
  * 播放列表

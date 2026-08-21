@@ -45,6 +45,11 @@
 //   而代码未实际使用 board.h 中任何 API）
 // #include "board.h"
 
+#if defined(CONFIG_USE_BT_SPEAKER)
+#include "bt_speaker.h"
+static bool g_bt_active = false;           // BT 音箱模式是否激活（复用 g_i2s_writer）
+#endif
+
 static const char *TAG = "audio_player";
 
 /* --- 全局状态 --- */
@@ -121,6 +126,7 @@ static audio_element_handle_t create_decoder(const char *path)
 void audio_player_init(void)
 {
     ESP_LOGI(TAG, "Initializing audio subsystem...");
+    vTaskDelay(pdMS_TO_TICKS(5));  /* 强制 flush 串口，避免阻塞前日志丢失 */
 
     // 创建 I2S 输出流（跨曲目复用，无需每次重建）
     // I2S 引脚直接绑定到原理图定义 (BCLK=IO6, WS=IO7, DIN=IO5, MAX98357 U8)
@@ -131,15 +137,21 @@ void audio_player_init(void)
     i2s_cfg.std_cfg.gpio_cfg.ws   = I2S_WS_IO;
     i2s_cfg.std_cfg.gpio_cfg.dout = I2S_DOUT_IO;
     i2s_cfg.std_cfg.gpio_cfg.din  = GPIO_NUM_NC;
-    g_i2s_writer = i2s_stream_init(&i2s_cfg);
-    if (!g_i2s_writer) {
-        ESP_LOGE(TAG, "Failed to create I2S writer stream");
-        return;
-    }
-    ESP_LOGI(TAG, "I2S pins bound: BCLK=IO%d WS=IO%d DIN=IO%d",
+    ESP_LOGI(TAG, "i2s_stream_init enter (BCLK=IO%d WS=IO%d DIN=IO%d)",
              I2S_BCK_IO, I2S_WS_IO, I2S_DOUT_IO);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    g_i2s_writer = i2s_stream_init(&i2s_cfg);
+    ESP_LOGI(TAG, "i2s_stream_init returned %p", (void *)g_i2s_writer);
+    if (!g_i2s_writer) {
+        ESP_LOGE(TAG, "Failed to create I2S writer stream (audio disabled, continue)");
+        /* 失败保护：不阻塞、不返回，允许 UI 继续运行 */
+    } else {
+        ESP_LOGI(TAG, "I2S pins bound: BCLK=IO%d WS=IO%d DIN=IO%d",
+                 I2S_BCK_IO, I2S_WS_IO, I2S_DOUT_IO);
+    }
 
-    ESP_LOGI(TAG, "Audio subsystem initialized (I2S writer ready)");
+    ESP_LOGI(TAG, "Audio subsystem initialized (I2S writer %s)",
+             g_i2s_writer ? "ready" : "FAILED-but-ignored");
 }
 
 /* ============================================================
@@ -355,6 +367,11 @@ void audio_player_resume(void)
 
 void audio_player_stop(void)
 {
+#if defined(CONFIG_USE_BT_SPEAKER)
+    // BT 音箱模式复用 g_i2s_writer，必须先停 BT 管线再继续
+    if (g_bt_active) audio_player_stop_bt();
+#endif
+
     // R032-211：pipeline/writer 未就绪（OOM 或初始化失败）时直接重置状态返回，
     // 避免访问已释放/未创建的音频元素。
     if (!g_pipeline || !g_i2s_writer) {
@@ -523,18 +540,10 @@ void audio_player_set_speed(float speed)
     }
 }
 
-void audio_player_set_volume(int volume)
+/* 内部：仅设置 g_volume 并应用 I2S ALC（不触达 BT 回传，避免音量循环） */
+static void apply_volume_alc(int volume)
 {
-    // V1.2 音量模型：15 档逻辑音量 (level 0..VOLUME_LEVEL_MAX)，线性 dB 映射 -96..+12 dB
-    // 覆盖 MAX98357A ALC 全动态范围 (i2s_alc_volume_set 范围 -96..+12 dB)。
-    // dB(level) = -96 + level * (12 - (-96)) / 14，四舍五入。
-    //   level 0  → -96 dB（静音）
-    //   level 14 → +12 dB（最大增益，约每档 7.7 dB，等感知步进）
-    if (volume < 0) volume = 0;
-    if (volume > VOLUME_LEVEL_MAX) volume = VOLUME_LEVEL_MAX;
     g_volume = volume;
-
-    // MAX98357A 无硬件音量控制；通过 I2S ALC 软件音量实现
     if (g_i2s_writer) {
         int alc_vol;
         if (volume <= 0) {
@@ -548,6 +557,25 @@ void audio_player_set_volume(int volume)
         if (alc_vol > VOL_DB_MAX) alc_vol = VOL_DB_MAX;
         i2s_alc_volume_set(g_i2s_writer, alc_vol);
     }
+}
+
+void audio_player_set_volume(int volume)
+{
+    // V1.2 音量模型：15 档逻辑音量 (level 0..VOLUME_LEVEL_MAX)，线性 dB 映射 -96..+12 dB
+    // 覆盖 MAX98357A ALC 全动态范围 (i2s_alc_volume_set 范围 -96..+12 dB)。
+    // dB(level) = -96 + level * (12 - (-96)) / 14，四舍五入。
+    //   level 0  → -96 dB（静音）
+    //   level 14 → +12 dB（最大增益，约每档 7.7 dB，等感知步进）
+    if (volume < 0) volume = 0;
+    if (volume > VOLUME_LEVEL_MAX) volume = VOLUME_LEVEL_MAX;
+    apply_volume_alc(volume);
+
+#if defined(CONFIG_USE_BT_SPEAKER)
+    // BT 模式下把本地音量回传手机（AVRCP 绝对音量 0..127），使两端一致
+    if (g_bt_active) {
+        bt_speaker_report_volume((uint8_t)((uint32_t)volume * 127 / VOLUME_LEVEL_MAX));
+    }
+#endif
 }
 
 int audio_player_get_volume(void)
@@ -565,6 +593,10 @@ int audio_player_get_volume(void)
  * ============================================================ */
 void audio_player_tick(void)
 {
+#if defined(CONFIG_USE_BT_SPEAKER)
+    // BT 模式无 SD pipeline，跳过走带/跳帧/A-B 复读逻辑
+    if (g_bt_active) return;
+#endif
     if (!g_pipeline || !g_is_playing) return;
 
     // 检查管道状态（通过 I2S writer 元素状态判断）
@@ -696,6 +728,25 @@ bool audio_player_is_ab_enabled(void) { return g_ab_enabled; }
 int  audio_player_ab_a_ms(void) { return g_ab_a_ms; }
 int  audio_player_ab_b_ms(void) { return g_ab_b_ms; }
 
+/* R051：菜单内 A-B 微调 —— 直接设置 A/B 点到任意毫秒位置 */
+void audio_player_set_ab_a_ms(int ms)
+{
+    if (ms < 0) return;
+    if (g_ab_b_ms >= 0 && ms >= g_ab_b_ms) {
+        g_ab_b_ms = ms + 1000;   // A 越过 B，则 B 顺延 1s
+    }
+    g_ab_a_ms = ms;
+    ESP_LOGI(TAG, "AB set A = %d ms", g_ab_a_ms);
+}
+
+void audio_player_set_ab_b_ms(int ms)
+{
+    if (ms <= 0) return;
+    if (g_ab_a_ms >= 0 && ms <= g_ab_a_ms) ms = g_ab_a_ms + 1000;  // 保证 B>A
+    g_ab_b_ms = ms;
+    ESP_LOGI(TAG, "AB set B = %d ms", g_ab_b_ms);
+}
+
 /* ============================================================
  * R049c：按键提示音
  * 复用空闲的 g_i2s_writer 播放一段内存 PCM（raw_stream → i2s），
@@ -808,6 +859,54 @@ void audio_player_set_ab_enabled(bool en) { (void)en; }
 bool audio_player_is_ab_enabled(void) { return false; }
 int  audio_player_ab_a_ms(void) { return -1; }
 int  audio_player_ab_b_ms(void) { return -1; }
+void audio_player_set_ab_a_ms(int ms) { (void)ms; }
+void audio_player_set_ab_b_ms(int ms) { (void)ms; }
 void audio_player_play_beep(void) {}
 
 #endif // CONFIG_USE_ESP_ADF
+
+/* ============================================================
+ * 蓝牙音箱 (A2DP Sink) — 仅 ADF + USE_BT_SPEAKER 编译真实实现
+ * 复用 audio_player 的 g_i2s_writer（I2S/MAX98357 输出），链路：
+ *   A2DP Sink 解码 PCM (bluetooth_service 元素) → i2s_stream_writer
+ * ============================================================ */
+#if defined(CONFIG_USE_ESP_ADF) && defined(CONFIG_USE_BT_SPEAKER)
+
+/* 手机端音量回调：映射到 level 并应用本地 ALC（不回传手机，避免循环） */
+static void bt_phone_vol_cb(uint8_t vol_0_127)
+{
+    int level = (int)((uint32_t)vol_0_127 * VOLUME_LEVEL_MAX / 127);
+    if (level > VOLUME_LEVEL_MAX) level = VOLUME_LEVEL_MAX;
+    apply_volume_alc(level);
+}
+
+bool audio_player_start_bt(void)
+{
+    if (!g_i2s_writer) return false;
+    audio_player_stop();   // 释放 SD 管道（保留 g_i2s_writer 跨模式复用）
+
+    if (bt_speaker_start(g_i2s_writer) != ESP_OK) return false;
+
+    bt_speaker_set_volume_cb(bt_phone_vol_cb);
+    g_bt_active = true;
+    // 同步当前音量到手机 (AVRCP 绝对音量 0..127)
+    bt_speaker_report_volume((uint8_t)((uint32_t)g_volume * 127 / VOLUME_LEVEL_MAX));
+    return true;
+}
+
+void audio_player_stop_bt(void)
+{
+    if (!g_bt_active) return;
+    bt_speaker_stop();
+    g_bt_active = false;
+}
+
+bool audio_player_is_bt_active(void) { return g_bt_active; }
+
+#else  /* 非 ADF 或 未开 USE_BT_SPEAKER：桩实现，保证链接 */
+
+bool audio_player_start_bt(void) { return false; }
+void audio_player_stop_bt(void) {}
+bool audio_player_is_bt_active(void) { return false; }
+
+#endif

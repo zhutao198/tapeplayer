@@ -125,11 +125,12 @@ git status --short            # 未提交改动
 
 | 项 | 值 |
 |---|---|
-| 串口（烧录） | 待确认（Win 上 `idf.py -p COMx flash`） |
+| 串口（烧录） | `COM7`（**手动进下载模式**，esptool 直写，**禁用 `idf.py flash`**）|
 | ESP-IDF 版本 | v5.5.3（实际） |
 | ESP-ADF 版本 | v2.7 |
 | 模组切换脚本 | `configure.bat wroom-1-n16r8` / `configure.bat wroom-2-n32r16v` |
-| 构建脚本 | `build.bat build` / `build.bat -p COM3 flash` |
+| 构建脚本 | `build.bat build`（PowerShell 需 `cmd /c` 包裹）|
+| 烧录文档 | `docs/BUILD_FLASH.md`（esptool 直写完整命令）|
 | GitHub 远程 | `https://github.com/zhutao198/tapeplayer.git` |
 
 ---

@@ -40,6 +40,9 @@ void ota_sd_handle_button(const btn_event_info_t *events, int n);
 /* 由 main 的 update_display 调用（渲染当前阶段） */
 void ota_sd_render(void);
 
+/* 由 main 周期调用：确认/错误态空闲超时自动退出 (review #24) */
+void ota_sd_tick(void);
+
 /* 宿主回调：退出 OTA（取消/返回），由 main.cpp 实现 */
 void app_ota_exit(void);
 

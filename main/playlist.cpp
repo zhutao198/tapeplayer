@@ -16,6 +16,9 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
+/* 内存诊断：定义在 display.cpp，C 链接，避免引入整个 display.h */
+extern "C" void display_mem_report(void);
+
 // GCC 14 的 -Wformat-truncation 静态分析 snprintf 会截断，
 // 这里 buffer 是有意做大，但 GCC 看不到边界。
 // 局部禁用这个 warning，不影响其他警告。
@@ -102,9 +105,14 @@ static void scan_dir_recursive(const char *path, const char *prefix, int depth)
         char full_entry_path[FILENAME_MAX_LEN * 4];  // R032-001: 扩到 *4 避免递归拼接路径截断导致文件被误跳过
         snprintf(full_entry_path, sizeof(full_entry_path), "%s/%s", path, entry->d_name);
 
-        bool is_reg = (entry->d_type == DT_REG);
-        bool is_dir = (entry->d_type == DT_DIR);
-        if (!is_reg && !is_dir && entry->d_type == DT_UNKNOWN) {
+        bool is_reg = false, is_dir = false;
+#ifdef DT_REG  /* 仅 glibc/Linux 暴露 entry->d_type; BSD/macOS 永远 DT_UNKNOWN,
+                 * MinGW/MSVC 没有 d_type 字段, 一律走 stat() */
+        is_reg = (entry->d_type == DT_REG);
+        is_dir = (entry->d_type == DT_DIR);
+        if (!is_reg && !is_dir && entry->d_type == DT_UNKNOWN)
+#endif
+        {
             struct stat st;
             if (stat(full_entry_path, &st) == 0) {
                 is_reg = S_ISREG(st.st_mode);
@@ -180,6 +188,7 @@ int playlist_scan(const char *base_path)
     /* 整体排序（结构体绑定，名称-路径不会错乱） */
     qsort(g_items, g_count, sizeof(g_items[0]), qsort_item_cmp);
 
+    display_mem_report();   // 扫描后打印内存水位（含 PSRAM 播放列表缓冲）
     return g_count;
 }
 

@@ -75,9 +75,16 @@ void power_mgmt_init(void)
     /* CHRG: IO2 输入, 低=充电中 */
     gpio_set_direction(CHRG_DET_IO, GPIO_MODE_INPUT);
 
-    /* POW_EN: IO40 输出, 默认高 (锁存保持); 脉冲低释放 */
+    /* POW_EN 配置。
+     * 如果用户已用跳线旁路硬件锁存电路，IO40 任何后续操作都可能让硬件 latch
+     * 误触为"关机脉冲"造成意外断电，因此跳过重复初始化与重复拉高。
+     * 如果未旁路（正常硬件），则按常规 init。 */
+#if TAPEBOOK_POWER_LATCH_BYPASSED
+    /* 跳过: 主程序在 app_main 最开始已把 IO40 拉高，此处不要再动 */
+#else
     gpio_set_direction(POW_EN_IO, GPIO_MODE_OUTPUT);
     gpio_set_level(POW_EN_IO, 1);
+#endif
 
     ESP_LOGI(TAG, "Power management initialized (sleep timeout: 5min)");
 }
@@ -132,6 +139,12 @@ bat_state_t power_mgmt_get_state(void)
 
 bool power_mgmt_should_shutdown(void)
 {
+    /* R031-005: 关机门槛从 0% 提到 5%（电量过低锂电池有损坏风险）
+     * 但如果正在充电（CHRG 低电平），即使读不到电池电压也不该触发关机
+     * —— USB 供电不接电池时 BAT_DET ADC 读到 0V，会被误判为电量极低。 */
+    if (power_mgmt_is_charging()) {
+        return false;
+    }
     return power_mgmt_get_state() == BAT_STATE_CRITICAL;
 }
 
@@ -162,6 +175,12 @@ bool power_mgmt_auto_off_expired(void)
 
 void power_mgmt_power_off(void)
 {
+#if TAPEBOOK_POWER_LATCH_BYPASSED
+    /* 用户已用跳线旁路硬件锁存电路，IO40 拉低会产生 latch 误触风险。
+     * 此函数仅打日志，不再真正操作 IO40，也不再进入 deep-sleep。
+     * 真正的"关机"逻辑由用户在外部断电（电池低时仅警告不强行断电）。 */
+    ESP_LOGW(TAG, "power_mgmt_power_off disabled (TAPEBOOK_POWER_LATCH_BYPASSED); battery-low warning only");
+#else
     ESP_LOGI(TAG, "Soft power off: pulsing POW_EN (IO40) to release latch");
     /* 拉低 POW_EN ~2s 释放电源锁存 (MX66100T), 整板断电 */
     gpio_set_level(POW_EN_IO, 0);
@@ -169,4 +188,5 @@ void power_mgmt_power_off(void)
     gpio_set_level(POW_EN_IO, 1);
     /* 若锁存未完全切断, 进入深度休眠兜底 */
     esp_deep_sleep_start();
+#endif
 }

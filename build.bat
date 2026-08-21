@@ -46,13 +46,13 @@ idf.py %*
 
 set RC=%ERRORLEVEL%
 
-REM === R049c SD 卡升级包生成（build 成功后，供 TF 卡升级使用）===
+REM === SD 卡升级包生成（build 成功后，供 TF 卡升级使用）===
+REM 只使用 audiobook_player.bin 一个文件名，不再生成 TAPEBOOK.BIN 等别名
 if exist build\audiobook_player.bin (
-    copy /Y build\audiobook_player.bin build\TAPEBOOK.BIN >nul
     for /f "tokens=3" %%v in ('findstr /r "#define APP_VERSION_STR" main\config.h') do set VER=%%~v
-    if defined VER (echo %VER% > build\TAPEBOOK.VER)
-    certutil -hashfile build\TAPEBOOK.BIN SHA256 > build\TAPEBOOK.SHA256
-    echo [OK] SD 升级包: build\TAPEBOOK.BIN + TAPEBOOK.VER + TAPEBOOK.SHA256
+    if defined VER (echo %VER% > build\audiobook_player.VER)
+    certutil -hashfile build\audiobook_player.bin SHA256 > build\audiobook_player.SHA256
+    echo [OK] SD 升级包: build\audiobook_player.bin + audiobook_player.VER + audiobook_player.SHA256
 )
 
 popd

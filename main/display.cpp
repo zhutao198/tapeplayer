@@ -19,11 +19,15 @@
 #include "config.h"
 #include "tape_control.h"
 #include "power_mgmt.h"
+#include "font_partition.h"
+#include "audio_player.h"
 #include "esp_timer.h"
 
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"   // xTaskCreatePinnedToCoreWithCaps
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
@@ -36,9 +40,7 @@
 #include "lvgl.h"
 
 /* 自定义中文字体（ui_font_*.c 生成）：显式声明供本编译单元使用 */
-LV_FONT_DECLARE(lv_font_chinese_12);
-LV_FONT_DECLARE(lv_font_chinese_14);
-LV_FONT_DECLARE(lv_font_chinese_16);
+LV_FONT_DECLARE(lv_font_montserrat_14);
 
 static const char *TAG = "display";
 
@@ -59,6 +61,16 @@ static lv_obj_t *g_msg    = NULL;   // 居中消息标签 (splash/提示)
 /* SD-OTA 升级界面 (R049c 真实化) */
 static lv_obj_t *g_ota     = NULL;  // 升级界面容器
 static lv_obj_t *ota_title = NULL;  // 标题
+
+/* R051：A-B 复读状态屏（带迷你进度条） */
+static lv_obj_t *g_ab_menu   = NULL;
+static lv_obj_t *abm_title   = NULL;
+static lv_obj_t *abm_bar     = NULL;
+static lv_obj_t *abm_mark_a  = NULL;
+static lv_obj_t *abm_mark_b  = NULL;
+static lv_obj_t *abm_stat    = NULL;
+static lv_obj_t *abm_lines[4]= {NULL, NULL, NULL, NULL};
+static lv_obj_t *abm_hint    = NULL;
 static lv_obj_t *ota_body  = NULL;  // 正文(摘要/状态, 多行)
 static lv_obj_t *ota_bar   = NULL;  // 写入进度条
 static lv_obj_t *ota_pct   = NULL;  // 进度百分比
@@ -73,6 +85,9 @@ static lv_obj_t *lbl_dur     = NULL; // 总时长 (右)
 static lv_obj_t *bar_prog    = NULL; // 进度条
 static lv_obj_t *lbl_percent = NULL; // 进度百分比
 static lv_obj_t *lbl_hint    = NULL; // 底部按键提示
+static lv_obj_t *lbl_ab      = NULL; // A-B 复读信息（底部灰栏）
+static lv_obj_t *ab_mark_a   = NULL; // 进度条上的 A 点标记
+static lv_obj_t *ab_mark_b   = NULL; // 进度条上的 B 点标记
 static lv_obj_t *reel_l      = NULL; // 磁带左卷轴装饰
 static lv_obj_t *reel_r      = NULL; // 磁带右卷轴装饰
 
@@ -107,22 +122,20 @@ static int s_last_brightness = 100;
 
 static void lcd_backlight_init(void)
 {
-    ledc_timer_config_t t = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = (ledc_timer_bit_t)LCD_BLK_PWM_BITS,
-        .timer_num = LCD_BLK_LEDC_TIMER,
-        .freq_hz = LCD_BLK_PWM_HZ,
-        .clk_cfg = LEDC_AUTO_CLK,
-    };
+    ledc_timer_config_t t = {};
+    t.speed_mode = LEDC_LOW_SPEED_MODE;
+    t.duty_resolution = (ledc_timer_bit_t)LCD_BLK_PWM_BITS;
+    t.timer_num = LCD_BLK_LEDC_TIMER;
+    t.freq_hz = LCD_BLK_PWM_HZ;
+    t.clk_cfg = LEDC_AUTO_CLK;
     ledc_timer_config(&t);
-    ledc_channel_config_t ch = {
-        .gpio_num = DISPLAY_BLK_IO,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LCD_BLK_LEDC_CH,
-        .timer_sel = LCD_BLK_LEDC_TIMER,
-        .duty = 0,
-        .hpoint = 0,
-    };
+    ledc_channel_config_t ch = {};
+    ch.gpio_num = DISPLAY_BLK_IO;
+    ch.speed_mode = LEDC_LOW_SPEED_MODE;
+    ch.channel = LCD_BLK_LEDC_CH;
+    ch.timer_sel = LCD_BLK_LEDC_TIMER;
+    ch.duty = 0;
+    ch.hpoint = 0;
     ledc_channel_config(&ch);
 }
 
@@ -132,6 +145,7 @@ void display_set_brightness(int percent)
     if (percent > 100) percent = 100;
     s_last_brightness = percent;
     uint32_t duty = (uint32_t)((percent * ((1 << LCD_BLK_PWM_BITS) - 1)) / 100);
+    ESP_LOGI(TAG, "DBG: set_brightness percent=%d duty=%lu max=%lu", percent, duty, (1u << LCD_BLK_PWM_BITS) - 1);
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_BLK_LEDC_CH, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_BLK_LEDC_CH);
 }
@@ -145,15 +159,79 @@ void display_power(bool on)
 }
 
 /* ============================================================
+ * Main tick 注册回调（消除 main_task 与 lvgl_task 并发访问 LVGL 死锁）
+ * - main 不再直接调 display_* 系列 LVGL API
+ * - main 调用 display_request_main_tick() 置 dirty
+ * - lvgl_task 在自己持锁区间内调注册的 main tick 回调
+ * ============================================================ */
+static volatile bool     s_main_tick_pending = false;
+static display_main_tick_fn_t s_main_tick_cb = NULL;
+/* R056-fix4: 音量条轮询方案(替代 lv_async_call,避免队列堆积→状态损坏→Guru Meditation)
+   main_task 只设标志,lvgl_task 在持锁状态下消费 */
+static volatile bool s_vol_pending = false;
+static volatile int  s_vol_value   = 0;
+static volatile uint32_t s_main_tick_call_count = 0;  /* 诊断：调用次数 */
+
+void display_register_main_tick(display_main_tick_fn_t fn)
+{
+    s_main_tick_cb = fn;
+    ESP_LOGI(TAG, "DBG: display_register_main_tick fn=%p", (void *)fn);
+}
+
+void display_request_main_tick(void)
+{
+    s_main_tick_pending = true;
+}
+
+/* ============================================================
  * LVGL flush 回调：把像素图写到 ST7789 帧
  * ============================================================ */
+static int s_flush_cnt = 0;
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
     uint16_t *color = (uint16_t *)px_map;
-    esp_lcd_panel_draw_bitmap(s_panel_handle,
-                              area->x1, area->y1,
-                              area->x2 + 1, area->y2 + 1,
-                              color);
+    s_flush_cnt++;
+
+    /* 方向 (MADCTL) 与 BGR 由 display_init 一次性设置 (swap_xy/mirror/rgb_ele_order)
+     * + 原生 ST7789 驱动自动下发, 此处不再每帧重复写, 避免覆盖与撕裂。
+     *
+     * 字节序补偿 (little-endian RAMCTRL):
+     *   本模组硬件 GRAM 实测按 little-endian 取数, 而 LVGL 送出的 RGB565 是
+     *   big-endian (高字节在前)。若不做交换, 每像素高低字节颠倒 -> "白中带彩"。
+     *   诊断 (display_diag_run) 已验证: 软件 SWAP16 每像素后送显, 颜色纯正。
+     *   注意: lv_conf.h 的 LV_COLOR_16_SWAP 在本工程中未真正生效 (sdkconfig 无此项,
+     *   main/lv_conf.h 未被 LVGL 组件包含), 故必须在此处显式软件交换, 保证 100% 生效。 */
+    const int w = area->x2 - area->x1 + 1;
+    const int h = area->y2 - area->y1 + 1;
+    const int n = w * h;
+    /* R051: 移除 R050 flush 探针 (area DBG)，保留 rows_per_chunk clamp 防御性代码 */
+    for (int i = 0; i < n; i++) {
+        uint16_t v = color[i];
+        color[i] = (uint16_t)((v << 8) | (v >> 8));   /* SWAP16: 补偿 little-endian GRAM */
+    }
+
+    /* P0-2: esp_lcd_panel_io_spi 不会按 max_transfer_sz 自动分片, 需手动切。
+       ESP32-S3 SPI DMA 单次事务安全上限约 32752 字节, 每块按此上限横向切。 */
+    const int max_bytes = 32752;
+    const int bytes_per_row = w * (int)sizeof(lv_color_t);
+    int rows_per_chunk = max_bytes / bytes_per_row;   // 每块行数
+    if (rows_per_chunk < 1) {
+        /* R050: 防御 rows_per_chunk=0 死循环 (w 过大时整行超 DMA 上限)。
+           改为按 1 行处理, 并从该行重新分块, 避免 y 不前进的死循环。 */
+        ESP_LOGW(TAG, "DBG: flush#%d rows_per_chunk=0 (w=%d), clamp to 1 row", s_flush_cnt, w);
+        rows_per_chunk = 1;
+    }
+    int y = area->y1;
+    while (y <= area->y2) {
+        int y_end = (y + rows_per_chunk - 1);
+        if (y_end > area->y2) y_end = area->y2;
+        esp_lcd_panel_draw_bitmap(s_panel_handle,
+                                  area->x1, y,
+                                  area->x2 + 1, y_end + 1,
+                                  &color[(y - area->y1) * w]);
+        y = y_end + 1;
+    }
+    /* 方向 A：恢复真实写屏（之前 #if 0 诊断开关已移除，见 DEBUG-0820 / R049）*/
     lv_display_flush_ready(disp);
 }
 
@@ -161,9 +239,42 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 static void lvgl_task(void *arg)
 {
     (void)arg;
+    ESP_LOGI(TAG, "DBG: lvgl_task ENTER (this proves task started)");
+    /* R051-state: 打印栈水位 (high water mark)，单位 = word (4字节)。
+       16384字节栈 → 起始 hwm ≈ 4096 word。实际使用 = 4096 - hwm。 */
+    UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+    ESP_LOGI(TAG, "DBG: lvgl_task hwm=%u words (stack=%u used=%u words)",
+             (unsigned)hwm, 4096u, (unsigned)(4096u - hwm));
+    /* 注意：本任务不再订阅/喂 task_wdt。原因：
+     *  - main_task 已取消订阅以避免长操作被误判超时
+     *  - IDF 5.5 在 main_task 取消订阅后，lvgl_task 即使 add 成功也会在 reset 时报
+     *    "task not found"（wdt 内部状态被破坏），刷屏噪声影响调试
+     *  - lvgl_task 死了不会有看门狗重启，main_task 不被监控时整个系统靠业务逻辑自我保护 */
     while (1) {
         lv_tick_inc(5);
+        /* 显式 lv_lock：避免与 main 中 display_update 的 LVGL 访问交叉持锁 */
+        lv_lock();
+        /* R056-fix4: 消费音量条标志(持锁状态下,无 race condition,无队列堆积) */
+        if (s_vol_pending) {
+            s_vol_pending = false;
+            int vol = s_vol_value;
+            if (vol_box) {
+                lv_color_t vol_col = (vol <= 0) ? lv_color_hex(0x33405e) : lv_color_hex(0x2dd4bf);
+                lv_obj_set_style_bg_color(vol_spk_box, vol_col, 0);
+                lv_obj_set_style_line_color(vol_cone, vol_col, 0);
+                int vol_clamped = vol < 0 ? 0 : (vol > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : vol);
+                lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
+                lv_obj_clear_flag(vol_box, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        /* 若 main 标记了 dirty，执行其注册的业务 tick（消除 main 直接调 LVGL 死锁） */
+        if (s_main_tick_pending && s_main_tick_cb) {
+            s_main_tick_pending = false;
+            s_main_tick_call_count++;
+            s_main_tick_cb();
+        }
         lv_timer_handler();
+        lv_unlock();
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
@@ -176,16 +287,26 @@ static esp_err_t lcd_hw_init(void)
     /* LCD 软电源: 拉低导通 */
     gpio_set_direction(LCD_POW_EN_IO, GPIO_MODE_OUTPUT);
     gpio_set_level(LCD_POW_EN_IO, 0);
+    ESP_LOGI(TAG, "DBG: lcd_pow_en set 0, readback=%d", gpio_get_level(LCD_POW_EN_IO));
+
+    /* 上电后先做一次硬件复位: RST 拉低->延时->拉高->延时, 必须在 SPI 初始化前完成 */
+    gpio_set_direction(DISPLAY_RESET_IO, GPIO_MODE_OUTPUT);
+    gpio_set_level(DISPLAY_RESET_IO, 1);          // 先确保高电平(退出复位)
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(DISPLAY_RESET_IO, 0);          // 拉低复位
+    vTaskDelay(pdMS_TO_TICKS(20));                // ST7789 要求 RST 低 >=10ms
+    gpio_set_level(DISPLAY_RESET_IO, 1);          // 释放复位
+    vTaskDelay(pdMS_TO_TICKS(120));               // 复位后等待 >=120ms 才能发命令
+    ESP_LOGI(TAG, "DBG: lcd hw reset done");
 
     /* SPI3 总线 (独立于 SD 的 SPI2) */
-    spi_bus_config_t buscfg = {
-        .mosi_io_num = DISPLAY_MOSI_IO,
-        .miso_io_num = -1,            // TFT 仅写, 不用 MISO
-        .sclk_io_num = DISPLAY_SCLK_IO,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = DISPLAY_WIDTH * 40 * 2,
-    };
+    spi_bus_config_t buscfg = {};
+    buscfg.mosi_io_num = DISPLAY_MOSI_IO;
+    buscfg.miso_io_num = -1;            // TFT 仅写, 不用 MISO
+    buscfg.sclk_io_num = DISPLAY_SCLK_IO;
+    buscfg.quadwp_io_num = -1;
+    buscfg.quadhd_io_num = -1;
+    buscfg.max_transfer_sz = 32752;   // ESP32-S3 SPI DMA 单次事务安全上限 (避开 32767 int16 边界, 防偶发截断)
     esp_err_t ret = spi_bus_initialize(DISPLAY_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "spi_bus_initialize failed: 0x%x", ret);
@@ -193,16 +314,15 @@ static esp_err_t lcd_hw_init(void)
     }
 
     /* esp_lcd_spi IO 层: DC=GPIO16, CS 接地(-1) */
-    esp_lcd_panel_io_spi_config_t io_cfg = {
-        .cs_gpio_num        = -1,
-        .dc_gpio_num        = DISPLAY_DC_IO,
-        .spi_mode           = 0,
-        .pclk_hz            = 40 * 1000 * 1000,
-        .trans_queue_depth  = 10,
-        .on_color_trans_done = NULL,
-        .lcd_cmd_bits       = 8,
-        .lcd_param_bits     = 8,
-    };
+    esp_lcd_panel_io_spi_config_t io_cfg = {};
+    io_cfg.cs_gpio_num        = -1;
+    io_cfg.dc_gpio_num        = DISPLAY_DC_IO;
+    io_cfg.spi_mode           = 0;
+    io_cfg.pclk_hz            = 10 * 1000 * 1000;   // 2.4寸ST7789 长排线模组降低时钟避免花屏
+    io_cfg.trans_queue_depth  = 10;
+    io_cfg.on_color_trans_done = NULL;
+    io_cfg.lcd_cmd_bits       = 8;
+    io_cfg.lcd_param_bits     = 8;
     ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)DISPLAY_SPI_HOST,
                                    &io_cfg, &s_io_handle);
     if (ret != ESP_OK) {
@@ -211,31 +331,64 @@ static esp_err_t lcd_hw_init(void)
     }
 
     /* 原生 ST7789 面板驱动 */
-    esp_lcd_panel_dev_config_t panel_cfg = {
-        .reset_gpio_num = DISPLAY_RESET_IO,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel = 16,
-    };
+    esp_lcd_panel_dev_config_t panel_cfg = {};
+    panel_cfg.reset_gpio_num = DISPLAY_RESET_IO;
+    /* RGB/BGR 控制位 = MADCTL (0x36) bit3, ESP-IDF 驱动 rgb_ele_order 正是写此位
+     * (RGB->0x00, BGR->0x08)。
+     * 诊断实测 (v2.4.7-DIAG): 设 BGR 时 GREEN 显示蓝 / BLUE 显示绿 (绿蓝互换),
+     * 故本模组 (2.4" ST7789) 实际需 RGB 顺序。
+     * 另硬件 RAMCTRL 为 little-endian, 需配合 lv_conf.h 中 LV_COLOR_16_SWAP=1
+     * 做软件字节交换补偿 (诊断 swap 帧 WHITE/BLACK 纯正即证)。 */
+    panel_cfg.rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB;
+    panel_cfg.bits_per_pixel = 16;
     ret = esp_lcd_new_panel_st7789(s_io_handle, &panel_cfg, &s_panel_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_lcd_new_panel_st7789 failed: 0x%x", ret);
         return ret;
     }
 
-    esp_lcd_panel_reset(s_panel_handle);
-    esp_lcd_panel_init(s_panel_handle);
+    // 注：RST 已在函数开头手动复位并等待 >=120ms，此处不再调用 esp_lcd_panel_reset，
+    // 避免二次复位后时序不满足 ST7789 要求的 120ms 上电稳定时间导致 init 失效。
+    ret = esp_lcd_panel_init(s_panel_handle);
+    ESP_LOGI(TAG, "DBG: panel_init ret=0x%x", ret);
 
-    /* 方向: 由 DISPLAY_ORIENTATION 决定, 应用层无需改写 */
-#if DISPLAY_ORIENTATION == 1
-    esp_lcd_panel_swap_xy(s_panel_handle, false);
-    esp_lcd_panel_mirror(s_panel_handle, false, false);
-#else
-    esp_lcd_panel_swap_xy(s_panel_handle, true);
-    esp_lcd_panel_mirror(s_panel_handle, false, true);
-#endif
+    /* 关键: 不手动覆盖 RAMCTRL (0xB0) 字节序。
+     * ESP-IDF 驱动默认 RAMCTRL = 0x00,0xf0 = big-endian (RGB565 高字节先)。
+     * 之前手动设 0xf4 (little-endian) 会把每像素高低字节反转, 导致颜色全乱 (白中带彩)。
+     * 实测本模组面板 GRAM 实际按 little-endian 取数, 但不再用 RAMCTRL 寄存器改端序
+     * (易与驱动默认打架), 而是在 lv_conf.h 设 LV_COLOR_16_SWAP=1 由 LVGL 在软件层
+     * 交换每像素高低字节补偿 (诊断 swap 帧 WHITE/BLACK 纯正即证)。保持驱动默认 RAMCTRL。 */
+
+    /* 屏幕方向: 由 config.h 的 DISPLAY_SWAP_XY / DISPLAY_MIRROR_X / DISPLAY_MIRROR_Y
+     * 推导 (基于 DISPLAY_ORIENTATION 宏):
+     *   - swap_xy=true (MV=1): 必填 (LVGL 320 列必须映射到物理 GRAM 行方向)
+     *   - mirror_x=false + mirror_y=false: 文字/图标朝向自然, 填满全屏
+     * MADCTL (含 BGR 位) 由 ESP-IDF 驱动在 init 内自动合成下发, 无需手动写。 */
+    esp_lcd_panel_swap_xy(s_panel_handle, DISPLAY_SWAP_XY);
+    esp_lcd_panel_mirror(s_panel_handle, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
     esp_lcd_panel_invert_color(s_panel_handle, true);
     esp_lcd_panel_disp_on_off(s_panel_handle, true);
+    vTaskDelay(pdMS_TO_TICKS(50));   // 等显示开启稳定
+    esp_lcd_panel_disp_on_off(s_panel_handle, true);   // 二次确认开显示
+    ESP_LOGI(TAG, "DBG: disp_on_off done, BLK gpio15 level=%d, POW_EN gpio39 level=%d",
+             gpio_get_level(DISPLAY_BLK_IO), gpio_get_level(LCD_POW_EN_IO));
+
     return ESP_OK;
+}
+
+/* 启动 LVGL 渲染任务（须在所有初始化 LVGL 写操作完成、进入主循环前调用，
+ * 避免 main_task 与 lvgl_task 并发访问 LVGL 对象树导致死锁） */
+void display_start_lvgl_task(void)
+{
+    ESP_LOGI(TAG, "DBG: before lvgl task create");
+    TaskHandle_t h = NULL;
+    BaseType_t rc = xTaskCreatePinnedToCoreWithCaps(lvgl_task, "lvgl", 16384, NULL, 5, &h,
+                                                    1, MALLOC_CAP_INTERNAL);
+    ESP_LOGI(TAG, "DBG: lvgl task create rc=%d handle=%p", (int)rc, (void *)h);
+    if (rc != pdPASS || !h) {
+        ESP_LOGE(TAG, "DBG: lvgl task CREATE FAILED! rc=%d", (int)rc);
+    }
+    ESP_LOGI(TAG, "DBG: after lvgl task create");
 }
 
 /* ============================================================
@@ -323,7 +476,7 @@ static void ui_create(void)
     lv_obj_set_width(lbl_status, W - 2 * M - 136);
     lv_label_set_long_mode(lbl_status, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_status, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl_status, &lv_font_chinese_14, 0);
+    lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_14, 0);  /* TEST: ascii 字体测试 */
 
     /* 图形电量图标 (外框 + 填充 + 充电标记) */
     batt_frame = lv_obj_create(g_player);
@@ -427,22 +580,22 @@ static void ui_create(void)
     lv_label_set_text(sd_icon_lbl, "");   // 默认弹出: 空
     lv_obj_center(sd_icon_lbl);
     lv_obj_set_style_text_color(sd_icon_lbl, lv_color_hex(0x0a0e17), 0);
-    lv_obj_set_style_text_font(sd_icon_lbl, &lv_font_chinese_12, 0);
+    lv_obj_set_style_text_font(sd_icon_lbl, &lv_font_montserrat_14, 0);
     lv_obj_clear_flag(sd_icon_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     /* 插拔瞬时提示 (居中, 状态栏下方; 由 LVGL 定时器控制显隐) */
     lbl_sd_toast = lv_label_create(g_player);
     lv_obj_align(lbl_sd_toast, LV_ALIGN_TOP_MID, 0, 26);
     lv_obj_set_style_text_color(lbl_sd_toast, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_text_font(lbl_sd_toast, &lv_font_chinese_14, 0);
+    lv_obj_set_style_text_font(lbl_sd_toast, &lv_font_montserrat_14, 0);
     lv_obj_add_flag(lbl_sd_toast, LV_OBJ_FLAG_HIDDEN);
 
     /* 正在播放 小标题 */
     lbl_title = lv_label_create(g_player);
     lv_obj_set_pos(lbl_title, M, 34);
-    lv_label_set_text(lbl_title, "正在播放");
+    lv_label_set_text(lbl_title, "Now Playing");
     lv_obj_set_style_text_color(lbl_title, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_text_font(lbl_title, &lv_font_chinese_12, 0);
+    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
 
     /* 文件名 (大号, 循环滚动) */
     lbl_track = lv_label_create(g_player);
@@ -450,24 +603,24 @@ static void ui_create(void)
     lv_obj_set_width(lbl_track, W - 2 * M);
     lv_label_set_long_mode(lbl_track, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_track, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl_track, &lv_font_chinese_16, 0);
+    lv_obj_set_style_text_font(lbl_track, &lv_font_montserrat_14, 0);
 
     /* 时间行: 当前(左) / 档位(中) / 总时长(右) */
     lbl_cur = lv_label_create(g_player);
     lv_obj_set_pos(lbl_cur, M, 122);
     lv_obj_set_style_text_color(lbl_cur, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(lbl_cur, &lv_font_chinese_14, 0);
+    lv_obj_set_style_text_font(lbl_cur, &lv_font_montserrat_14, 0);
 
     lbl_gear = lv_label_create(g_player);
     lv_obj_set_pos(lbl_gear, W / 2 - 22, 122);
     lv_obj_set_style_text_color(lbl_gear, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_text_font(lbl_gear, &lv_font_chinese_14, 0);
+    lv_obj_set_style_text_font(lbl_gear, &lv_font_montserrat_14, 0);
 
     lbl_dur = lv_label_create(g_player);
     lv_obj_set_pos(lbl_dur, W - M, 122);
     lv_obj_set_style_text_align(lbl_dur, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_dur, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(lbl_dur, &lv_font_chinese_14, 0);
+    lv_obj_set_style_text_font(lbl_dur, &lv_font_montserrat_14, 0);
 
     /* 进度条 + 百分比 */
     bar_prog = lv_bar_create(g_player);
@@ -483,7 +636,7 @@ static void ui_create(void)
     lv_obj_set_pos(lbl_percent, W - M, 168);
     lv_obj_set_style_text_align(lbl_percent, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_percent, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl_percent, &lv_font_chinese_12, 0);
+    lv_obj_set_style_text_font(lbl_percent, &lv_font_montserrat_14, 0);
 
     /* 快进/快退 读秒提示（居中醒目，仅快进退时显示） */
     lbl_seek = lv_label_create(g_player);
@@ -491,14 +644,43 @@ static void ui_create(void)
     lv_obj_set_width(lbl_seek, W - 2 * M);
     lv_obj_set_style_text_align(lbl_seek, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(lbl_seek, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_text_font(lbl_seek, &lv_font_chinese_16, 0);
+    lv_obj_set_style_text_font(lbl_seek, &lv_font_montserrat_14, 0);
     lv_obj_add_flag(lbl_seek, LV_OBJ_FLAG_HIDDEN);
 
     /* 底部按键提示 */
     lbl_hint = lv_label_create(g_player);
     lv_obj_set_pos(lbl_hint, M, H - 20);
     lv_obj_set_style_text_color(lbl_hint, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(lbl_hint, &lv_font_chinese_12, 0);
+    lv_obj_set_style_text_font(lbl_hint, &lv_font_montserrat_14, 0);
+
+    /* A-B 复读：进度条上的 A/B 点标记（细竖线）+ 底部灰栏信息 */
+    ab_mark_a = lv_obj_create(g_player);
+    lv_obj_set_size(ab_mark_a, 2, 16);
+    lv_obj_set_pos(ab_mark_a, M, 148);
+    lv_obj_set_style_bg_color(ab_mark_a, lv_color_hex(0xffffff), 0); /* 白色，区别于青色进度条与橙色 B 点 */
+    lv_obj_set_style_border_width(ab_mark_a, 0, 0);
+    lv_obj_set_style_pad_all(ab_mark_a, 0, 0);
+    lv_obj_set_style_shadow_width(ab_mark_a, 0, 0);
+    lv_obj_set_style_radius(ab_mark_a, 0, 0);
+    lv_obj_add_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
+
+    ab_mark_b = lv_obj_create(g_player);
+    lv_obj_set_size(ab_mark_b, 2, 16);
+    lv_obj_set_pos(ab_mark_b, M, 148);
+    lv_obj_set_style_bg_color(ab_mark_b, lv_color_hex(0xf5a623), 0);
+    lv_obj_set_style_border_width(ab_mark_b, 0, 0);
+    lv_obj_set_style_pad_all(ab_mark_b, 0, 0);
+    lv_obj_set_style_shadow_width(ab_mark_b, 0, 0);
+    lv_obj_set_style_radius(ab_mark_b, 0, 0);
+    lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+
+    lbl_ab = lv_label_create(g_player);
+    lv_obj_set_pos(lbl_ab, M, H - 20 - 18);
+    lv_obj_set_width(lbl_ab, W - 2 * M);
+    lv_obj_set_style_text_align(lbl_ab, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(lbl_ab, lv_color_hex(0x8a93a6), 0);
+    lv_obj_set_style_text_font(lbl_ab, &lv_font_montserrat_14, 0);
+    lv_obj_add_flag(lbl_ab, LV_OBJ_FLAG_HIDDEN);
 
     /* 居中消息 (splash/提示/浏览) */
     g_msg = lv_label_create(scr);
@@ -506,7 +688,11 @@ static void ui_create(void)
     lv_obj_set_width(g_msg, W - 24);
     lv_obj_set_style_text_align(g_msg, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(g_msg, lv_color_white(), 0);
-    lv_obj_set_style_text_font(g_msg, &lv_font_chinese_16, 0);
+    /* R052: splash ASCII 兜底时用蒙文字体（不依赖 freetype 也不会因 lv_font_chinese_16
+     * 子集不含 ASCII 字符而 fallback 到失败的 freetype 路径导致渲染死循环）。
+     * 背景改为透明：黑底框已按需求移除；背景本就是深色屏, 抗锯齿灰阶边沿与深色混合无明显彩边。*/
+    lv_obj_set_style_text_font(g_msg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_bg_opa(g_msg, LV_OPA_TRANSP, 0);
     lv_obj_align(g_msg, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
 
@@ -522,14 +708,14 @@ static void ui_create(void)
     ota_title = lv_label_create(g_ota);
     lv_obj_set_pos(ota_title, M, 12);
     lv_obj_set_style_text_color(ota_title, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_text_font(ota_title, &lv_font_chinese_16, 0);
+    lv_obj_set_style_text_font(ota_title, &lv_font_montserrat_14, 0);
 
     ota_body = lv_label_create(g_ota);
     lv_obj_set_pos(ota_body, M, 54);
     lv_obj_set_width(ota_body, W - 2 * M);
     lv_label_set_long_mode(ota_body, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(ota_body, lv_color_white(), 0);
-    lv_obj_set_style_text_font(ota_body, &lv_font_chinese_14, 0);
+    lv_obj_set_style_text_font(ota_body, &lv_font_montserrat_14, 0);
 
     ota_bar = lv_bar_create(g_ota);
     lv_obj_set_size(ota_bar, W - 2 * M, 16);
@@ -545,28 +731,99 @@ static void ui_create(void)
     lv_obj_set_pos(ota_pct, W - M, 150);
     lv_obj_set_style_text_align(ota_pct, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(ota_pct, lv_color_white(), 0);
-    lv_obj_set_style_text_font(ota_pct, &lv_font_chinese_12, 0);
+    lv_obj_set_style_text_font(ota_pct, &lv_font_montserrat_14, 0);
     lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
 
     ota_hint = lv_label_create(g_ota);
     lv_obj_set_pos(ota_hint, M, H - 20);
     lv_obj_set_style_text_color(ota_hint, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(ota_hint, &lv_font_chinese_12, 0);
+    lv_obj_set_style_text_font(ota_hint, &lv_font_montserrat_14, 0);
+
+    /* ---- R051：A-B 复读状态屏（迷你进度条 + 状态 + 动作列表） ---- */
+    g_ab_menu = lv_obj_create(scr);
+    lv_obj_set_size(g_ab_menu, W, H);
+    lv_obj_set_style_bg_color(g_ab_menu, lv_color_hex(0x0a0e17), 0);
+    lv_obj_set_style_border_width(g_ab_menu, 0, 0);
+    lv_obj_set_style_pad_all(g_ab_menu, 0, 0);
+    lv_obj_clear_flag(g_ab_menu, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
+
+    abm_title = lv_label_create(g_ab_menu);
+    lv_obj_set_pos(abm_title, M, 12);
+    lv_obj_set_style_text_color(abm_title, lv_color_hex(0x2dd4bf), 0);
+    lv_obj_set_style_text_font(abm_title, &lv_font_montserrat_14, 0);
+
+    abm_bar = lv_bar_create(g_ab_menu);
+    lv_obj_set_size(abm_bar, W - 2 * M, 12);
+    lv_obj_set_pos(abm_bar, M, 40);
+    lv_bar_set_range(abm_bar, 0, 1000);
+    lv_bar_set_value(abm_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(abm_bar, lv_color_hex(0x16203a), 0);
+    lv_obj_set_style_bg_color(abm_bar, lv_color_hex(0x2dd4bf), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(abm_bar, 4, 0);
+
+    abm_mark_a = lv_obj_create(g_ab_menu);
+    lv_obj_set_size(abm_mark_a, 2, 16);
+    lv_obj_set_pos(abm_mark_a, M, 38);
+    lv_obj_set_style_bg_color(abm_mark_a, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_border_width(abm_mark_a, 0, 0);
+    lv_obj_set_style_pad_all(abm_mark_a, 0, 0);
+    lv_obj_set_style_shadow_width(abm_mark_a, 0, 0);
+    lv_obj_set_style_radius(abm_mark_a, 0, 0);
+    lv_obj_add_flag(abm_mark_a, LV_OBJ_FLAG_HIDDEN);
+
+    abm_mark_b = lv_obj_create(g_ab_menu);
+    lv_obj_set_size(abm_mark_b, 2, 16);
+    lv_obj_set_pos(abm_mark_b, M, 38);
+    lv_obj_set_style_bg_color(abm_mark_b, lv_color_hex(0xf5a623), 0);
+    lv_obj_set_style_border_width(abm_mark_b, 0, 0);
+    lv_obj_set_style_pad_all(abm_mark_b, 0, 0);
+    lv_obj_set_style_shadow_width(abm_mark_b, 0, 0);
+    lv_obj_set_style_radius(abm_mark_b, 0, 0);
+    lv_obj_add_flag(abm_mark_b, LV_OBJ_FLAG_HIDDEN);
+
+    abm_stat = lv_label_create(g_ab_menu);
+    lv_obj_set_pos(abm_stat, M, 60);
+    lv_obj_set_width(abm_stat, W - 2 * M);
+    lv_obj_set_style_text_color(abm_stat, lv_color_hex(0x8a93a6), 0);
+    lv_obj_set_style_text_font(abm_stat, &lv_font_montserrat_14, 0);
+
+    for (int i = 0; i < 4; i++) {
+        abm_lines[i] = lv_label_create(g_ab_menu);
+        lv_obj_set_pos(abm_lines[i], M, 92 + i * 22);
+        lv_obj_set_width(abm_lines[i], W - 2 * M);
+        lv_obj_set_style_text_color(abm_lines[i], lv_color_hex(0x8a93a6), 0);
+        lv_obj_set_style_text_font(abm_lines[i], &lv_font_montserrat_14, 0);
+    }
+
+    abm_hint = lv_label_create(g_ab_menu);
+    lv_obj_set_pos(abm_hint, M, H - 20);
+    lv_obj_set_style_text_color(abm_hint, lv_color_hex(0x8a93a6), 0);
+    lv_obj_set_style_text_font(abm_hint, &lv_font_montserrat_14, 0);
 }
 
 static void ui_show_player(void)
 {
+    static uint32_t n = 0;
+    if (n < 3) {
+        ESP_LOGI(TAG, "DBG: ui_show_player #%u g_player=%p g_msg=%p", (unsigned)n, (void*)g_player, (void*)g_msg);
+    }
+    n++;
     lv_obj_clear_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void ui_show_msg(const char *txt)
 {
+    lv_lock();   /* 保护 LVGL 对象树: main_task 与 lvgl_task 并发写必须加锁 */
     lv_label_set_text(g_msg, txt);
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
+    lv_unlock();
 }
 
 void display_set_play_mode(int mode)
@@ -579,7 +836,7 @@ void display_set_play_mode(int mode)
  * ============================================================ */
 static uint32_t g_display_fp = 0;
 static uint64_t g_display_last_update_us = 0;
-#define SCREEN_SAVER_TIMEOUT_US  (30 * 1000000ULL)
+#define SCREEN_SAVER_TIMEOUT_US  (UINT64_MAX)  /* R055-fix1: 屏蔽屏保(用户决定),后续重新设计 */
 
 static uint32_t calc_fingerprint(player_state_t state,
                                  int track_idx, int total,
@@ -600,12 +857,12 @@ static uint32_t calc_fingerprint(player_state_t state,
 static const char *state_word(player_state_t state)
 {
     switch (state) {
-    case PLAYER_STATE_PLAYING:       return "播放中";
-    case PLAYER_STATE_PAUSED:        return "已暂停";
-    case PLAYER_STATE_STOPPED:       return "已停止";
-    case PLAYER_STATE_FAST_FORWARD:  return "快进中";
-    case PLAYER_STATE_REWIND:        return "快退中";
-    default:                         return "未知";
+    case PLAYER_STATE_PLAYING:       return "PLAYING";
+    case PLAYER_STATE_PAUSED:        return "PAUSED";
+    case PLAYER_STATE_STOPPED:       return "STOPPED";
+    case PLAYER_STATE_FAST_FORWARD:  return "FF";
+    case PLAYER_STATE_REWIND:        return "REW";
+    default:                         return "???";
     }
 }
 
@@ -628,6 +885,65 @@ static void format_time(int seconds, char *buf, size_t size)
 }
 
 /* ============================================================
+ * 颜色诊断 (DISPLAY_DIAG): 纯色 + 大小端测试
+ * 直接绕过 LVGL, 用 esp_lcd_panel_draw_bitmap 写裸 RGB565,
+ * 排除 LVGL 颜色转换/COLOR_16_SWAP 干扰, 定位 RGB/BGR 与字节序。
+ * 测试序列 (每块停 ~1.2s, 串口有日志):
+ *   0 红  1 绿  2 蓝  3 白  4 黑
+ *   每个纯色都做 "不交换 / 交换高低字节" 两种, 共 10 帧。
+ * 目的: 肉眼看哪种组合显示正确 → 决定 rgb_ele_order + 是否 SWAP。
+ * ============================================================ */
+#ifdef DISPLAY_DIAG
+static uint16_t diag_make(uint16_t rgb565, bool swap)
+{
+    if (swap) {
+        uint8_t hi = rgb565 >> 8;
+        uint8_t lo = rgb565 & 0xff;
+        return (uint16_t)((lo << 8) | hi);   // 字节交换
+    }
+    return rgb565;
+}
+
+static void diag_fill_block(uint16_t rgb565, bool swap)
+{
+    const int W = DISPLAY_WIDTH, H = DISPLAY_HEIGHT;
+    const size_t px = (size_t)W * H;
+    /* 优先 PSRAM, 失败回退 DRAM */
+    uint16_t *fb = (uint16_t *)heap_caps_malloc(px * 2,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!fb) fb = (uint16_t *)heap_caps_malloc(px * 2,
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!fb) return;
+    uint16_t v = diag_make(rgb565, swap);
+    for (size_t i = 0; i < px; i++) fb[i] = v;
+    esp_lcd_panel_draw_bitmap(s_panel_handle, 0, 0, W, H, fb);
+    heap_caps_free(fb);
+}
+
+void display_diag_run(void)
+{
+    if (!g_display_initialized) return;
+    ESP_LOGW(TAG, "=== DISPLAY_DIAG START (纯色+大小端) ===");
+    struct { uint16_t c; const char *name; } tests[] = {
+        { 0xF800, "RED"   },  // RGB565 红
+        { 0x07E0, "GREEN" },  // 绿
+        { 0x001F, "BLUE"  },  // 蓝
+        { 0xFFFF, "WHITE" },  // 白
+        { 0x0000, "BLACK" },  // 黑
+    };
+    for (int i = 0; i < (int)(sizeof(tests) / sizeof(tests[0])); i++) {
+        ESP_LOGW(TAG, "[DIAG] %s (RGB565=0x%04x) no-swap", tests[i].name, tests[i].c);
+        diag_fill_block(tests[i].c, false);
+        vTaskDelay(pdMS_TO_TICKS(1200));
+        ESP_LOGW(TAG, "[DIAG] %s swap", tests[i].name);
+        diag_fill_block(tests[i].c, true);
+        vTaskDelay(pdMS_TO_TICKS(1200));
+    }
+    ESP_LOGW(TAG, "=== DISPLAY_DIAG DONE ===");
+}
+#endif /* DISPLAY_DIAG */
+
+/* ============================================================
  * 公共 API
  * ============================================================ */
 static void sd_toast_timer_cb(lv_timer_t *t);  // 前向声明 (display_init 中注册)
@@ -644,10 +960,18 @@ void display_init(void)
 
     lv_init();
 
-    s_lv_buf = (lv_color_t *)heap_caps_malloc(DISPLAY_WIDTH * 40 * sizeof(lv_color_t),
+    /* 挂载独立字库分区并初始化中文回退字体（菜单白字 + 任意中文文件名） */
+    font_partition_init();
+
+    /* 部分刷新缓冲: 每行块 <= SPI 事务上限, 避免整屏一次性 draw_bitmap 导致花屏
+       ESP32-S3 SPI 单次事务上限约 32KB, 这里用 40 行(竖屏 240*40*2=19200 字节)留有余量 */
+    const size_t buf_lines = 40;
+    const size_t buf_px = DISPLAY_WIDTH * buf_lines;
+    s_lv_buf = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
                                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_lv_buf) {
-        s_lv_buf = (lv_color_t *)heap_caps_malloc(DISPLAY_WIDTH * 40 * sizeof(lv_color_t),
+        ESP_LOGW(TAG, "PSRAM unavailable, fallback LVGL buffer to DRAM");
+        s_lv_buf = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
                                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (!s_lv_buf) {
@@ -658,38 +982,91 @@ void display_init(void)
     lv_display_t *disp = lv_display_create(DISPLAY_WIDTH, DISPLAY_HEIGHT);
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
     lv_display_set_buffers(disp, s_lv_buf, NULL,
-                           DISPLAY_WIDTH * 40 * sizeof(lv_color_t),
+                           buf_px * sizeof(lv_color_t),
                            LV_DISP_RENDER_MODE_PARTIAL);
 
     ui_create();
     lv_timer_create(reel_anim_cb, 50, NULL);   // 磁带卷轴旋转动画 (50ms/帧)
     lv_timer_create(sd_toast_timer_cb, 100, NULL);  // 插拔提示显隐控制 (100ms)
     lv_timer_create(vol_hide_timer_cb, 200, NULL);  // 音量条停止调节 3s 后自动隐藏
-    ui_show_msg("正在初始化...");
+    display_mem_report();                            // 启动即打印一次内存水位
+    ESP_LOGI(TAG, "DBG: mem report done");
+    /* freetype 可能未就绪（FT_Init_FreeType 失败），此时渲染中文会误入 freetype
+     * 路径死循环 + task_wdt；故首屏消息也用 ASCII 兜底，与 splash 保持一致 */
+    if (font_partition_ready()) {
+        ESP_LOGI(TAG, "DBG: show msg zh");
+        ui_show_msg("Initializing...");
+    } else {
+        ESP_LOGI(TAG, "DBG: show msg ascii");
+        ui_show_msg("Initializing...");
+    }
+    ESP_LOGI(TAG, "DBG: ui_show_msg done");
 
-    xTaskCreate(lvgl_task, "lvgl", 8192, NULL, 5, NULL);
-
+    /* 任务栈显式留 DRAM：ALWAYSINTERNAL=0 下默认 malloc 会把栈推到 PSRAM，
+       此处用 WithCaps 强制 MALLOC_CAP_INTERNAL，避免栈走 PSRAM（性能/确定性更优）。 */
     g_display_initialized = true;
     ESP_LOGI(TAG, "ST7789 + LVGL display initialized (%dx%d)",
              DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    ESP_LOGI(TAG, ">>> SYSTEM DISPLAY READY <<<");
+
+#ifdef DISPLAY_DIAG
+    /* 纯色+大小端诊断: 必须在 lvgl_task 创建之前运行!
+     * 否则 LVGL 的 partial flush 会与 diag 的整屏裸写 (esp_lcd_panel_draw_bitmap)
+     * 并发抢占同一 SPI 总线, 导致事务错乱、屏幕卡在最后一帧 LVGL 画面。
+     * diag 期间 lvgl_task 尚未启动, 不会有并发写屏。 */
+    vTaskDelay(pdMS_TO_TICKS(300));
+    display_diag_run();
+    ESP_LOGW(TAG, ">>> DISPLAY_DIAG FINISHED, now booting UI <<<");
+#endif
+
+    /* lvgl_task 延迟到 display_start_lvgl_task() 创建 (main.cpp 初始化全部完成后),
+     * 避免 main_task 初始化阶段与 lvgl_task 并发访问 LVGL 对象树导致死锁。 */
+}
+
+/* ---- 内存诊断：PSRAM/DRAM 堆水位 + 当前屏 LVGL 对象数 ---- */
+void display_mem_report(void)
+{
+    const uint32_t spi  = MALLOC_CAP_SPIRAM  | MALLOC_CAP_8BIT;
+    const uint32_t dram = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    size_t spi_total  = heap_caps_get_total_size(spi);
+    size_t spi_free   = heap_caps_get_free_size(spi);
+    size_t dram_total = heap_caps_get_total_size(dram);
+    size_t dram_free  = heap_caps_get_free_size(dram);
+    lv_obj_t *scr = lv_screen_active();
+    int objs = scr ? (int)lv_obj_get_child_cnt(scr) : -1;
+    ESP_LOGW("mem", "PSRAM total=%u free=%u largest=%u used=%u (%.1f%%)",
+             spi_total, spi_free, heap_caps_get_largest_free_block(spi),
+             spi_total - spi_free,
+             100.0f * (float)(spi_total - spi_free) / (float)(spi_total ? spi_total : 1));
+    ESP_LOGW("mem", "DRAM  total=%u free=%u largest=%u used=%u (%.1f%%)",
+             dram_total, dram_free, heap_caps_get_largest_free_block(dram),
+             dram_total - dram_free,
+             100.0f * (float)(dram_total - dram_free) / (float)(dram_total ? dram_total : 1));
+    ESP_LOGW("mem", "LVGL objects(active screen children)=%d", objs);
 }
 
 void display_show_splash(void)
 {
     if (!g_display_initialized) return;
-    ui_show_msg("有声书播放器\nESP32-S3\n正在加载 SD 卡");
+    /* freetype 未就绪（cjk.ttf 未烧录到 font 分区）时, 渲染中文 label 会走入
+     * 未初始化的 freetype 路径导致 LVGL 死循环 + task_wdt, 故用 ASCII 兜底 */
+    if (font_partition_ready()) {
+        ui_show_msg("TapeBook Player\nESP32-S3\nLoading SD Card...");
+    } else {
+        ui_show_msg("TapeBook Player\nESP32-S3\nloading SD...");
+    }
 }
 
 void display_show_no_files(void)
 {
     if (!g_display_initialized) return;
-    ui_show_msg("未找到音频文件\n请将 .mp3/.flac/.wav\n拷贝到 SD 卡");
+    ui_show_msg("No audio files found.\nCopy .mp3/.flac/.wav\nto the SD card.");
 }
 
 void display_show_no_card(void)
 {
     if (!g_display_initialized) return;
-    ui_show_msg("未检测到 SD 卡\n请插入 SD 卡");
+    ui_show_msg("SD card not detected.\nPlease insert an SD card.");
 }
 
 static void sd_icon_update(bool present)
@@ -710,7 +1087,7 @@ void display_set_sd_present_init(bool present)
 void display_set_sd_present(bool present)
 {
     sd_icon_update(present);
-    lv_label_set_text(lbl_sd_toast, present ? "已插入 TF 卡" : "已弹出 TF 卡");
+    lv_label_set_text(lbl_sd_toast, present ? "TF card inserted" : "TF card ejected");
     g_sd_toast_until = esp_timer_get_time() + 1500 * 1000;  // 显示 1.5s
 }
 
@@ -736,18 +1113,22 @@ static void vol_hide_timer_cb(lv_timer_t *t)
     }
 }
 
+/* R056-fix4: 不用 lv_async_call(队列堆积会累积状态损坏 → 屏幕黑 + 几秒后 Guru Meditation)。
+   改用全局标志 + lvgl_task 内部轮询。main_task 只设标志,lvgl_task 在持锁状态下消费。
+   这样:
+   - 消除异步队列(无堆积)
+   - lvgl_task 自己消费(无 race condition)
+   - 状态始终一致 */
+
 /* 触发音量条显示: 立即刷新音量条与扬声器图标, 并重置 3 秒隐藏计时 */
 void display_show_volume(int volume)
 {
     if (!g_display_initialized || !vol_box) return;
-    /* 立即刷新 (不依赖周期刷新, 保证出现即最新) */
-    lv_color_t vol_col = (volume <= 0) ? lv_color_hex(0x33405e) : lv_color_hex(0x2dd4bf);
-    lv_obj_set_style_bg_color(vol_spk_box, vol_col, 0);
-    lv_obj_set_style_line_color(vol_cone, vol_col, 0);
-    int vol_clamped = volume < 0 ? 0 : (volume > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : volume);
-    lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
-    /* 显示 + 重置 3 秒隐藏倒计时 */
-    lv_obj_clear_flag(vol_box, LV_OBJ_FLAG_HIDDEN);
+    /* R056-fix4: 仅设标志,lvgl_task 会在持锁状态下消费并执行 LVGL 操作。
+       不调 lv_async_call(避免队列堆积),也不直接调 LVGL(避免与 lvgl_task 死锁)。 */
+    s_vol_value = volume;
+    s_vol_pending = true;
+    /* 3 秒隐藏倒计时:仅设变量,不涉及 LVGL,无需异步 */
     g_vol_hide_until = esp_timer_get_time() + 3000 * 1000;
 }
 
@@ -758,22 +1139,43 @@ void display_update(player_state_t state,
                     float speed, int gear, int volume)
 {
     if (!g_display_initialized) return;
+    static uint32_t call_count = 0;
+    if (call_count <= 3) {
+        ESP_LOGI(TAG, "DBG: display_update call #%u state=%d track='%s' idx=%d/%d pos=%d/%d spd=%.2f gear=%d vol=%d",
+                 (unsigned)call_count, (int)state, track_name, track_idx, total,
+                 current_sec, total_sec, speed, gear, volume);
+    }
+    call_count++;
+    ESP_LOGI(TAG, "DBG: display_update before lv_lock call#%u", (unsigned)call_count);
+    lv_lock();   /* 保护整段 LVGL 写: 与 lvgl_task 的 lv_timer_handler 并发必须加锁 */
+    ESP_LOGI(TAG, "DBG: display_update after lv_lock call#%u", (unsigned)call_count);
 
     /* 驱动磁带卷轴动画 (方向/速度由状态与档位决定) */
     s_reel_state = state;
     s_reel_gear  = gear;
 
+    /* A-B 复读状态（决定底部灰栏 + 进度条标记刷新） */
+    int ab_a   = audio_player_ab_a_ms();
+    int ab_b   = audio_player_ab_b_ms();
+    bool ab_on = audio_player_is_ab_enabled();
+
     uint64_t now = esp_timer_get_time();
+    ESP_LOGI(TAG, "DBG: display_update now=%llu last=%llu diff=%lld", (unsigned long long)now, (unsigned long long)g_display_last_update_us, (long long)(now - g_display_last_update_us));
 
     uint32_t fp = calc_fingerprint(state, track_idx, total,
                                    current_sec, total_sec, speed, gear, volume);
     fp = fp * 31 + (uint32_t)s_play_mode;   // 播放模式变化也触发刷新
+    /* A-B 状态变化也要触发刷新（标记 A/B 或开关复读） */
+    fp = fp * 31 + (uint32_t)(ab_a >= 0 ? (uint32_t)ab_a : 0xFFFF0001u);
+    fp = fp * 31 + (uint32_t)(ab_b >= 0 ? (uint32_t)ab_b : 0xFFFF0002u);
+    fp = fp * 31 + (uint32_t)(ab_on ? 1u : 0u);
     if (fp == g_display_fp) {
         if (!g_display_sleep &&
             (now - g_display_last_update_us) >= SCREEN_SAVER_TIMEOUT_US) {
             display_set_brightness(0);
             g_display_sleep = true;
         }
+        lv_unlock();
         return;
     }
     g_display_fp = fp;
@@ -792,7 +1194,7 @@ void display_update(player_state_t state,
     format_time(total_sec, tot, sizeof(tot));
 
     /* 状态栏: 状态 · 曲目 x/y · [模式]（电量/音量已改为图形） */
-    const char *mode_s = (s_play_mode == 1) ? "列表循环" : (s_play_mode == 2) ? "单曲循环" : "顺序播放";
+    const char *mode_s = (s_play_mode == 1) ? "LIST_LOOP" : (s_play_mode == 2) ? "SINGLE_LOOP" : "SEQUENTIAL";
     char line0[64];
     snprintf(line0, sizeof(line0), "%s %03d/%03d %s",
              state_word(state), track_idx, total, mode_s);
@@ -836,9 +1238,54 @@ void display_update(player_state_t state,
     snprintf(pct, sizeof(pct), "%d%%", v / 10);
     lv_label_set_text(lbl_percent, pct);
 
+    /* A-B 复读：底部灰栏显示 A/B 点 + 进度条标记 */
+    if (ab_a < 0) {
+        /* 未标记 A：完全隐藏 */
+        lv_obj_add_flag(lbl_ab, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        char abuf[10], bbuf[10];
+        format_time(ab_a / 1000, abuf, sizeof(abuf));
+        if (ab_b >= 0) {
+            format_time(ab_b / 1000, bbuf, sizeof(bbuf));
+        } else {
+            snprintf(bbuf, sizeof(bbuf), "--:--");
+        }
+        char abtxt[48];
+        if (ab_b >= 0) {
+            snprintf(abtxt, sizeof(abtxt), "A:%s -> B:%s  %s",
+                     abuf, bbuf, ab_on ? "LOOP ON" : "PAUSED");
+        } else {
+            snprintf(abtxt, sizeof(abtxt), "A:%s  B:PENDING", abuf);
+        }
+        lv_label_set_text(lbl_ab, abtxt);
+        lv_obj_set_style_text_color(lbl_ab,
+            ab_on ? lv_color_hex(0x2dd4bf) : lv_color_hex(0x8a93a6), 0);
+        lv_obj_clear_flag(lbl_ab, LV_OBJ_FLAG_HIDDEN);
+
+        /* 进度条上的 A/B 点标记（需要已知总时长才能定位） */
+        if (total_sec > 0) {
+            int64_t dur_ms = (int64_t)total_sec * 1000;
+            int ap = (int)((int64_t)ab_a * 1000 / dur_ms);
+            ap = ap < 0 ? 0 : (ap > 1000 ? 1000 : ap);
+            int bp = (ab_b >= 0) ? (int)((int64_t)ab_b * 1000 / dur_ms) : ap;
+            bp = bp < 0 ? 0 : (bp > 1000 ? 1000 : bp);
+            int bar_w = DISPLAY_WIDTH - 2 * 8;
+            lv_obj_set_x(ab_mark_a, 8 + (ap * bar_w) / 1000);
+            lv_obj_set_x(ab_mark_b, 8 + (bp * bar_w) / 1000);
+            lv_obj_clear_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
+            if (ab_b >= 0) lv_obj_clear_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
     /* 快进/快退 读秒（居中醒目，显示跳转方向与当前位置） */
     if (state == PLAYER_STATE_FAST_FORWARD || state == PLAYER_STATE_REWIND) {
-        const char *dir = (state == PLAYER_STATE_FAST_FORWARD) ? "快进" : "快退";
+        const char *dir = (state == PLAYER_STATE_FAST_FORWARD) ? "FF" : "RW";
         const char *arrow = (state == PLAYER_STATE_FAST_FORWARD) ? "->" : "<-";
         const char *gs2 = gear_str(gear);
         char seekbuf[32];
@@ -851,7 +1298,23 @@ void display_update(player_state_t state,
     }
 
     /* 底部按键提示 (按物理按键左→右顺序: 走带四键 ｜ 选曲两键) */
-    lv_label_set_text(lbl_hint, "快退 播放 快进 停止 ｜ 上一首 下一首");
+    lv_label_set_text(lbl_hint, "REW PLAY FF STOP  |  PREV NEXT");
+
+    /* 诊断：检查 g_player 可见性 + 子元素数 + lbl_status 实际状态 */
+    if (call_count <= 3) {
+        bool player_vis = !(lv_obj_has_flag(g_player, LV_OBJ_FLAG_HIDDEN));
+        bool msg_vis    = !(lv_obj_has_flag(g_msg,    LV_OBJ_FLAG_HIDDEN));
+        bool status_vis = !(lv_obj_has_flag(lbl_status, LV_OBJ_FLAG_HIDDEN));
+        bool track_vis  = !(lv_obj_has_flag(lbl_track,  LV_OBJ_FLAG_HIDDEN));
+        int player_children = (int)lv_obj_get_child_cnt(g_player);
+        lv_area_t a;
+        lv_obj_get_coords(lbl_status, &a);
+        ESP_LOGW(TAG, "DBG: post-update #%u player_vis=%d msg_vis=%d status_vis=%d track_vis=%d player_kids=%d status_coords=(%d,%d,%d,%d) text='%.40s'",
+                 (unsigned)call_count, player_vis, msg_vis, status_vis, track_vis, player_children,
+                 a.x1, a.y1, a.x2, a.y2, lv_label_get_text(lbl_status));
+    }
+
+    lv_unlock();
 }
 
 void display_show_browse(int selected, int total, char lines[][24], int count)
@@ -860,7 +1323,7 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
 
     static char buf[256];
     int len = 0;
-    len += snprintf(buf + len, sizeof(buf) - len, "浏览  %d/%d\n",
+    len += snprintf(buf + len, sizeof(buf) - len, "Browse %d/%d\n",
                     selected + 1, total);
     int shown = count;
     if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
@@ -868,7 +1331,7 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
         len += snprintf(buf + len, sizeof(buf) - len, "%s\n", lines[i]);
     }
     len += snprintf(buf + len, sizeof(buf) - len,
-                    "\n上翻页/下翻页 翻页  上一首/下一首 移动  确认 播放  退出 停止");
+                    "\nUP/DN: scroll page   PREV/NEXT: move   PLAY: confirm   STOP: exit");
     ui_show_msg(buf);
 }
 
@@ -880,7 +1343,7 @@ void display_show_menu(const char *title, char lines[][24], int count, int sel, 
     static char buf[256];
     int len = 0;
     len += snprintf(buf + len, sizeof(buf) - len, "%s\n",
-                    (title && title[0]) ? title : "菜单");
+                    (title && title[0]) ? title : "Menu");
 
     int shown = count;
     if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
@@ -899,6 +1362,73 @@ void display_show_menu(const char *title, char lines[][24], int count, int sel, 
     ui_show_msg(buf);
 }
 
+/* R051：A-B 复读状态屏 —— 迷你进度条(白A/橙B) + 实时状态 + 动作列表 */
+void display_show_ab_menu(const char *title, char lines[][24], int count, int sel,
+                          bool edit, int scrub,
+                          int ab_a_ms, int ab_b_ms, bool ab_on,
+                          int total_ms, int cur_ms, const char *hint)
+{
+    if (!g_display_initialized) return;
+    lv_lock();   /* 保护整个 A-B 界面 LVGL 写: 与 lvgl_task 并发必须加锁 */
+
+    /* 隐藏其它界面，独占显示 A-B 状态屏 */
+    lv_obj_add_flag(g_msg,    LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ota,    LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
+
+    if (g_display_sleep) {          // 菜单活跃，唤醒背光
+        display_set_brightness(s_last_brightness);
+        g_display_sleep = false;
+    }
+
+    lv_label_set_text(abm_title, (title && title[0]) ? title : "A-B Repeat");
+
+    /* 迷你进度条：填充 = 当前播放位置 */
+    int cur_v = 0;
+    if (total_ms > 0 && cur_ms >= 0) {
+        cur_v = (int)((int64_t)cur_ms * 1000 / total_ms);
+        if (cur_v < 0) cur_v = 0;
+        if (cur_v > 1000) cur_v = 1000;
+    }
+    lv_bar_set_value(abm_bar, cur_v, LV_ANIM_OFF);
+
+    /* A/B 标记定位（需已知总时长） */
+    const int MARGIN = 8;
+    int bar_w = DISPLAY_WIDTH - 2 * MARGIN;
+    int ap = -1, bp = -1;
+    if (total_ms > 0) {
+        if (ab_a_ms >= 0) { ap = (int)((int64_t)ab_a_ms * 1000 / total_ms); ap = ap < 0 ? 0 : (ap > 1000 ? 1000 : ap); }
+        if (ab_b_ms >= 0) { bp = (int)((int64_t)ab_b_ms * 1000 / total_ms); bp = bp < 0 ? 0 : (bp > 1000 ? 1000 : bp); }
+    }
+    if (ap >= 0) { lv_obj_set_x(abm_mark_a, MARGIN + (ap * bar_w) / 1000); lv_obj_clear_flag(abm_mark_a, LV_OBJ_FLAG_HIDDEN); }
+    else         { lv_obj_add_flag(abm_mark_a, LV_OBJ_FLAG_HIDDEN); }
+    if (bp >= 0) { lv_obj_set_x(abm_mark_b, MARGIN + (bp * bar_w) / 1000); lv_obj_clear_flag(abm_mark_b, LV_OBJ_FLAG_HIDDEN); }
+    else         { lv_obj_add_flag(abm_mark_b, LV_OBJ_FLAG_HIDDEN); }
+
+    /* 状态行：A:.. B:.. 复读:.. */
+    char a_buf[10], b_buf[10];
+    if (ab_a_ms >= 0) format_time(ab_a_ms / 1000, a_buf, sizeof(a_buf));
+    else              snprintf(a_buf, sizeof(a_buf), "--:--");
+    if (ab_b_ms >= 0) format_time(ab_b_ms / 1000, b_buf, sizeof(b_buf));
+    else              snprintf(b_buf, sizeof(b_buf), "PENDING");
+    char stat[48];
+    snprintf(stat, sizeof(stat), "A:%s  B:%s  Repeat:%s", a_buf, b_buf, ab_on ? "ON" : "OFF");
+    lv_label_set_text(abm_stat, stat);
+    lv_obj_set_style_text_color(abm_stat, ab_on ? lv_color_hex(0x2dd4bf) : lv_color_hex(0x8a93a6), 0);
+
+    /* 动作行（选中行高亮白字） */
+    for (int i = 0; i < 4; i++) {
+        if (i < count) lv_label_set_text(abm_lines[i], lines[i]);
+        else           lv_label_set_text(abm_lines[i], "");
+        bool sel_i = (i == sel);
+        lv_obj_set_style_text_color(abm_lines[i],
+            sel_i ? lv_color_hex(0xffffff) : lv_color_hex(0x8a93a6), 0);
+    }
+
+    lv_label_set_text(abm_hint, hint ? hint : "");
+    lv_unlock();
+}
 void display_show_info(const char *title, const char *text)
 {
     if (!g_display_initialized) return;
@@ -906,17 +1436,37 @@ void display_show_info(const char *title, const char *text)
     static char buf[256];
     int len = 0;
     len += snprintf(buf + len, sizeof(buf) - len, "%s\n\n",
-                    (title && title[0]) ? title : "信息");
+                    (title && title[0]) ? title : "Info");
     if (text) {
         len += snprintf(buf + len, sizeof(buf) - len, "%s", text);
     }
-    len += snprintf(buf + len, sizeof(buf) - len, "\n\n（按任意键返回）");
+    len += snprintf(buf + len, sizeof(buf) - len, "\n\n(Press any key to return)");
 
     if (g_display_sleep) {
         display_set_brightness(s_last_brightness);
         g_display_sleep = false;
     }
     ui_show_msg(buf);
+}
+
+/* ============================================================
+ * 蓝牙音箱状态屏 (R050-BT)
+ * ============================================================ */
+void display_show_bt_status(const char *device_name, bool connected, int volume)
+{
+    if (!g_display_initialized) return;
+
+    player_state_t st = connected ? PLAYER_STATE_PLAYING : PLAYER_STATE_STOPPED;
+    const char *name = connected
+        ? (device_name && device_name[0] ? device_name : "Connected")
+        : "BT Speaker - Waiting...";
+
+    /* 复用播放界面：设备名作为曲目名，无进度（BT 无文件/seek） */
+    display_update(st, name, 0, 0, 0, 0, 0.0f, 0, volume);
+    /* 覆盖底部提示为蓝牙操作说明 */
+    lv_lock();
+    lv_label_set_text(lbl_hint, "PLAY/PAUSE passthrough AVRCP   STOP exit");
+    lv_unlock();
 }
 
 /* ============================================================
@@ -940,31 +1490,33 @@ void display_show_ota_confirm(const char *cur_ver, const char *new_ver,
 
     static char buf[160];
     int len = 0;
-    len += snprintf(buf + len, sizeof(buf) - len, "当前版本  %s\n",
+    len += snprintf(buf + len, sizeof(buf) - len, "Current:  %s\n",
                     cur_ver ? cur_ver : "?");
-    len += snprintf(buf + len, sizeof(buf) - len, "新版本    %s\n",
-                    (new_ver && new_ver[0]) ? new_ver : "未知");
-    len += snprintf(buf + len, sizeof(buf) - len, "镜像      %s\n",
+    len += snprintf(buf + len, sizeof(buf) - len, "New:      %s\n",
+                    (new_ver && new_ver[0]) ? new_ver : "Unknown");
+    len += snprintf(buf + len, sizeof(buf) - len, "Image:    %s\n",
                     img_name ? img_name : "");
-    len += snprintf(buf + len, sizeof(buf) - len, "大小      %ld KB\n", size_kb);
-    len += snprintf(buf + len, sizeof(buf) - len, "电量      %s",
-                    battery_ok ? "正常" : "低，请先充电");
+    len += snprintf(buf + len, sizeof(buf) - len, "Size:     %ld KB\n", size_kb);
+    len += snprintf(buf + len, sizeof(buf) - len, "Battery:  %s",
+                    battery_ok ? "OK" : "LOW - please charge");
 
-    lv_label_set_text(ota_title, "固件升级");
+    lv_label_set_text(ota_title, "Firmware Update");
     lv_label_set_text(ota_body, buf);
     lv_obj_add_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(ota_hint, battery_ok ? "PLAY 确认升级   STOP 取消"
-                                           : "电量过低，无法升级（STOP 返回）");
+    lv_label_set_text(ota_hint, battery_ok ? "PLAY confirm upgrade   STOP cancel"
+                                           : "Battery LOW, cannot upgrade (STOP back)");
+    lv_lock();
     ui_show_ota();
+    lv_unlock();
 }
 
 void display_show_ota_progress(int percent)
 {
     if (!g_display_initialized) return;
 
-    lv_label_set_text(ota_title, "固件升级");
-    lv_label_set_text(ota_body, "正在写入固件…\n请勿断电 · 勿拔 TF 卡");
+    lv_label_set_text(ota_title, "Firmware Update");
+    lv_label_set_text(ota_body, "Writing firmware...\nDO NOT power off / remove TF");
     lv_obj_clear_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
     if (percent < 0) percent = 0;
@@ -974,27 +1526,33 @@ void display_show_ota_progress(int percent)
     snprintf(p, sizeof(p), "%d%%", percent);
     lv_label_set_text(ota_pct, p);
     lv_label_set_text(ota_hint, "");
+    lv_lock();
     ui_show_ota();
+    lv_unlock();
 }
 
 void display_show_ota_done(void)
 {
     if (!g_display_initialized) return;
-    lv_label_set_text(ota_title, "升级成功");
-    lv_label_set_text(ota_body, "新固件已写入\n重启后生效");
+    lv_label_set_text(ota_title, "Update OK");
+    lv_label_set_text(ota_body, "Firmware written.\nRestart to apply.");
     lv_obj_add_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(ota_hint, "按任意键重启设备");
+    lv_label_set_text(ota_hint, "Press any key to restart");
+    lv_lock();
     ui_show_ota();
+    lv_unlock();
 }
 
 void display_show_ota_error(const char *msg)
 {
     if (!g_display_initialized) return;
-    lv_label_set_text(ota_title, "升级失败");
-    lv_label_set_text(ota_body, msg ? msg : "未知错误");
+    lv_label_set_text(ota_title, "Update FAILED");
+    lv_label_set_text(ota_body, msg ? msg : "Unknown error");
     lv_obj_add_flag(ota_bar, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(ota_hint, "STOP 返回   PLAY 重试");
+    lv_label_set_text(ota_hint, "STOP back   PLAY retry");
+    lv_lock();
     ui_show_ota();
+    lv_unlock();
 }

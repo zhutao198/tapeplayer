@@ -23,6 +23,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "mbedtls/sha256.h"
+#include "esp_timer.h"
 
 static const char *TAG = "ota_sd";
 
@@ -34,6 +35,11 @@ static long        s_img_size      = 0;
 static bool        s_battery_ok    = true;
 static char        s_err_msg[72]   = {0};
 static int         s_progress      = 0;
+
+/* review #24: 最近一次用户操作/进入时间, 用于空闲超时自动退出, 保证
+ * g_ota_in_progress 在失败路径也必然清零 (不再仅依赖用户 STOP 或重启) */
+static uint64_t       s_last_activity_us = 0;
+static const uint64_t OTA_AUTO_EXIT_US = 120 * 1000000ULL;  // 确认/错误态无操作 120s
 
 /* ============================================================
  * 小工具
@@ -104,6 +110,7 @@ static int ver_cmp(const char *a, const char *b)
 void ota_sd_begin(void)
 {
     s_phase = OTA_PHASE_CONFIRM;
+    s_last_activity_us = esp_timer_get_time();
     s_progress = 0;
     snprintf(s_cur_ver, sizeof(s_cur_ver), "%s", APP_VERSION_STR);
     s_new_ver[0] = 0;
@@ -259,6 +266,7 @@ void ota_sd_handle_button(const btn_event_info_t *events, int n)
     for (int k = 0; k < n; k++) {
         const btn_event_info_t *e = &events[k];
         if (e->event != BTN_EVENT_SHORT_PRESS) continue;
+        s_last_activity_us = esp_timer_get_time();   // 任意有效按键重置空闲计时
 
         switch (s_phase) {
         case OTA_PHASE_CONFIRM:
@@ -284,6 +292,18 @@ void ota_sd_handle_button(const btn_event_info_t *events, int n)
 
         default:
             break;
+        }
+    }
+}
+
+/* 由 main 周期调用：确认/错误态若长时间无操作, 自动 app_ota_exit() 清零
+ * g_ota_in_progress, 避免失败路径依赖用户按键或重启才复位 (review #24) */
+void ota_sd_tick(void)
+{
+    if (s_phase == OTA_PHASE_CONFIRM || s_phase == OTA_PHASE_ERROR) {
+        if (esp_timer_get_time() - s_last_activity_us > OTA_AUTO_EXIT_US) {
+            ESP_LOGW(TAG, "OTA idle timeout, auto exit");
+            app_ota_exit();
         }
     }
 }

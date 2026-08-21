@@ -109,6 +109,20 @@ int button_manager_scan(btn_event_info_t *events, int max_events)
     uint32_t long_press_us  = BTN_LONG_PRESS_MS * 1000;
     uint32_t extra_long_us  = BTN_EXTRA_LONG_MS * 1000;
 
+    /* 诊断：每次扫描都打印所有按键 GPIO 实时电平（0=按下, 1=松开）
+       临时关闭以验证 BTN 刷屏日志是否拖垮主循环（方案B） */
+#if 0
+    {
+        char line[160] = {0};
+        int off = 0;
+        for (int j = 0; j < BTN_ID_MAX; j++) {
+            int lvl = gpio_get_level(g_buttons[j].gpio);
+            off += snprintf(line + off, sizeof(line) - off, "G%d=%d ", g_buttons[j].gpio, lvl);
+        }
+        ESP_LOGW("BTN", "DBG: gpio levels (0=pressed): %s", line);
+    }
+#endif
+
     for (int i = 0; i < BTN_ID_MAX; i++) {
         btn_ctx_t *btn = &g_buttons[i];
         bool pressed = is_pressed(btn->gpio);

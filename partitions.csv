@@ -2,4 +2,6 @@
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
 factory,  app,  factory, 0x10000, 0x300000,
+# 独立中文 TTF 字库分区（freetype 按需渲染任意中文文件名，换 SD 卡不影响）
+font,     data, fat,     0x310000,  0x800000,
 # 注：SD 卡 FATFS 由 SDSPI 驱动直接挂载，不占用内部 Flash 分区
