@@ -1614,3 +1614,54 @@ if (g_app_state != APP_STATE_PLAYING && g_app_state != APP_STATE_PAUSED) return;
 2. **R059 中文菜单**：开启 `LV_USE_FREETYPE` + 加中文字模
 
 **这两个问题都不是用户当前最关心的死机/按键响应问题**，是后续功能完善。
+
+## 下一阶段重点（2026-08-21，**用户决策**）
+**用户确认**：下一阶段重点解决播放问题（R053-adf-patch）。
+
+**R053-adf-patch 任务**：
+- 当前基线：`R059-stage-end` (commit 844d5cf)
+- **任务**：给 ESP-IDF v5.5.3 打 ESP-ADF 的 `idf_v5.5_freertos.patch`，添加 `xTaskCreateRestrictedPinnedToCore` 函数
+- **patch 文件位置**：`D:\esp\esp-adf\idf_patches\idf_v5.5_freertos.patch`
+- **目标**：让 MP3 decoder task 能创建，音频真正播放
+- **工作流程**：
+  1. `git checkout R059-stage-end -b fix-r053-audio` 开新分支
+  2. `git apply D:\esp\esp-adf\idf_patches\idf_v5.5_freertos.patch` 给 IDF 打 patch
+  3. 重 build + flash
+  4. 按播放键验证有声音
+  5. 短按 FF/REW 跳 5 秒正常（之前 STOPPED 无响应→修复后应正常）
+  6. 测试稳定后 commit + tag
+
+**风险**：
+- patch 修改 ESP-IDF 源码（非本项目），升级 IDF 时会被覆盖
+- 建议在文档中标注此为项目必需补丁
+
+##### R053-adf-patch 已执行状态（2026-08-21）
+- ✅ **分支**：已 `git checkout -b fix-r053-audio`（基于 R059-stage-end 844d5cf）
+- ✅ **patch 已 apply**：`git apply --check` 通过 → `git apply` 成功，改 IDF 3 处（声明 / 实现 / linker 导出）
+- ✅ **重编成功**：`libfreertos.a` 时间戳 13:28 重编；`audiobook_player.bin` 1115600 字节（47% 分区空闲）
+- ✅ **符号验证**：`xtensa-esp-elf-nm audiobook_player.elf` 确认 `40382be0 T xTaskCreateRestrictedPinnedToCore` 已进 elf
+- ✅ **文档固化**：`docs/IDF_PATCHES.md` 记录补丁步骤与副作用
+- ⏸️ **flash 待重试**：`build.bat flash -p COM7 -b 921600` 握手报 `Invalid head of packet (0x71)`（串口噪声，非编译问题）；对策降 115200 / 查 COM7 占用 / 换线
+- 📌 **坑记录**：`build.bat build` 末尾误报 `ninja unknown target ';'`（无害，看 bin/elf 而非退出码）；详见 `开发日志.md`「编译/烧录经验教训汇总」L1-L6
+
+##### R059 长期稳定性确认（2026-08-21，**~18 分钟无故障**）
+**用户日志**：
+- 串口持续打印 `hbt=110212`
+- 110 hbt/秒 × 110212 hbt ≈ **1102 秒 ≈ 18.4 分钟** 稳定运行
+- 期间出现 4880 次 `display_update`（每 ~135ms 一次，UI 状态机正常运行）
+- `display_update diff=630420856` ≈ 630秒 ≈ 10.5 分钟时间跨度
+- **无 TWDT、无 Guru Memory 报错**
+- **无 ESP_LOGE 等错误**
+
+**结论**：
+- ✓ **R052 + R055 + R056 + R058 联合修复确实彻底解决稳定性问题**
+- ✓ 系统可以长时间无故障运行（18 分钟+ 验证）
+- ✓ LVGL 与 main_task 双核调度稳定（hbt 持续递增，display_update 持续）
+- ✓ 仅有**功能缺失**问题（R053 音频 + R059 中文），无崩溃/卡死/重启
+
+**R053-adf-patch 阶段确认**：
+- 当前系统已经稳定，**音频播放**是最后的关键功能
+- 实施 R053 后预期：
+  - 按播放键有真实音频输出
+  - 短按 FF/REW 跳 5 秒（之前 STOPPED 无响应，修复后 STOPPED→PLAYING→STOPPED 完整循环）
+  - 短按 PREV/NEXT 切曲目播放

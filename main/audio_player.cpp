@@ -22,6 +22,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+#include "display.h"  // R074: 调 display_request_main_tick() 强制切歌后 player 渲染
 
 #ifdef CONFIG_USE_ESP_ADF
 
@@ -419,6 +420,12 @@ bool audio_player_play(const char *filepath)
 
     // 11. 应用当前音量
     audio_player_set_volume(g_volume);
+
+    // R074-fix: 切歌后强制 player 重新渲染。某些文件切歌后 LVGL dirty tracking
+    // 失效（player 对象未标 dirty），屏幕卡在切前状态或黑屏。强制 tick 一次
+    // 让 lvgl_task 在持锁回调中调 ui_show_player 重新绘制。
+    // 与 R073 修复（boot 1.5s 后强制 tick）机制对称——保证 play 路径也有强制刷新。
+    display_request_main_tick();
 
     return true;
 }
