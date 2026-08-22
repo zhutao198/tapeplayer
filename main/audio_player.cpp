@@ -21,6 +21,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
+#include <stdio.h>
 
 #ifdef CONFIG_USE_ESP_ADF
 
@@ -56,7 +57,7 @@ static const char *TAG = "audio_player";
 static audio_pipeline_handle_t  g_pipeline = NULL;
 static audio_element_handle_t   g_fatfs_reader = NULL;
 static audio_element_handle_t   g_decoder = NULL;
-static audio_element_handle_t   g_i2s_writer = NULL;   // 跨曲目复用
+static audio_element_handle_t   g_i2s_writer = NULL;   // R068：每次 play 重建（弃用 R036-001 跨曲目复用）
 
 static bool         g_is_playing = false;
 static bool         g_is_paused = false;
@@ -67,6 +68,10 @@ static int          g_volume = AUDIO_OUTPUT_VOL;
 #define VOL_DB_MAX  (12)    // 最大增益
 static int          g_total_duration_ms = 0;
 static uint32_t     g_total_file_bytes = 0;
+// R067：当前曲目 ID3v2 标签字节数（0 = 无 ID3 或非 MP3）。
+// seek byte_pos = id3_skip + (ms * audio_bytes / duration_ms)，
+// audio_bytes = total_file_bytes - id3_skip_bytes。
+static int          g_id3_skip_bytes = 0;
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采样率缓存
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
 static int64_t      g_play_offset_us = 0;              // pause 时锁存的已播放时长，resume 时叠加
@@ -76,6 +81,39 @@ static uint64_t     g_last_scrub_us = 0;               // M1: 上次跳帧时间
 static int  g_ab_a_ms = -1;
 static int  g_ab_b_ms = -1;
 static bool g_ab_enabled = false;
+
+/* --- R067-fix：ID3v2 跳过工具 ---
+ * 问题：ESP-ADF v5.5 + esp_audio_codec 静态库的 mp3 decoder 在含 ID3v2
+ *       标签的 MP3 文件上稳定崩（Guru Meditation BREAK，
+ *       CODEC_ELEMENT_HELPER: reserve data 2 is 0x0）。
+ *       现象：1/4/5 有 ID3v2 → 必崩；2/3/6 无 ID3v2 → 正常。
+ * 解决：fatfs_stream 不会自动跳 ID3v2。在 set_uri 前我们手动 peek
+ *       前 10 字节 → 解析 syncsafe size → 让 audio_element_set_byte_pos
+ *       把 reader 起点设到 MP3 frame 开始。decoder 收到的就是纯音频数据。
+ * 注意：seek/resume 走 g_total_file_bytes 比例映射，ID3 size 必须计入
+ *       g_total_file_bytes 才能正确换算 ms ↔ byte_pos（见 seek path）。*/
+
+// 计算 MP3 文件前部的 ID3v2 总长度（syncsafe size 解析）。返回值：
+//   -1：未检测到 ID3v2 (非 mp3 / 无标签 / 文件 < 10B)
+//    N：ID3v2 标签总长度（含 10B header），seek 到 file[N] 就是首个 MP3 frame
+static int id3v2_total_size(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+    uint8_t hdr[10];
+    size_t n = fread(hdr, 1, 10, fp);
+    fclose(fp);
+    if (n < 10) return -1;
+    if (hdr[0] != 'I' || hdr[1] != 'D' || hdr[2] != '3') return -1;
+    if (hdr[3] == 0 || hdr[4] == 0xFF) return -1;       // v2.2/2.4 暂不处理
+    // syncsafe: 4 字节 each 用 7 位
+    uint32_t sz = ((uint32_t)(hdr[6] & 0x7F) << 21)
+                | ((uint32_t)(hdr[7] & 0x7F) << 14)
+                | ((uint32_t)(hdr[8] & 0x7F) <<  7)
+                | ((uint32_t)(hdr[9] & 0x7F));
+    int total = 10 + (int)sz;
+    return total > 0 ? total : -1;
+}
 
 static audio_status_cb_t g_status_cb = NULL;
 static void              *g_user_data = NULL;
@@ -123,14 +161,9 @@ static audio_element_handle_t create_decoder(const char *path)
 /* ============================================================
  * 初始化（仅创建 I2S 输出流，pipeline 在 play() 中重建）
  * ============================================================ */
-void audio_player_init(void)
+// R068-fix：抽 helper 让 init 和 play() 都能复用 i2s_writer 创建
+static audio_element_handle_t create_i2s_writer(void)
 {
-    ESP_LOGI(TAG, "Initializing audio subsystem...");
-    vTaskDelay(pdMS_TO_TICKS(5));  /* 强制 flush 串口，避免阻塞前日志丢失 */
-
-    // 创建 I2S 输出流（跨曲目复用，无需每次重建）
-    // I2S 引脚直接绑定到原理图定义 (BCLK=IO6, WS=IO7, DIN=IO5, MAX98357 U8)
-    // IDF v5 的 i2s_stream 通过 std_cfg.gpio_cfg 配置引脚 (i2s_set_pin 已移除)
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
     i2s_cfg.type = AUDIO_STREAM_WRITER;
     i2s_cfg.std_cfg.gpio_cfg.bclk = I2S_BCK_IO;
@@ -140,15 +173,26 @@ void audio_player_init(void)
     ESP_LOGI(TAG, "i2s_stream_init enter (BCLK=IO%d WS=IO%d DIN=IO%d)",
              I2S_BCK_IO, I2S_WS_IO, I2S_DOUT_IO);
     vTaskDelay(pdMS_TO_TICKS(5));
-    g_i2s_writer = i2s_stream_init(&i2s_cfg);
-    ESP_LOGI(TAG, "i2s_stream_init returned %p", (void *)g_i2s_writer);
-    if (!g_i2s_writer) {
-        ESP_LOGE(TAG, "Failed to create I2S writer stream (audio disabled, continue)");
-        /* 失败保护：不阻塞、不返回，允许 UI 继续运行 */
-    } else {
+    audio_element_handle_t h = i2s_stream_init(&i2s_cfg);
+    ESP_LOGI(TAG, "i2s_stream_init returned %p", (void *)h);
+    if (h) {
         ESP_LOGI(TAG, "I2S pins bound: BCLK=IO%d WS=IO%d DIN=IO%d",
                  I2S_BCK_IO, I2S_WS_IO, I2S_DOUT_IO);
+    } else {
+        ESP_LOGE(TAG, "i2s_stream_init failed");
     }
+    return h;
+}
+
+void audio_player_init(void)
+{
+    ESP_LOGI(TAG, "Initializing audio subsystem...");
+    vTaskDelay(pdMS_TO_TICKS(5));  /* 强制 flush 串口，避免阻塞前日志丢失 */
+
+    // R068-fix：i2s_writer 不再"跨曲目复用"——每次 play() 都重建。
+    // 原因：R036-001 的复用策略在跨曲目时与旧 element task 状态耦合，
+    // 导致 R066/R067 修复未根除 BREAK（0x403743bd）。代价：~100ms 重建开销。
+    g_i2s_writer = create_i2s_writer();
 
     ESP_LOGI(TAG, "Audio subsystem initialized (I2S writer %s)",
              g_i2s_writer ? "ready" : "FAILED-but-ignored");
@@ -163,6 +207,13 @@ bool audio_player_play(const char *filepath)
 
     ESP_LOGI(TAG, "Playing: %s", filepath);
     audio_player_stop(); // 确保上一个管道已销毁
+    // R062-fix：复用 g_i2s_writer 跨 play 时，上一轮 stop 已将其置为
+    // AEL_STATE_FINISHED，若不 reset 直接重新 register/run，i2s 元素 resume
+    // 时仍为 finished 态 → pipeline 误判播放完成 → 无限重启（听不到声音）。
+    // 这里在重建 pipeline 前将其强制拉回 INIT 态。
+    if (g_i2s_writer) {
+        audio_element_reset_state(g_i2s_writer);
+    }
 
     // R049b：新曲目清空 A-B 标记（避免跨文件失效）
     g_ab_a_ms = -1;
@@ -222,31 +273,38 @@ bool audio_player_play(const char *filepath)
         g_pipeline = NULL;
         return false;
     }
-    // M5：注册 i2s 前 NULL 守卫，避免在 init 失败/未初始化的极端情况崩溃
+    // R068-fix：每首播放前重建 i2s_writer（放弃 R036-001 跨曲目复用）。
+    // audio_player_stop() 已 deinit 并置 NULL；这里若还 NULL（boot 后第一首 / init失败）
+    // 就重建。代价：~100ms 重建开销（i2s_driver_install + DMA buffer），换零状态耦合。
     if (!g_i2s_writer) {
-        ESP_LOGE(TAG, "g_i2s_writer is NULL, refusing to register pipeline");
-        audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
-        audio_pipeline_unregister(g_pipeline, g_decoder);
-        audio_element_deinit(g_fatfs_reader);
-        audio_element_deinit(g_decoder);
-        g_fatfs_reader = NULL;
-        g_decoder = NULL;
-        audio_pipeline_deinit(g_pipeline);
-        g_pipeline = NULL;
-        return false;
+        ESP_LOGI(TAG, "R068: i2s_writer not present, creating now");
+        g_i2s_writer = create_i2s_writer();
+        if (!g_i2s_writer) {
+            ESP_LOGE(TAG, "R068: create_i2s_writer failed");
+            audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+            audio_pipeline_unregister(g_pipeline, g_decoder);
+            audio_element_deinit(g_fatfs_reader);
+            audio_element_deinit(g_decoder);
+            g_fatfs_reader = NULL;
+            g_decoder = NULL;
+            audio_pipeline_deinit(g_pipeline);
+            g_pipeline = NULL;
+            return false;
+        }
     }
     // R035-015：第三次 audio_pipeline_register 添加返回值检查 + 失败清理
-    // R036-001：i2s_writer 是跨曲目复用资源（见 L50/L112 注释），失败清理仅 unregister，
-    // 不 deinit、不置 NULL，与 run/link 失败路径一致。
+    // R036-001（已弃用，R068 改为每次重建）：i2s_writer 不再"跨曲目复用"——失败清理 deinit + 置 NULL
     if (audio_pipeline_register(g_pipeline, g_i2s_writer, "i2s") != ESP_OK) {
         ESP_LOGE(TAG, "register i2s_writer failed");
         audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
         audio_pipeline_unregister(g_pipeline, g_decoder);
         audio_element_deinit(g_fatfs_reader);
         audio_element_deinit(g_decoder);
-        audio_pipeline_unregister(g_pipeline, g_i2s_writer);  // 仅 unregister，保留跨曲目复用
+        audio_pipeline_unregister(g_pipeline, g_i2s_writer);
+        audio_element_deinit(g_i2s_writer);  // R068：失败也 deinit
         g_fatfs_reader = NULL;
         g_decoder = NULL;
+        g_i2s_writer = NULL;                  // R068：失败置 NULL
         audio_pipeline_deinit(g_pipeline);
         g_pipeline = NULL;
         return false;
@@ -262,8 +320,10 @@ bool audio_player_play(const char *filepath)
         audio_pipeline_unregister(g_pipeline, g_i2s_writer);
         audio_element_deinit(g_fatfs_reader);
         audio_element_deinit(g_decoder);
+        audio_element_deinit(g_i2s_writer);  // R068：失败也 deinit
         g_fatfs_reader = NULL;
         g_decoder = NULL;
+        g_i2s_writer = NULL;                  // R068：失败置 NULL
         audio_pipeline_deinit(g_pipeline);
         g_pipeline = NULL;
         return false;
@@ -271,6 +331,23 @@ bool audio_player_play(const char *filepath)
 
     // 6. 设置文件 URI
     audio_element_set_uri(g_fatfs_reader, filepath);
+
+    // R067-fix：跳过 ID3v2 标签（避免 heldec 在 ID3v2 + MP3 frame 混合流上崩）
+    // 仅 mp3；其他格式不受此崩影响。
+    // 把 ID3 长度记到 g_id3_skip_bytes，seek/resume 用此 offset 修正 byte_pos。
+    g_id3_skip_bytes = 0;
+    if (strcasecmp(get_file_ext(filepath), ".mp3") == 0) {
+        const char *mp3_path = strstr(filepath, "://");
+        const char *real_path = mp3_path ? mp3_path + 3 : filepath;
+        // 跳过前导 '/'（'///sdcard/...' → '/sdcard/...'）
+        if (real_path[0] == '/' && real_path[1] == '/') real_path++;
+        int id3_sz = id3v2_total_size(real_path);
+        if (id3_sz > 0) {
+            g_id3_skip_bytes = id3_sz;
+            audio_element_set_byte_pos(g_fatfs_reader, id3_sz);
+            ESP_LOGI(TAG, "R067-fix: skip ID3v2 (%d bytes) before MP3 frame", id3_sz);
+        }
+    }
 
     // 7. 设置 I2S 时钟（MAX98357A 无编解码器，仅需 BCLK/LRCLK 匹配）
     g_current_sample_rate = AUDIO_SAMPLE_RATE;
@@ -300,9 +377,13 @@ bool audio_player_play(const char *filepath)
     g_last_scrub_us = 0;  // M1: 跨曲目重置跳帧时间戳
 
     // 9. 计算文件字节数（用于 seek/位置换算）
+    // R067：去掉 ID3v2 头部，让后续 seek/duration 估算按"音频数据"算，
+    // 避免把 ID3 标签字节错算成音频时长。
     struct stat st;
     if (stat(filepath, &st) == 0) {
-        g_total_file_bytes = (uint32_t)st.st_size;
+        uint32_t total = (uint32_t)st.st_size;
+        g_total_file_bytes = (total > (uint32_t)g_id3_skip_bytes)
+                           ? total - (uint32_t)g_id3_skip_bytes : 0;
     } else {
         g_total_file_bytes = 0;
     }
@@ -381,25 +462,16 @@ void audio_player_stop(void)
         g_play_start_us = 0;
         g_play_offset_us = 0;
         g_total_duration_ms = 0;
+        g_id3_skip_bytes = 0;  // R067
         g_last_scrub_us = 0;
         return;
     }
 
     if (g_pipeline) {
-        audio_pipeline_stop(g_pipeline);
-        {
-            int retries = AUDIO_STOP_TIMEOUT_MS / AUDIO_STOP_POLL_MS;
-            while (retries > 0) {
-                audio_element_state_t st = audio_element_get_state(g_i2s_writer);
-                if (st == AEL_STATE_FINISHED || st == AEL_STATE_STOPPED || st == AEL_STATE_INIT) break;
-                vTaskDelay(pdMS_TO_TICKS(AUDIO_STOP_POLL_MS));
-                retries--;
-            }
-            if (retries == 0) {
-                ESP_LOGW(TAG, "Pipeline stop timeout, forcing terminate");
-                audio_pipeline_terminate(g_pipeline);
-            }
-        }
+            // R068-fix：用 audio_pipeline_terminate 强杀所有 element task（不依赖 state），
+            // 2 秒超时足够。放弃 R036-001 "i2s_writer 跨曲目复用"——i2s_writer 每次 deinit + 重建。
+            ESP_LOGI(TAG, "R068: terminate pipeline (force-stop all elements, 2s timeout)");
+            audio_pipeline_terminate_with_ticks(g_pipeline, pdMS_TO_TICKS(2000));
 
         // 销毁 per-track 元素（fatfs_reader + decoder）
         if (g_fatfs_reader) {
@@ -412,8 +484,12 @@ void audio_player_stop(void)
             audio_element_deinit(g_decoder);
             g_decoder = NULL;
         }
-        // i2s_writer 从管道注销但不销毁（跨曲目复用）
-        audio_pipeline_unregister(g_pipeline, g_i2s_writer);
+        // R068-fix：i2s_writer 现在也每次 deinit（不再跨曲目复用）
+        if (g_i2s_writer) {
+            audio_pipeline_unregister(g_pipeline, g_i2s_writer);
+            audio_element_deinit(g_i2s_writer);
+            g_i2s_writer = NULL;
+        }
 
         // 销毁管道本身
         audio_pipeline_deinit(g_pipeline);
@@ -424,6 +500,7 @@ void audio_player_stop(void)
     g_is_paused = false;
 
     g_total_duration_ms = 0;
+    g_id3_skip_bytes = 0;  // R067：切歌时重置，新曲目重新探测
     g_play_offset_us = 0;
     g_last_scrub_us = 0;  // M1: 停止时重置跳帧时间戳
 }
@@ -441,14 +518,18 @@ static void audio_player_seek_ms_internal(int ms)
     if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
 
     if (g_total_duration_ms > 0 && g_total_file_bytes > 0) {
+        // R067：g_total_file_bytes 已经是音频字节数（去掉 ID3v2）；
+        // seek 目标 = id3_skip + ms * audio_bytes / duration。
         // R028/L1: int64_t 中转避免 uint64 隐式截断
-        int64_t byte_pos = (int64_t)ms * g_total_file_bytes / g_total_duration_ms;
+        int64_t byte_pos = g_id3_skip_bytes
+                         + (int64_t)ms * g_total_file_bytes / g_total_duration_ms;
         // R032-002 复审修订：ADF audio_element_set_byte_pos 入参为 int（32-bit），
         // 必须钳位到 INT32_MAX，避免 >2.1 GB 文件隐式窄化截断导致 seek 失准/跳轨。
         if (byte_pos > INT32_MAX) byte_pos = INT32_MAX;
         audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);
     } else if (g_total_file_bytes > 0) {
-        int64_t byte_pos = (int64_t)ms * g_total_file_bytes / 3600000;
+        int64_t byte_pos = g_id3_skip_bytes
+                         + (int64_t)ms * g_total_file_bytes / 3600000;
         // R032-002 复审修订：ADF 入参为 int，必须钳位避免窄化截断。
         if (byte_pos > INT32_MAX) byte_pos = INT32_MAX;
         audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);

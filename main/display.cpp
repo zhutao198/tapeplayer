@@ -172,6 +172,12 @@ static volatile bool s_vol_pending = false;
 static volatile int  s_vol_value   = 0;
 static volatile uint32_t s_main_tick_call_count = 0;  /* 诊断：调用次数 */
 
+/* R063-fix: 弹窗消息(show_no_card/show_no_files/show_splash)轮询方案,
+   与音量条同源——main_task 只设标志,lvgl_task 在持锁状态下调 LVGL,
+   避免 main 直接调 ui_show_msg(裸 LVGL API) 与 lvgl_task 死锁→TWDT(R062 死锁回退)。 */
+static volatile bool s_msg_pending = false;
+static char          s_msg_text[96] = {0};
+
 void display_register_main_tick(display_main_tick_fn_t fn)
 {
     s_main_tick_cb = fn;
@@ -235,6 +241,9 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
     lv_display_flush_ready(disp);
 }
 
+/* R063-fix: 不持锁版消息渲染,供 lvgl_task 在已持锁区间内调用(前向声明,定义见 ui_show_msg 处) */
+static void ui_show_msg_nolock(const char *txt);
+
 /* LVGL 心跳 + 定时器处理任务 */
 static void lvgl_task(void *arg)
 {
@@ -272,6 +281,11 @@ static void lvgl_task(void *arg)
             s_main_tick_pending = false;
             s_main_tick_call_count++;
             s_main_tick_cb();
+        }
+        /* R063-fix: 消费弹窗消息标志(已在 lv_lock 内,直接调 LVGL 安全) */
+        if (s_msg_pending) {
+            s_msg_pending = false;
+            ui_show_msg_nolock(s_msg_text);
         }
         lv_timer_handler();
         lv_unlock();
@@ -380,15 +394,15 @@ static esp_err_t lcd_hw_init(void)
  * 避免 main_task 与 lvgl_task 并发访问 LVGL 对象树导致死锁） */
 void display_start_lvgl_task(void)
 {
-    ESP_LOGI(TAG, "DBG: before lvgl task create");
+    // R071：合并 before/after lvgl task create 打印为单条；保留失败路径 ESP_LOGE
     TaskHandle_t h = NULL;
     BaseType_t rc = xTaskCreatePinnedToCoreWithCaps(lvgl_task, "lvgl", 16384, NULL, 5, &h,
                                                     1, MALLOC_CAP_INTERNAL);
-    ESP_LOGI(TAG, "DBG: lvgl task create rc=%d handle=%p", (int)rc, (void *)h);
     if (rc != pdPASS || !h) {
-        ESP_LOGE(TAG, "DBG: lvgl task CREATE FAILED! rc=%d", (int)rc);
+        ESP_LOGE(TAG, "lvgl task CREATE FAILED! rc=%d", (int)rc);
+    } else {
+        ESP_LOGI(TAG, "lvgl task created handle=%p", (void *)h);
     }
-    ESP_LOGI(TAG, "DBG: after lvgl task create");
 }
 
 /* ============================================================
@@ -826,6 +840,16 @@ static void ui_show_msg(const char *txt)
     lv_unlock();
 }
 
+/* R063-fix: 不持锁版本,仅给 lvgl_task 在已持锁区间内调用,避免双重加锁 */
+static void ui_show_msg_nolock(const char *txt)
+{
+    lv_label_set_text(g_msg, txt);
+    lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
+}
+
 void display_set_play_mode(int mode)
 {
     s_play_mode = mode;
@@ -1050,23 +1074,33 @@ void display_show_splash(void)
     if (!g_display_initialized) return;
     /* freetype 未就绪（cjk.ttf 未烧录到 font 分区）时, 渲染中文 label 会走入
      * 未初始化的 freetype 路径导致 LVGL 死循环 + task_wdt, 故用 ASCII 兜底 */
-    if (font_partition_ready()) {
-        ui_show_msg("TapeBook Player\nESP32-S3\nLoading SD Card...");
-    } else {
-        ui_show_msg("TapeBook Player\nESP32-S3\nloading SD...");
-    }
+    const char *msg = font_partition_ready()
+        ? "TapeBook Player\nESP32-S3\nLoading SD Card..."
+        : "TapeBook Player\nESP32-S3\nloading SD...";
+    /* R063-fix: 仅设标志,避免 main 直接调 LVGL 与 lvgl_task 死锁 */
+    strncpy(s_msg_text, msg, sizeof(s_msg_text) - 1);
+    s_msg_text[sizeof(s_msg_text) - 1] = '\0';
+    s_msg_pending = true;
 }
 
 void display_show_no_files(void)
 {
     if (!g_display_initialized) return;
-    ui_show_msg("No audio files found.\nCopy .mp3/.flac/.wav\nto the SD card.");
+    /* R063-fix: 仅设标志,避免 main 直接调 LVGL 与 lvgl_task 死锁 */
+    strncpy(s_msg_text, "No audio files found.\nCopy .mp3/.flac/.wav\nto the SD card.",
+            sizeof(s_msg_text) - 1);
+    s_msg_text[sizeof(s_msg_text) - 1] = '\0';
+    s_msg_pending = true;
 }
 
 void display_show_no_card(void)
 {
     if (!g_display_initialized) return;
-    ui_show_msg("SD card not detected.\nPlease insert an SD card.");
+    /* R063-fix: 仅设标志,避免 main 直接调 LVGL 与 lvgl_task 死锁 (P0) */
+    strncpy(s_msg_text, "SD card not detected.\nPlease insert an SD card.",
+            sizeof(s_msg_text) - 1);
+    s_msg_text[sizeof(s_msg_text) - 1] = '\0';
+    s_msg_pending = true;
 }
 
 static void sd_icon_update(bool present)
@@ -1139,6 +1173,10 @@ void display_update(player_state_t state,
                     float speed, int gear, int volume)
 {
     if (!g_display_initialized) return;
+    // R071: 删除冗余 DBG 打印（before/after lv_lock call#N + now/last/diff）——
+    // 主循环 200ms 节流每条都打→ 20行/秒纯噪声，把真崩因日志淹没。
+    // LVGL 死锁问题已在 R063-fix 用异步 pending 解决，无需每次锁前后再验。
+    // call_count 仅用于 ui_show_player #N 调试（前3次打印），保留不增噪声。
     static uint32_t call_count = 0;
     if (call_count <= 3) {
         ESP_LOGI(TAG, "DBG: display_update call #%u state=%d track='%s' idx=%d/%d pos=%d/%d spd=%.2f gear=%d vol=%d",
@@ -1146,9 +1184,7 @@ void display_update(player_state_t state,
                  current_sec, total_sec, speed, gear, volume);
     }
     call_count++;
-    ESP_LOGI(TAG, "DBG: display_update before lv_lock call#%u", (unsigned)call_count);
     lv_lock();   /* 保护整段 LVGL 写: 与 lvgl_task 的 lv_timer_handler 并发必须加锁 */
-    ESP_LOGI(TAG, "DBG: display_update after lv_lock call#%u", (unsigned)call_count);
 
     /* 驱动磁带卷轴动画 (方向/速度由状态与档位决定) */
     s_reel_state = state;
@@ -1160,7 +1196,6 @@ void display_update(player_state_t state,
     bool ab_on = audio_player_is_ab_enabled();
 
     uint64_t now = esp_timer_get_time();
-    ESP_LOGI(TAG, "DBG: display_update now=%llu last=%llu diff=%lld", (unsigned long long)now, (unsigned long long)g_display_last_update_us, (long long)(now - g_display_last_update_us));
 
     uint32_t fp = calc_fingerprint(state, track_idx, total,
                                    current_sec, total_sec, speed, gear, volume);

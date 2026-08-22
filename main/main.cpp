@@ -391,8 +391,8 @@ static void handle_button_events(void)
     if (n > 0) {
         scan_count++;
         if (scan_count <= 5) {
-            ESP_LOGI(TAG, "DBG: btn scan #%u got %d events, first id=%d ev=%d",
-                     (unsigned)scan_count, n, (int)events[0].id, (int)events[0].event);
+            // ESP_LOGI(TAG, "DBG: btn scan #%u got %d events, first id=%d ev=%d",
+            //          (unsigned)scan_count, n, (int)events[0].id, (int)events[0].event);
         }
     }
 
@@ -1203,6 +1203,13 @@ extern "C" void app_main(void)
      * 娑堥櫎 main_task 鐩存帴璋?LVGL API 瀵艰嚧鐨勬閿?鐪嬮棬鐙楄秴鏃躲€?*/
     display_register_main_tick(update_display);
 
+    // R073-fix: 强制 1.5s 后调一次 display_request_main_tick 触发 player 渲染
+    // （R072 实测：splash 1s 延迟结束后 lvgl_task 消费 s_msg_pending 显示 splash，
+    // 但 200ms 节流的 update_display 在某种时序下没把 splash 隐藏掉，按键才进 player。
+    // 此处加一个 timer 兜底 1.5s 后强制 tick 一次，让 ui_show_player 把 splash 隐藏）
+    vTaskDelay(pdMS_TO_TICKS(500));   // 累计 1.5s（前面已有 vTaskDelay(1000)）
+    display_request_main_tick();
+
     while (1) {
         // 0. 蹇冭烦锛氭瘡 N 娆℃墦鍗颁竴娆★紝纭涓诲惊鐜椿鐫€
         static uint32_t heartbeat = 0;
@@ -1355,7 +1362,7 @@ extern "C" void app_main(void)
         if ((g_app_state == APP_STATE_STOPPED || g_app_state == APP_STATE_IDLE) &&
             power_mgmt_should_sleep()) {
             ESP_LOGI(TAG, "Idle timeout, entering light sleep");
-            ESP_LOGI(TAG, "DBG: before esp_light_sleep_start");
+            // ESP_LOGI(TAG, "DBG: before esp_light_sleep_start");
 
             save_current_position();   // R032-103: sleep 鍓嶄繚瀛樻柇鐐癸紙FF/RW 涓嶄細杩涘叆姝ゅ垎鏀紝宸插湪姝ゅ墠閲婃斁锛?
             settings_flush();
@@ -1444,7 +1451,7 @@ extern "C" void app_main(void)
                 g_last_sd_check_us = now;
                 if (g_sd_card != NULL) {
                     uint32_t buf;
-                    ESP_LOGI(TAG, "DBG: SD health read sector 0");
+                    // ESP_LOGI(TAG, "DBG: SD health read sector 0");
                     esp_err_t ret = sdmmc_read_sectors(g_sd_card, (uint8_t *)&buf, 0, 1);
                     if (ret != ESP_OK) {
                         ESP_LOGW(TAG, "SD card removed (read fail)!");
@@ -1465,7 +1472,7 @@ extern "C" void app_main(void)
 
         // 10. 璇锋眰鏇存柊鏄剧ず灞忥紙瀹為檯鐢?lvgl_task 鎸侀攣璋冪敤 update_display锛岄伩鍏?main 琚?LVGL mutex 闃诲瓒呮椂锛?
         display_request_main_tick();
-        ESP_LOGI(TAG, "DBG: after request_tick (hbt=%u)", (unsigned)heartbeat);
+        // ESP_LOGI(TAG, "DBG: after request_tick (hbt=%u)", (unsigned)heartbeat);
 
         // 11. 浼戠湢锛屾帶鍒跺惊鐜鐜囷紙鍩轰簬缁濆鏃堕棿瀵归綈锛岃ˉ鍋垮墠搴忚€楁椂锛?
         {
