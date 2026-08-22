@@ -139,13 +139,20 @@ static audio_element_handle_t create_decoder(const char *path)
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
 
     if (strcasecmp(ext, ".mp3") == 0) {
-        // R075-b: ADF 默认 MP3 decoder 栈仅 5KB、out_rb 仅 2KB。嵌入式 minimp3/Helix
-        // 解码大帧 Huffman 表时栈用量可能逼近上限，叠加 stop() 的堆损坏易触发崩溃。
-        // 加大栈到 16KB（仍放 PSRAM）并放大 out_rb 到 16KB，作为健壮性加固。
-        mp3_cfg.task_stack  = 16 * 1024;   // 默认 5KB → 16KB
-        mp3_cfg.out_rb_size = 16 * 1024;   // 默认 2KB → 16KB
-        mp3_cfg.stack_in_ext = true;        // 确保栈在 PSRAM（默认已是 true，显式声明）
-        ESP_LOGI(TAG, "Using MP3 decoder (task_stack=16K, out_rb=16K)");
+        // R076-FIX: ESP32/ESP32-S3 哈佛架构限制：任务栈位于 PSRAM 时 CPU 处于
+        // "外部执行"模式，期间访问 Flash 会被硬件挂起；mp3_decoder_open 内部
+        // 调 fread() 读 MP3 数据，触发 Flash-PSRAM 访问冲突 → DoubleException。
+        // 证据：coredump 反解 mp3_decoder_open +636 → 0x40000001 (_DoubleExceptionVector)
+        //  → 第一现场是 ROM 异常处理代码（栈帧 #1），函数体内无 BREAK 指令。
+        // Fix: task_stack 强制放片内 RAM (stack_in_ext=false)。PSRAM 留做 out_rb（数据）。
+        mp3_cfg.task_stack   = 8 * 1024;    // 16K→8K（放片内 RAM 节省空间）
+        mp3_cfg.out_rb_size  = 16 * 1024;   // out_rb 是数据缓冲，放 PSRAM 无冲突
+        mp3_cfg.stack_in_ext = false;       // ★ 关键：栈强制放片内 RAM，避开 Flash 访问冲突
+        ESP_LOGI(TAG, "Using MP3 decoder (task_stack=8K internal, out_rb=16K PSRAM)");
+        // R076-DBG：保留调试日志级别（如果新固件不再崩，可逐步降到 INFO）
+        esp_log_level_set("MP3_DECODER", ESP_LOG_DEBUG);
+        esp_log_level_set("AUDIO_ELEMENT", ESP_LOG_DEBUG);
+        esp_log_level_set("AUDIO_CODEC", ESP_LOG_DEBUG);
         return mp3_decoder_init(&mp3_cfg);
     } else if (strcasecmp(ext, ".aac") == 0 || strcasecmp(ext, ".m4a") == 0) {
         ESP_LOGI(TAG, "Using AAC decoder");
@@ -280,6 +287,8 @@ bool audio_player_play(const char *filepath)
         g_pipeline = NULL;
         return false;
     }
+    // R076-DBG：decoder 调试日志已在其创建分支拉满（esp_log_level_set DEBUG），
+    // 让 minimp3 在主动 abort 前打印内部错误（帧头非法/采样率越界等）。
     // R068-fix：每首播放前重建 i2s_writer（放弃 R036-001 跨曲目复用）。
     // audio_player_stop() 已 deinit 并置 NULL；这里若还 NULL（boot 后第一首 / init失败）
     // 就重建。代价：~100ms 重建开销（i2s_driver_install + DMA buffer），换零状态耦合。
@@ -351,8 +360,15 @@ bool audio_player_play(const char *filepath)
         int id3_sz = id3v2_total_size(real_path);
         if (id3_sz > 0) {
             g_id3_skip_bytes = id3_sz;
+            // R076-EXP：临时验证开关。注释掉手动 set_byte_pos，让 minimp3 自己从
+            // 文件头 0 解析并跳过 ID3v2，验证“R067 跳过字节数错误导致崩溃”的假设。
+            // 验证结束后恢复下面这行（取消注释）即可。
+#if 0
             audio_element_set_byte_pos(g_fatfs_reader, id3_sz);
             ESP_LOGI(TAG, "R067-fix: skip ID3v2 (%d bytes) before MP3 frame", id3_sz);
+#else
+            ESP_LOGI(TAG, "R076-EXP: ID3v2 skip DISABLED (%d bytes would be skipped)", id3_sz);
+#endif
         }
     }
 

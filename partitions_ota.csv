@@ -9,5 +9,7 @@ ota_0,    app,  ota_0,   0x220000,  0x200000,
 ota_1,    app,  ota_1,   0x420000,  0x200000,
 # 独立中文 TTF 字库分区（freetype 按需渲染任意中文文件名，换 SD 卡不影响）
 font,     data, fat,     0x620000,  0x800000,
+# R076-CORE: coredump 分区（flash 存放 panic 现场，供 espcoredump.py 离线解析）
+coredump, data, coredump, 0xE20000,  0x40000,
 # 注：SD 卡 FATFS 由 SDSPI 驱动直接挂载，不占用内部 Flash 分区
-# 剩余约 10 MB 空间可供未来 spiffs / nvs 扩展 / 自定义分区使用
+# 剩余约 1.5 MB 空间可供未来 spiffs / nvs 扩展 / 自定义分区使用
