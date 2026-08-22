@@ -139,7 +139,13 @@ static audio_element_handle_t create_decoder(const char *path)
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
 
     if (strcasecmp(ext, ".mp3") == 0) {
-        ESP_LOGI(TAG, "Using MP3 decoder");
+        // R075-b: ADF 默认 MP3 decoder 栈仅 5KB、out_rb 仅 2KB。嵌入式 minimp3/Helix
+        // 解码大帧 Huffman 表时栈用量可能逼近上限，叠加 stop() 的堆损坏易触发崩溃。
+        // 加大栈到 16KB（仍放 PSRAM）并放大 out_rb 到 16KB，作为健壮性加固。
+        mp3_cfg.task_stack  = 16 * 1024;   // 默认 5KB → 16KB
+        mp3_cfg.out_rb_size = 16 * 1024;   // 默认 2KB → 16KB
+        mp3_cfg.stack_in_ext = true;        // 确保栈在 PSRAM（默认已是 true，显式声明）
+        ESP_LOGI(TAG, "Using MP3 decoder (task_stack=16K, out_rb=16K)");
         return mp3_decoder_init(&mp3_cfg);
     } else if (strcasecmp(ext, ".aac") == 0 || strcasecmp(ext, ".m4a") == 0) {
         ESP_LOGI(TAG, "Using AAC decoder");
@@ -475,33 +481,27 @@ void audio_player_stop(void)
     }
 
     if (g_pipeline) {
-            // R068-fix：用 audio_pipeline_terminate 强杀所有 element task（不依赖 state），
-            // 2 秒超时足够。放弃 R036-001 "i2s_writer 跨曲目复用"——i2s_writer 每次 deinit + 重建。
-            ESP_LOGI(TAG, "R068: terminate pipeline (force-stop all elements, 2s timeout)");
-            audio_pipeline_terminate_with_ticks(g_pipeline, pdMS_TO_TICKS(2000));
+        // R075-fix：不再手动 deinit 各 element！
+        // 旧逻辑先 audio_element_deinit(fatfs/decoder/i2s) 释放内存，再调
+        // audio_pipeline_deinit()，而后者内部会遍历 el_list 对【同一个已释放的
+        // element】再 deinit 一次 → double-free → 堆损坏 → 表现为切歌后下一首
+        // play() 在 Pipeline started 后崩溃（0x403743c0 BREAK / DoubleException）。
+        // 崩溃与具体歌曲相关，是因为不同解码路径踩中损坏堆元数据的概率不同。
+        //
+        // 修复：只调一次 audio_pipeline_deinit()，它内部已统一 terminate + deinit
+        // el_list 中所有 element（含 i2s_writer 的 destroy→i2s_driver_uninstall），
+        // 完全满足 R068 "i2s_writer 每次重建" 的意图，且杜绝 double-free。
+        ESP_LOGI(TAG, "R068: terminate pipeline (force-stop all elements, 2s timeout)");
+        audio_pipeline_terminate_with_ticks(g_pipeline, pdMS_TO_TICKS(2000));
 
-        // 销毁 per-track 元素（fatfs_reader + decoder）
-        if (g_fatfs_reader) {
-            audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
-            audio_element_deinit(g_fatfs_reader);
-            g_fatfs_reader = NULL;
-        }
-        if (g_decoder) {
-            audio_pipeline_unregister(g_pipeline, g_decoder);
-            audio_element_deinit(g_decoder);
-            g_decoder = NULL;
-        }
-        // R068-fix：i2s_writer 现在也每次 deinit（不再跨曲目复用）
-        if (g_i2s_writer) {
-            audio_pipeline_unregister(g_pipeline, g_i2s_writer);
-            audio_element_deinit(g_i2s_writer);
-            g_i2s_writer = NULL;
-        }
-
-        // 销毁管道本身
+        // 销毁管道 + 内部所有 element（仅此一次 deinit）
         audio_pipeline_deinit(g_pipeline);
         g_pipeline = NULL;
     }
+    // element 内存已由 audio_pipeline_deinit 释放，此处仅清句柄，避免悬空指针
+    g_fatfs_reader = NULL;
+    g_decoder = NULL;
+    g_i2s_writer = NULL;   // R068：每次 play() 重建
 
     g_is_playing = false;
     g_is_paused = false;
