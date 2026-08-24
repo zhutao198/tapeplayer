@@ -27,10 +27,11 @@ set(IDF_SAFE_DELETE_BULK_CONFIRM ON)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(audiobook_player)
 
-# R076-CODEC-7: libesp_processing.a (PV-MP3) 与 libesp_audio_codec.a (开源 MP3) 都内嵌了
-# minimp3 的 mp3dec_init/mp3dec_decode_frame，导致 multiple definition。
-# 已彻底改用 esp_mp3_dec_* (开源版)，PV-MP3 的 mp3_decoder_open 不再被调用，
-# 故允许链接器取首个定义 (开源版) 即可消除冲突。
+# R076-CODEC-7/8: libesp_processing.a (PV-MP3) 与 libesp_audio_codec.a (开源 MP3) 都内嵌了
+# minimp3 的 mp3dec_init/mp3dec_decode_frame，产生 multiple definition。
+# main/CMakeLists.txt 已用 --start-group 让开源 esp_audio_codec 排在 PV-MP3 之前（日志确认
+# "libesp_audio_codec.a(esp_mp3_dec.c.obj): first defined here"），此处 --allow-multiple-definition
+# 仅作为全局链接器的"允许重复定义"开关（必须作用于最终 elf 链接命令，故放这里而非 main 组件）。
 idf_build_get_property(project_elf EXECUTABLE)
 if(TARGET ${project_elf})
     target_link_options(${project_elf} PRIVATE "-Wl,--allow-multiple-definition")

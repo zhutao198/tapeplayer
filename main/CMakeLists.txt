@@ -82,20 +82,26 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra)
 # R076-CODEC-7: 手动链接 esp_audio_codec 的预编译库 (含开源 esp_mp3_dec_* 符号)
 # esp-adf-libs 把各子组件编成独立 .a，但只有 esp_codec (PV-MP3) 被自动链接；
 # esp_audio_codec 的 libesp_audio_codec.a 需显式链接才能让 main 用到 esp_mp3_dec_*。
+#
+# 关键链接顺序问题：libesp_processing.a (PV-MP3) 与 libesp_audio_codec.a (开源 MP3)
+# 都内嵌了 minimp3 的 mp3dec_init/mp3dec_decode_frame，产生 multiple definition。
+# 我们用 --allow-multiple-definition 让链接器取「首个定义」，并用 --start-group/--end-group
+# 把开源库排在闭源库之前，确保 esp_mp3_dec_* 内部调用的 minimp3 解析到【开源版】，
+# 彻底避开 PV-MP3 闭源 minimp3 的崩溃点。
 set(ESP_ACODEC_LIB_BASE "D:/esp/esp-adf/components/esp-adf-libs/esp_audio_codec")
 set(ESP_ACODEC_LIB "${ESP_ACODEC_LIB_BASE}/lib/${CONFIG_IDF_TARGET}/libesp_audio_codec.a")
 if(EXISTS "${ESP_ACODEC_LIB}")
-    target_link_libraries(${COMPONENT_LIB} PRIVATE "${ESP_ACODEC_LIB}")
-    message(STATUS "R076-CODEC-7: linked ${ESP_ACODEC_LIB}")
+    # --start-group 保证组内循环解析；开源库在前 => minimp3 用开源版 (先定义赢)
+    target_link_libraries(${COMPONENT_LIB} PRIVATE
+        "-Wl,--start-group"
+        "${ESP_ACODEC_LIB}"
+        "-Wl,--end-group")
+    # 允许重复定义 (组内的 mp3dec_* 由开源库优先)
+    target_link_options(${COMPONENT_LIB} PRIVATE "-Wl,--allow-multiple-definition")
+    message(STATUS "R076-CODEC-7: linked ${ESP_ACODEC_LIB} (open-source minimp3 first)")
 else()
     message(WARNING "R076-CODEC-7: libesp_audio_codec.a NOT FOUND at ${ESP_ACODEC_LIB}")
 endif()
-
-# R076-CODEC-7: libesp_processing.a (PV-MP3) 与 libesp_audio_codec.a (开源 MP3)
-# 都内嵌了 minimp3 的 mp3dec_init/mp3dec_decode_frame，导致 multiple definition。
-# 我们已彻底改用 esp_mp3_dec_* (开源版)，PV-MP3 的 mp3_decoder_open 不再被调用，
-# 故允许链接器取首个定义 (开源版) 即可消除冲突。
-target_link_options(${COMPONENT_LIB} PRIVATE "-Wl,--allow-multiple-definition")
 
 # R076-CODEC-7: 让 main 能直接 include esp_audio_codec 的 MP3 解码器头文件
 # (esp_mp3_dec.h 位于 esp-adf-libs/esp_audio_codec/include/decoder/impl/，

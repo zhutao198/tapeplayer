@@ -97,42 +97,52 @@ static audio_element_err_t _mp3_esp_codec_process(audio_element_handle_t self,
         frame.decoded_size = 0;
         frame.needed_size  = 0;
         esp_audio_err_t ret = esp_mp3_dec_decode(dec->dec_handle, &raw, &frame, &info);
-        if (ret == ESP_AUDIO_ERR_OK) {
-            if (frame.decoded_size > 0) {
-                int wlen = audio_element_output(self, (char *)frame.buffer, (int)frame.decoded_size);
-                if (wlen <= 0) {
-                    return (audio_element_err_t)wlen;
-                }
-                /* 首帧成功：上报采样率/声道/位深给下游 i2s */
-                if (!dec->info_reported && info.sample_rate > 0) {
-                    audio_element_info_t music_info = {0};
-                    music_info.sample_rates = info.sample_rate;
-                    music_info.channels     = info.channel;
-                    music_info.bits         = info.bits_per_sample;
-                    music_info.codec_fmt    = ESP_CODEC_TYPE_MP3;
-                    audio_element_setinfo(self, &music_info);
-                    audio_element_report_info(self);
-                    dec->info_reported = true;
-                    ESP_LOGI(TAG, "MP3 info: %d Hz, %d ch, %d bit",
-                             info.sample_rate, info.channel, info.bits_per_sample);
-                }
-            }
-            /* raw.consumed 由 decode 更新, 推进 */
-            if (raw.consumed == 0) {
-                /* 防御: 防止死循环 */
-                break;
-            }
-            raw.buffer += raw.consumed;
-            raw.len    -= raw.consumed;
-        } else if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
-            /* 输出 buffer 不足, 理论上我们给了足够大的 buffer, 不该发生 */
+        if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
+            /* 输出 buffer 不足：按解码器报告的 needed_size 扩容后重试 */
             ESP_LOGW(TAG, "decode buff not enough, needed %u", frame.needed_size);
+            if (frame.needed_size > MP3_OUT_FRAME_SIZE) {
+                uint8_t *nb = (uint8_t *)realloc(dec->out_buf, frame.needed_size);
+                if (nb) {
+                    dec->out_buf = nb;
+                    frame.buffer = nb;
+                    frame.len    = frame.needed_size;
+                    continue;
+                }
+            }
             break;
-        } else {
-            /* 解码错误 (坏帧等): 跳过本块剩余, 继续后续 */
+        }
+        if (ret != ESP_AUDIO_ERR_OK) {
+            /* 解码错误 (坏帧等)：跳过本块剩余，继续后续块 */
             ESP_LOGW(TAG, "esp_mp3_dec_decode err %d, skip %u bytes", ret, raw.len);
             break;
         }
+        /* ret == OK：无论本帧是否攒够 PCM，均按 raw.consumed 推进输入 */
+        if (frame.decoded_size > 0) {
+            int wlen = audio_element_output(self, (char *)frame.buffer, (int)frame.decoded_size);
+            if (wlen <= 0) {
+                return (audio_element_err_t)wlen;
+            }
+            /* 首帧成功：上报采样率/声道/位深给下游 i2s */
+            if (!dec->info_reported && info.sample_rate > 0) {
+                audio_element_info_t music_info = {0};
+                music_info.sample_rates = info.sample_rate;
+                music_info.channels     = info.channel;
+                music_info.bits         = info.bits_per_sample;
+                music_info.codec_fmt    = ESP_CODEC_TYPE_MP3;
+                audio_element_setinfo(self, &music_info);
+                audio_element_report_info(self);
+                dec->info_reported = true;
+                ESP_LOGI(TAG, "MP3 info: %d Hz, %d ch, %d bit",
+                         info.sample_rate, info.channel, info.bits_per_sample);
+            }
+        }
+        /* OK 但 consumed==0 才是真正的死循环风险，需跳出 */
+        if (raw.consumed == 0) {
+            ESP_LOGW(TAG, "esp_mp3_dec_decode consumed 0, break to avoid loop");
+            break;
+        }
+        raw.buffer += raw.consumed;
+        raw.len    -= raw.consumed;
     }
 
     return AEL_IO_OK;
