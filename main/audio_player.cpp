@@ -139,13 +139,17 @@ static audio_element_handle_t create_decoder(const char *path)
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
 
     if (strcasecmp(ext, ".mp3") == 0) {
-        // R076-CODEC: 严格按 ADF release/v2.x examples/player/pipeline_sdcard_mp3_control
-        // 重构：MP3 decoder 用完全默认配置。
-        // 之前 R076-FIX (task_stack=8K, stack_in_ext=false) 部分生效但仍崩，
-        // 证明 PSRAM 栈不是唯一根因。官方推荐：rsp_filter 重采样到 48kHz + 默认 MP3 配置
-        // （让 ADF 自己处理 ID3v2，避开 PV-MP3 对带 ID3v2 的 MP3 流的内部 assert 路径）。
-        ESP_LOGI(TAG, "Using MP3 decoder (DEFAULT_MP3_DECODER_CONFIG per ADF v2.x official)");
-        // R076-DBG：保留调试日志级别（修复稳定后可降到 INFO）
+        // R076-CODEC-6: 合并 R076-FIX 栈/out_rb_size 修复 + r076-48000-only 48000Hz + 默认 MP3 配置。
+        // 实测：
+        //   - r076-48000-only (48000Hz + DEFAULT) 部分修复必崩歌、碎心石回归、卡卡卡噪音回归
+        //   - R076-FIX-RESULT (48000Hz + task_stack=8K + out_rb=16K + stack_in_ext=false) 全不崩+无噪音
+        //   - 但 R076-FIX-RESULT 必崩 3 首全崩
+        // 综合：保留 R076-FIX 的栈/out_rb_size 修复（避免栈溢出+噪音）+ 48000Hz（部分崩点修复）
+        mp3_cfg.task_stack   = 8 * 1024;     // R076-FIX: 避免栈溢出
+        mp3_cfg.out_rb_size  = 16 * 1024;    // R076-FIX: 消除卡卡卡噪音
+        mp3_cfg.stack_in_ext = false;        // R076-FIX: 避开 Harvard PSRAM+Flash 冲突
+        ESP_LOGI(TAG, "Using MP3 decoder (48000Hz + R076-FIX stack=8K/out_rb=16K/internal)");
+        // R076-DBG：保留调试日志级别
         esp_log_level_set("MP3_DECODER", ESP_LOG_DEBUG);
         esp_log_level_set("AUDIO_ELEMENT", ESP_LOG_DEBUG);
         esp_log_level_set("AUDIO_CODEC", ESP_LOG_DEBUG);
