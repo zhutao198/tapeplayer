@@ -2,13 +2,21 @@
 ##
 ## 2026-07-03 R002: 用 idf component 替换 components/u8g2 手动源码。
 ##   之前 components/u8g2/ 是手 clone 的 334M 第三方源码。
-## 2026-07-03 R003: 暂禁用 u8g2 依赖（README 写的 lfengineering/u8g2_esp32 在 registry 不存在）。
+## 2026-07-03 R003: 暂禁用 u8g2 依赖（README 写的 lf_engineering/u8g2_esp32 在 registry 不存在）。
 ##   等用户提供正确 component 名后用 R004 启用真实 u8g2。
 ## 2026-07-29：u8g2 由 components/u8g2 手动源码提供；u8g2_esp32_hal 组件已移除（display.cpp 使用自写 SPI 驱动，不依赖该 HAL）。
 ##   本 yml 作占位；若未来启用 idf component 版 u8g2，需先评估版本与手动源码的兼容性。
 ##
 ## 2026-07-29：WS2812 状态指示灯改用 ESP-IDF Component Manager 的 led_strip 组件
 ##   （ESP-IDF v5.5 起 led_strip 已移出内置组件，需经 idf component manager 拉取）。
+##
+## 2026-08-24 R076-CODEC: 验证官方推荐方案
+##   - 按 D:\esp-adf-release-v2.x\examples\player\pipeline_sdcard_mp3_control 模板重构 audio_player.cpp
+##   - 新增 rsp_filter 重采样元素（decoder->filter->i2s）
+##   - i2s 时钟统一 48000Hz（MAX98357A 支持 8k-96kHz）
+##   - 切歌流程改用 reset_ringbuffer 模式（避免 terminate+重建 task 重复触发 mp3_decoder_open）
+##   - MP3 decoder 恢复默认配置（不加 task_stack=8K / stack_in_ext=false 自定义参数）
+##   - 本 yml 不变（不需要额外依赖：rsp_filter / filter_resample.h 来自 ADF 自带 esp_codec）
 
 version: 1.0.0
 description: audiobook_player main firmware component

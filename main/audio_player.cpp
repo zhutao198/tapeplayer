@@ -73,7 +73,7 @@ static uint32_t     g_total_file_bytes = 0;
 // seek byte_pos = id3_skip + (ms * audio_bytes / duration_ms)，
 // audio_bytes = total_file_bytes - id3_skip_bytes。
 static int          g_id3_skip_bytes = 0;
-static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // I2S 当前采样率缓存
+static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // R076-CODEC: I2S 当前采样率缓存 (48kHz via AUDIO_SAMPLE_RATE 定义)
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
 static int64_t      g_play_offset_us = 0;              // pause 时锁存的已播放时长，resume 时叠加
 static uint64_t     g_last_scrub_us = 0;               // M1: 上次跳帧时间戳（模块级全局）
@@ -139,17 +139,13 @@ static audio_element_handle_t create_decoder(const char *path)
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
 
     if (strcasecmp(ext, ".mp3") == 0) {
-        // R076-FIX: ESP32/ESP32-S3 哈佛架构限制：任务栈位于 PSRAM 时 CPU 处于
-        // "外部执行"模式，期间访问 Flash 会被硬件挂起；mp3_decoder_open 内部
-        // 调 fread() 读 MP3 数据，触发 Flash-PSRAM 访问冲突 → DoubleException。
-        // 证据：coredump 反解 mp3_decoder_open +636 → 0x40000001 (_DoubleExceptionVector)
-        //  → 第一现场是 ROM 异常处理代码（栈帧 #1），函数体内无 BREAK 指令。
-        // Fix: task_stack 强制放片内 RAM (stack_in_ext=false)。PSRAM 留做 out_rb（数据）。
-        mp3_cfg.task_stack   = 8 * 1024;    // 16K→8K（放片内 RAM 节省空间）
-        mp3_cfg.out_rb_size  = 16 * 1024;   // out_rb 是数据缓冲，放 PSRAM 无冲突
-        mp3_cfg.stack_in_ext = false;       // ★ 关键：栈强制放片内 RAM，避开 Flash 访问冲突
-        ESP_LOGI(TAG, "Using MP3 decoder (task_stack=8K internal, out_rb=16K PSRAM)");
-        // R076-DBG：保留调试日志级别（如果新固件不再崩，可逐步降到 INFO）
+        // R076-CODEC: 严格按 ADF release/v2.x examples/player/pipeline_sdcard_mp3_control
+        // 重构：MP3 decoder 用完全默认配置。
+        // 之前 R076-FIX (task_stack=8K, stack_in_ext=false) 部分生效但仍崩，
+        // 证明 PSRAM 栈不是唯一根因。官方推荐：rsp_filter 重采样到 48kHz + 默认 MP3 配置
+        // （让 ADF 自己处理 ID3v2，避开 PV-MP3 对带 ID3v2 的 MP3 流的内部 assert 路径）。
+        ESP_LOGI(TAG, "Using MP3 decoder (DEFAULT_MP3_DECODER_CONFIG per ADF v2.x official)");
+        // R076-DBG：保留调试日志级别（修复稳定后可降到 INFO）
         esp_log_level_set("MP3_DECODER", ESP_LOG_DEBUG);
         esp_log_level_set("AUDIO_ELEMENT", ESP_LOG_DEBUG);
         esp_log_level_set("AUDIO_CODEC", ESP_LOG_DEBUG);
@@ -348,31 +344,23 @@ bool audio_player_play(const char *filepath)
     // 6. 设置文件 URI
     audio_element_set_uri(g_fatfs_reader, filepath);
 
-    // R067-fix：跳过 ID3v2 标签（避免 heldec 在 ID3v2 + MP3 frame 混合流上崩）
-    // 仅 mp3；其他格式不受此崩影响。
-    // 把 ID3 长度记到 g_id3_skip_bytes，seek/resume 用此 offset 修正 byte_pos。
-    g_id3_skip_bytes = 0;
+    // R076-CODEC: 严格按 ADF release/v2.x examples/player/pipeline_sdcard_mp3_control 重构
+    // - 去掉手动 ID3v2 字节跳过 (R067/R076-EXP)，让 DEFAULT_MP3_DECODER_CONFIG 自己处理
+    // - i2s 时钟改为 48000Hz（MAX98357A 支持 8k-96kHz；PV-MP3 在 44.1kHz 路径可能有 bug 触发 BREAK）
+    g_id3_skip_bytes = 0;  // R076-CODEC: 保留用于 seek 修正，但不再手动跳过
     if (strcasecmp(get_file_ext(filepath), ".mp3") == 0) {
         const char *mp3_path = strstr(filepath, "://");
         const char *real_path = mp3_path ? mp3_path + 3 : filepath;
-        // 跳过前导 '/'（'///sdcard/...' → '/sdcard/...'）
         if (real_path[0] == '/' && real_path[1] == '/') real_path++;
         int id3_sz = id3v2_total_size(real_path);
         if (id3_sz > 0) {
             g_id3_skip_bytes = id3_sz;
-            // R076-EXP：临时验证开关。注释掉手动 set_byte_pos，让 minimp3 自己从
-            // 文件头 0 解析并跳过 ID3v2，验证“R067 跳过字节数错误导致崩溃”的假设。
-            // 验证结束后恢复下面这行（取消注释）即可。
-#if 0
-            audio_element_set_byte_pos(g_fatfs_reader, id3_sz);
-            ESP_LOGI(TAG, "R067-fix: skip ID3v2 (%d bytes) before MP3 frame", id3_sz);
-#else
-            ESP_LOGI(TAG, "R076-EXP: ID3v2 skip DISABLED (%d bytes would be skipped)", id3_sz);
-#endif
+            // R076-CODEC: 不再调 audio_element_set_byte_pos 手动跳
+            ESP_LOGI(TAG, "R076-CODEC: ID3v2 detected (%d bytes), skipping manual override", id3_sz);
         }
     }
 
-    // 7. 设置 I2S 时钟（MAX98357A 无编解码器，仅需 BCLK/LRCLK 匹配）
+    // 7. 设置 I2S 时钟 — 改用 48000Hz 替代 44100Hz (R076-CODEC: AUDIO_SAMPLE_RATE 现已为 48000)
     g_current_sample_rate = AUDIO_SAMPLE_RATE;
     i2s_stream_set_clk(g_i2s_writer, AUDIO_SAMPLE_RATE, 16, 2);
 

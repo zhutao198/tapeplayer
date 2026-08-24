@@ -189,7 +189,11 @@
 /* ============================================================
  * 音频配置
  * ============================================================ */
-#define AUDIO_SAMPLE_RATE   44100
+// R076-CODEC: 按 ADF release/v2.x examples/player/pipeline_sdcard_mp3_control 推荐，
+// I2S 时钟统一 48000Hz (MAX98357A 支持 8k-96kHz；PV-MP3 在 44.1kHz 路径可能有 bug 触发 BREAK)。
+// AUDIO_SAMPLE_RATE 仍保留以兼容其他代码路径（如变速播放 sample_rate 边界计算）。
+#define AUDIO_SAMPLE_RATE       48000  // R076-CODEC: 从 44100 改为 48000 (PV-MP3 44.1kHz 路径可能触发 BREAK)
+#define AUDIO_SAMPLE_RATE_48K   48000
 
 /* 逻辑音量档位 (V1.2): 15 档 (level 0..VOLUME_LEVEL_MAX), 线性 dB 映射 -96..+12 */
 #define VOLUME_LEVELS       15            // 逻辑音量档位数
