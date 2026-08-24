@@ -145,9 +145,9 @@ static audio_element_handle_t create_decoder(const char *path)
         // 特定 MP3 时崩溃 (BREAK/DoubleException)，且闭源无法 patch。
         // 新 wrapper 完全绕开 PV-MP3，使用已编入固件的 esp_mp3_dec_*。
         mp3_decoder_esp_codec_cfg_t cfg = DEFAULT_MP3_DECODER_ESP_CODEC_CONFIG();
-        cfg.task_stack   = 8 * 1024;     // 避免栈溢出
+        cfg.task_stack   = 32 * 1024;    // R076-CODEC-12: 8K -> 32K 防栈溢出（v2.6.2 simple_dec 递归深）
         cfg.out_rb_size  = 16 * 1024;    // 消除卡卡卡噪音
-        cfg.stack_in_ext = false;        // 避开 Harvard PSRAM+Flash 冲突
+        cfg.stack_in_ext = false;        // 内部 RAM 栈更可靠
         ESP_LOGI(TAG, "Using ESP-CODEC MP3 decoder (open-source, replaces PV-MP3)");
         esp_log_level_set("MP3_ESP_CODEC", ESP_LOG_DEBUG);
         return mp3_decoder_esp_codec_init(&cfg);

@@ -42,6 +42,10 @@ static const char *TAG = "MP3_ESP_CODEC";
  * 8192 留 2x 余量)。 */
 #define MP3_OUT_FRAME_SIZE  (8192)
 
+/* R076-CODEC-12: 临时调试计数器（排查"上报了 info 但无 PCM 输出"问题） */
+static uint32_t s_process_call_count   = 0;  /* _process 被调用次数 */
+static uint32_t s_process_decoded_total = 0; /* 累计 decoded_size > 0 次数 */
+
 typedef struct {
     esp_audio_simple_dec_handle_t dec_handle;  /*!< esp_audio_simple_dec_* 解码器句柄
                                                  *   内部包含 mpeg_parser + esp_mp3_dec */
@@ -149,6 +153,12 @@ static audio_element_err_t _mp3_esp_codec_process(audio_element_handle_t self,
         .len    = MP3_OUT_FRAME_SIZE,
     };
 
+    /* R076-CODEC-12: 临时调试探针 — 确认 _process 真被调用、有无 PCM 输出 */
+    s_process_call_count++;
+    if (s_process_call_count <= 5 || (s_process_call_count % 50) == 0) {
+        ESP_LOGI(TAG, "R076-DBG: process call #%u (rlen=%d)", s_process_call_count, rlen);
+    }
+
     /* loop 退出条件：parser/consume 推进到 raw.len==0（即本块全被消费）
      * 或返回非 OK 但 DATA_LACK 视为合法（继续喂新块）
      * 或 BUFF_NOT_ENOUGH 扩容后重试 */
@@ -190,6 +200,13 @@ static audio_element_err_t _mp3_esp_codec_process(audio_element_handle_t self,
 
         /* ret == OK：处理解码输出 */
         if (frame.decoded_size > 0) {
+            s_process_decoded_total++;
+            /* R076-CODEC-12: 调试 — 确认 PCM 实际写到下游 */
+            if (s_process_decoded_total <= 5 || (s_process_decoded_total % 50) == 0) {
+                ESP_LOGI(TAG, "R076-DBG: decoded frame #%u size=%u (sample=%u Hz ch=%u)",
+                         s_process_decoded_total, (unsigned)frame.decoded_size,
+                         dec->info_reported ? 0 : 0, dec->info_reported ? 0 : 0);
+            }
             int wlen = audio_element_output(self, (char *)frame.buffer, (int)frame.decoded_size);
             if (wlen <= 0) {
                 return (audio_element_err_t)wlen;
