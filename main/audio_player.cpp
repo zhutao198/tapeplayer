@@ -496,6 +496,15 @@ void audio_player_stop(void)
         // 修复：只调一次 audio_pipeline_deinit()，它内部已统一 terminate + deinit
         // el_list 中所有 element（含 i2s_writer 的 destroy→i2s_driver_uninstall），
         // 完全满足 R068 "i2s_writer 每次重建" 的意图，且杜绝 double-free。
+        //
+        // R076-CODEC-9：先 audio_pipeline_stop() 让各 element 任务走完输入循环
+        // 并【自然关闭 fatfs 文件描述符】再 terminate/deinit。否则直接 terminate
+        // 会等 2s 超时强制删 file 任务 → fd 泄漏累积 → 连播数首后
+        // "Too many open files" 无法再开文件（实测第 5 首起 vfs_fat 报错）。
+        ESP_LOGI(TAG, "R068: stop pipeline (let elements close fds gracefully)");
+        audio_pipeline_stop(g_pipeline);
+        // 短暂等待 element 任务退出（file 任务关闭 fd），避免 terminate 超时强删
+        vTaskDelay(pdMS_TO_TICKS(100));
         ESP_LOGI(TAG, "R068: terminate pipeline (force-stop all elements, 2s timeout)");
         audio_pipeline_terminate_with_ticks(g_pipeline, pdMS_TO_TICKS(2000));
 

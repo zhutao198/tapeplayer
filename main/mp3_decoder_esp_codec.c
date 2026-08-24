@@ -111,8 +111,14 @@ static audio_element_err_t _mp3_esp_codec_process(audio_element_handle_t self,
             }
             break;
         }
+        if (ret == ESP_AUDIO_ERR_DATA_LACK) {
+            /* -3: 当前输入块不足以解出一帧 PCM (流式场景常见)。
+             * esp_mp3_dec 内部已缓存已收字节，直接返回让框架下次 process
+             * 再读新块喂入即可，不要丢弃本块 (consumed 为 0 不推进)。 */
+            return AEL_IO_OK;
+        }
         if (ret != ESP_AUDIO_ERR_OK) {
-            /* 解码错误 (坏帧等)：跳过本块剩余，继续后续块 */
+            /* 其它错误 (ESP_AUDIO_ERR_FAIL=-1 等)：坏帧，跳过本块剩余 */
             ESP_LOGW(TAG, "esp_mp3_dec_decode err %d, skip %u bytes", ret, raw.len);
             break;
         }
