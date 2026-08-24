@@ -28,6 +28,8 @@
 #include "audio_element.h"
 #include "esp_audio_simple_dec.h"   // R076-CODEC-10: 新 API 入口
 // 注：CMakeLists 已把 esp_audio_codec/include/simple_dec/ 加到 INCLUDE_DIRS
+#include "esp_audio_dec_default.h"   // R076-CODEC-11: esp_audio_dec_register_default
+#include "esp_audio_simple_dec_default.h"  // R076-CODEC-11: esp_audio_simple_dec_register_default
 #include "audio_type_def.h"          // ESP_AUDIO_SIMPLE_DEC_TYPE_MP3 枚举
 #include "mp3_decoder_esp_codec.h"   // 本组件头文件 (配置结构体定义)
 
@@ -52,6 +54,32 @@ static esp_err_t _mp3_esp_codec_open(audio_element_handle_t self)
 {
     mp3_esp_codec_t *dec = (mp3_esp_codec_t *)audio_element_getdata(self);
     if (!dec) return ESP_FAIL;
+
+    /* R076-CODEC-11: 关键修复 - 必须先注册全局 decoder 表，否则 simple_dec 内部
+     * esp_audio_dec_open 会查不到 MP3 类型 → 返回 ESP_AUDIO_ERR_NOT_SUPPORT (-7)
+     *
+     * 参考 ESP-ADF audio_decoder_test.c:359-362 / simple_decoder_test.c:359-362：
+     *   esp_audio_dec_register_default();         // 注册所有 decoder (含 esp_mp3_dec)
+     *   esp_audio_simple_dec_register_default();  // 注册所有 simple_dec parser
+     *   esp_audio_simple_dec_open(...);
+     *
+     * 两个 register API 内部用标志位保证幂等，可以每首播放都安全调用。
+     * 但为了减少冗余开销，用静态标志只在首次 open 时调一次。 */
+    static bool s_decoders_registered = false;
+    if (!s_decoders_registered) {
+        esp_audio_err_t reg_ret = esp_audio_dec_register_default();
+        if (reg_ret != ESP_AUDIO_ERR_OK) {
+            ESP_LOGE(TAG, "esp_audio_dec_register_default failed: %d", reg_ret);
+            return ESP_FAIL;
+        }
+        reg_ret = esp_audio_simple_dec_register_default();
+        if (reg_ret != ESP_AUDIO_ERR_OK) {
+            ESP_LOGE(TAG, "esp_audio_simple_dec_register_default failed: %d", reg_ret);
+            return ESP_FAIL;
+        }
+        s_decoders_registered = true;
+        ESP_LOGI(TAG, "registered esp_audio_dec + esp_audio_simple_dec defaults (once)");
+    }
 
     /* R076-CODEC-10: 走 esp_audio_simple_dec_* 路径
      *   - dec_type: MP3

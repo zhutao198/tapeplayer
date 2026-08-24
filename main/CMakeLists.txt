@@ -8,6 +8,7 @@ set(COMPONENT_REQUIRES
     audio_pipeline
     audio_stream
     esp-adf-libs
+    esp_audio_codec       # R076-CODEC-11: 注册函数 simple_decoder_reg.c 在该组件里编译
     lvgl
     esp_lcd
     freetype
@@ -96,20 +97,22 @@ if(EXISTS "${ESP_ACODEC_LIB}")
     # libesp_audio_simple_dec.a 内部依赖 libesp_audio_codec.a (esp_audio_dec_* vtable)
     # 因此两组都要把 acodec 放进 start-group，让 sdec 链接时也能找到 acodec 符号
     target_link_libraries(${COMPONENT_LIB} PRIVATE
-        # 组 1: main 自身引用的 acodec 符号 (esp_mp3_dec_*)
+        # 组 1: main 直接调用的 acodec (esp_mp3_dec_*) + sdec (esp_audio_simple_dec_register_default)
+        # sdec 也在组 1 是因为 CODEC-11 在 main 直接调 esp_audio_simple_dec_register_default
         "-Wl,--start-group"
         "${ESP_ACODEC_LIB}"
+        "${ESP_SDEC_LIB}"
         "-Wl,--end-group"
-        # 组 2: sdec 引用的 acodec 符号 (esp_audio_dec_*)
+        # 组 2: sdec 内部引用 acodec 符号 (esp_audio_dec_* vtable dispatch)
         "-Wl,--start-group"
         "${ESP_SDEC_LIB}"
         "${ESP_ACODEC_LIB}"
         "-Wl,--end-group")
     # 允许重复定义 (组内的 mp3dec_* 由开源库优先)
     target_link_options(${COMPONENT_LIB} PRIVATE "-Wl,--allow-multiple-definition")
-    message(STATUS "R076-CODEC-10: linked ${ESP_ACODEC_LIB} + ${ESP_SDEC_LIB} (open-source minimp3 first)")
+    message(STATUS "R076-CODEC-11: linked ${ESP_ACODEC_LIB} + ${ESP_SDEC_LIB} (open-source minimp3 first, simple_dec reg default)")
 else()
-    message(WARNING "R076-CODEC-10: libesp_audio_codec.a NOT FOUND at ${ESP_ACODEC_LIB}")
+    message(WARNING "R076-CODEC-11: libesp_audio_codec.a NOT FOUND at ${ESP_ACODEC_LIB}")
 endif()
 
 # R076-CODEC-7/10: 让 main 能直接 include esp_audio_codec 的 MP3 解码器头文件

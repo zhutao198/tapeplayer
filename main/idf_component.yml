@@ -17,6 +17,14 @@
 ##   - 切歌流程改用 reset_ringbuffer 模式（避免 terminate+重建 task 重复触发 mp3_decoder_open）
 ##   - MP3 decoder 恢复默认配置（不加 task_stack=8K / stack_in_ext=false 自定义参数）
 ##   - 本 yml 不变（不需要额外依赖：rsp_filter / filter_resample.h 来自 ADF 自带 esp_codec）
+##
+## 2026-08-24 R076-CODEC-11: 添加 esp_audio_codec 依赖（idf component manager 形式）
+##   - esp_audio_codec 是 ADF 的子组件，提供 esp_mp3_dec_* / esp_audio_simple_dec_* API
+##   - 其 .c 源（含 simple_decoder_reg.c 编译 esp_audio_simple_dec_register_default 实现）
+##     会通过 component manager 自动编入固件并链接进 main
+##   - 之前手工 link libesp_audio_codec.a + libesp_audio_simple_dec.a 是 prebuilt 库，
+##     但注册函数实现不在 prebuilt 里而是在 esp_audio_codec 组件源码里，所以需显式
+##     通过 idf component manager 拉该组件
 
 version: 1.0.0
 description: audiobook_player main firmware component
@@ -27,3 +35,5 @@ dependencies:
   lvgl/lvgl:
     version: '>=9.0.0'
   espressif/freetype: '*'
+  espressif/esp_audio_codec:
+    version: '*'
