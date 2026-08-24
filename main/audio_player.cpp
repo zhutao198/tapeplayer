@@ -33,6 +33,7 @@
 #include "i2s_stream.h"
 #include "raw_stream.h"
 #include "mp3_decoder.h"
+#include "mp3_decoder_esp_codec.h"   // R076-CODEC-7: 开源 MP3 解码器替代闭源 PV-MP3
 #include "aac_decoder.h"
 #include "flac_decoder.h"
 #include "ogg_decoder.h"
@@ -139,21 +140,17 @@ static audio_element_handle_t create_decoder(const char *path)
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
 
     if (strcasecmp(ext, ".mp3") == 0) {
-        // R076-CODEC-6: 合并 R076-FIX 栈/out_rb_size 修复 + r076-48000-only 48000Hz + 默认 MP3 配置。
-        // 实测：
-        //   - r076-48000-only (48000Hz + DEFAULT) 部分修复必崩歌、碎心石回归、卡卡卡噪音回归
-        //   - R076-FIX-RESULT (48000Hz + task_stack=8K + out_rb=16K + stack_in_ext=false) 全不崩+无噪音
-        //   - 但 R076-FIX-RESULT 必崩 3 首全崩
-        // 综合：保留 R076-FIX 的栈/out_rb_size 修复（避免栈溢出+噪音）+ 48000Hz（部分崩点修复）
-        mp3_cfg.task_stack   = 8 * 1024;     // R076-FIX: 避免栈溢出
-        mp3_cfg.out_rb_size  = 16 * 1024;    // R076-FIX: 消除卡卡卡噪音
-        mp3_cfg.stack_in_ext = false;        // R076-FIX: 避开 Harvard PSRAM+Flash 冲突
-        ESP_LOGI(TAG, "Using MP3 decoder (48000Hz + R076-FIX stack=8K/out_rb=16K/internal)");
-        // R076-DBG：保留调试日志级别
-        esp_log_level_set("MP3_DECODER", ESP_LOG_DEBUG);
-        esp_log_level_set("AUDIO_ELEMENT", ESP_LOG_DEBUG);
-        esp_log_level_set("AUDIO_CODEC", ESP_LOG_DEBUG);
-        return mp3_decoder_init(&mp3_cfg);
+        // R076-CODEC-7: 用 esp_audio_codec 开源 MP3 解码器 (esp_mp3_dec_*) 替代
+        // ADF 闭源 PV-MP3。coredump 反解确认 PV-MP3 的 mp3_decoder_open 在解码
+        // 特定 MP3 时崩溃 (BREAK/DoubleException)，且闭源无法 patch。
+        // 新 wrapper 完全绕开 PV-MP3，使用已编入固件的 esp_mp3_dec_*。
+        mp3_decoder_esp_codec_cfg_t cfg = DEFAULT_MP3_DECODER_ESP_CODEC_CONFIG();
+        cfg.task_stack   = 8 * 1024;     // 避免栈溢出
+        cfg.out_rb_size  = 16 * 1024;    // 消除卡卡卡噪音
+        cfg.stack_in_ext = false;        // 避开 Harvard PSRAM+Flash 冲突
+        ESP_LOGI(TAG, "Using ESP-CODEC MP3 decoder (open-source, replaces PV-MP3)");
+        esp_log_level_set("MP3_ESP_CODEC", ESP_LOG_DEBUG);
+        return mp3_decoder_esp_codec_init(&cfg);
     } else if (strcasecmp(ext, ".aac") == 0 || strcasecmp(ext, ".m4a") == 0) {
         ESP_LOGI(TAG, "Using AAC decoder");
         return aac_decoder_init(&aac_cfg);

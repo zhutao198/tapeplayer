@@ -29,6 +29,7 @@ idf_component_register(
         "display.cpp"
         "font_partition.cpp"
         "audio_player.cpp"
+        "mp3_decoder_esp_codec.c"   # R076-CODEC-7: 开源 MP3 解码器 wrapper (替代闭源 PV-MP3)
         "settings.cpp"
         "bookmark.cpp"
         "power_mgmt.cpp"
@@ -77,3 +78,40 @@ endif()
 
 # 严格编译警告: 仅作用于本组件源码, 提前暴露潜在问题 (review #33)
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra)
+
+# R076-CODEC-7: 手动链接 esp_audio_codec 的预编译库 (含开源 esp_mp3_dec_* 符号)
+# esp-adf-libs 把各子组件编成独立 .a，但只有 esp_codec (PV-MP3) 被自动链接；
+# esp_audio_codec 的 libesp_audio_codec.a 需显式链接才能让 main 用到 esp_mp3_dec_*。
+set(ESP_ACODEC_LIB_BASE "D:/esp/esp-adf/components/esp-adf-libs/esp_audio_codec")
+set(ESP_ACODEC_LIB "${ESP_ACODEC_LIB_BASE}/lib/${CONFIG_IDF_TARGET}/libesp_audio_codec.a")
+if(EXISTS "${ESP_ACODEC_LIB}")
+    target_link_libraries(${COMPONENT_LIB} PRIVATE "${ESP_ACODEC_LIB}")
+    message(STATUS "R076-CODEC-7: linked ${ESP_ACODEC_LIB}")
+else()
+    message(WARNING "R076-CODEC-7: libesp_audio_codec.a NOT FOUND at ${ESP_ACODEC_LIB}")
+endif()
+
+# R076-CODEC-7: libesp_processing.a (PV-MP3) 与 libesp_audio_codec.a (开源 MP3)
+# 都内嵌了 minimp3 的 mp3dec_init/mp3dec_decode_frame，导致 multiple definition。
+# 我们已彻底改用 esp_mp3_dec_* (开源版)，PV-MP3 的 mp3_decoder_open 不再被调用，
+# 故允许链接器取首个定义 (开源版) 即可消除冲突。
+target_link_options(${COMPONENT_LIB} PRIVATE "-Wl,--allow-multiple-definition")
+
+# R076-CODEC-7: 让 main 能直接 include esp_audio_codec 的 MP3 解码器头文件
+# (esp_mp3_dec.h 位于 esp-adf-libs/esp_audio_codec/include/decoder/impl/，
+#  该目录是 esp_audio_codec 组件的内部 include，未对依赖者公开，需手动暴露)
+# 需同时暴露整条依赖链: impl -> decoder -> include
+set(ESP_ACODEC_BASE "${CMAKE_CURRENT_SOURCE_DIR}/../managed_components/espressif__esp_audio_codec")
+if(NOT EXISTS "${ESP_ACODEC_BASE}/include/decoder/impl/esp_mp3_dec.h")
+    # 回退到本地 ADF 路径
+    set(ESP_ACODEC_BASE "D:/esp/esp-adf/components/esp-adf-libs/esp_audio_codec")
+endif()
+if(EXISTS "${ESP_ACODEC_BASE}/include/decoder/impl/esp_mp3_dec.h")
+    target_include_directories(${COMPONENT_LIB} PRIVATE
+        "${ESP_ACODEC_BASE}/include"
+        "${ESP_ACODEC_BASE}/include/decoder"
+        "${ESP_ACODEC_BASE}/include/decoder/impl")
+    message(STATUS "R076-CODEC-7: esp_audio_codec include -> ${ESP_ACODEC_BASE}/include")
+else()
+    message(WARNING "R076-CODEC-7: esp_mp3_dec.h NOT FOUND in ${ESP_ACODEC_BASE}")
+endif()
