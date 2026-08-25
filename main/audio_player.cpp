@@ -62,35 +62,6 @@ static audio_element_handle_t   g_fatfs_reader = NULL;
 static audio_element_handle_t   g_decoder = NULL;
 static audio_element_handle_t   g_i2s_writer = NULL;   // R068：每次 play 重建（弃用 R036-001 跨曲目复用）
 
-// R076-CODEC-18: decoder element event callback 同步 i2s sample rate
-// 当 decoder 上报 AEL_MSG_CMD_REPORT_MUSIC_INFO 时调 i2s_stream_set_clk
-// (PV-MP3 mp3_decoder 元素内部自动同步; 我们的 esp_audio_simple_dec wrapper 不自动)
-//
-// R076-CODEC-18c: 不能在 RUNNING state 直接 set_clk (i2s channel reconfig 时崩),
-// 必须先 pause i2s, 再 set_clk, 再 resume. 否则崩在 i2s_driver 内部.
-static esp_err_t decoder_event_cb(audio_element_handle_t el, audio_event_iface_msg_t *event, void *ctx)
-{
-    if (event->cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO && ctx != NULL) {
-        audio_element_info_t music_info = {0};
-        audio_element_getinfo(el, &music_info);
-        if (music_info.sample_rates > 0) {
-            audio_element_handle_t i2s = (audio_element_handle_t)ctx;
-            ESP_LOGI(TAG, "R076-CODEC-18c: music info %d Hz, %d ch, %d bit -> pause+reconfig+resume i2s",
-                     music_info.sample_rates, music_info.channels, music_info.bits);
-            // 关键: i2s 必须在 PAUSED 状态才能 reconfig
-            audio_element_state_t st = audio_element_get_state(i2s);
-            if (st == AEL_STATE_RUNNING) {
-                audio_element_pause(i2s);  // 不需要 wait, callback 是同步调用
-            }
-            i2s_stream_set_clk(i2s, music_info.sample_rates, music_info.bits, music_info.channels);
-            if (st == AEL_STATE_RUNNING) {
-                audio_element_resume(i2s, 0, 0);
-            }
-        }
-    }
-    return ESP_OK;
-}
-
 static bool         g_is_playing = false;
 static bool         g_is_paused = false;
 static int          g_volume = AUDIO_OUTPUT_VOL;
@@ -106,41 +77,7 @@ static uint32_t     g_total_file_bytes = 0;
 static int          g_id3_skip_bytes = 0;
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // R076-CODEC: I2S 当前采样率缓存 (48kHz via AUDIO_SAMPLE_RATE 定义)
 
-// R076-CODEC-18: 监听 pipeline 事件, decoder 上报 MUSIC_INFO 时调 i2s_stream_set_clk 同步采样率
-// (PV-MP3 mp3_decoder 元素内部自动同步; 我们的 esp_audio_simple_dec wrapper 不自动)
-static audio_event_iface_handle_t g_evt      = NULL;
-static TaskHandle_t               g_evt_task = NULL;
 
-static void audio_event_task(void *arg)
-{
-    audio_event_iface_msg_t msg;
-    while (1) {
-        if (audio_event_iface_listen(g_evt, &msg, portMAX_DELAY) != ESP_OK) {
-            continue;
-        }
-        if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT
-            && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO
-            && msg.source != NULL) {
-            audio_element_info_t music_info = {0};
-            audio_element_getinfo((audio_element_handle_t)msg.source, &music_info);
-            if (g_i2s_writer && music_info.sample_rates > 0
-                && (music_info.sample_rates != g_current_sample_rate
-                    || music_info.bits != 16
-                    || music_info.channels != 2)) {
-                ESP_LOGI(TAG, "R076-CODEC-18: music info %d Hz, %d ch, %d bit -> reconfig i2s",
-                         music_info.sample_rates, music_info.channels, music_info.bits);
-                i2s_stream_set_clk(g_i2s_writer,
-                                    music_info.sample_rates,
-                                    music_info.bits,
-                                    music_info.channels);
-                g_current_sample_rate = music_info.sample_rates;
-            }
-        }
-        if (msg.need_free_data && msg.data) {
-            free(msg.data);
-        }
-    }
-}
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
 static int64_t      g_play_offset_us = 0;              // pause 时锁存的已播放时长，resume 时叠加
 static uint64_t     g_last_scrub_us = 0;               // M1: 上次跳帧时间戳（模块级全局）
@@ -265,20 +202,6 @@ void audio_player_init(void)
     ESP_LOGI(TAG, "Initializing audio subsystem...");
     vTaskDelay(pdMS_TO_TICKS(5));  /* 强制 flush 串口，避免阻塞前日志丢失 */
 
-    // R076-CODEC-18: init event_iface + 启动 event task
-    // 用于把 decoder REPORT_MUSIC_INFO 转成 i2s_stream_set_clk 调用
-    // (实际方案 B: 用 audio_element_set_event_callback 直接注册 callback, 不需要 event_iface)
-    if (!g_evt) {
-        audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
-        g_evt = audio_event_iface_init(&evt_cfg);
-        if (g_evt) {
-            ESP_LOGI(TAG, "R076-CODEC-18: event_iface init OK");
-        }
-    }
-    if (!g_evt_task && g_evt) {
-        xTaskCreate(audio_event_task, "audio_evt", 4096, NULL, 4, &g_evt_task);
-    }
-
     // R068-fix：i2s_writer 不再"跨曲目复用"——每次 play() 都重建。
     // 原因：R036-001 的复用策略在跨曲目时与旧 element task 状态耦合，
     // 导致 R066/R067 修复未根除 BREAK（0x403743bd）。代价：~100ms 重建开销。
@@ -363,6 +286,7 @@ bool audio_player_play(const char *filepath)
         g_pipeline = NULL;
         return false;
     }
+
     // R076-DBG：decoder 调试日志已在其创建分支拉满（esp_log_level_set DEBUG），
     // 让 minimp3 在主动 abort 前打印内部错误（帧头非法/采样率越界等）。
     // R068-fix：每首播放前重建 i2s_writer（放弃 R036-001 跨曲目复用）。
@@ -443,10 +367,6 @@ bool audio_player_play(const char *filepath)
     // 7. 设置 I2S 时钟 — 改用 48000Hz 替代 44100Hz (R076-CODEC: AUDIO_SAMPLE_RATE 现已为 48000)
     g_current_sample_rate = AUDIO_SAMPLE_RATE;
     i2s_stream_set_clk(g_i2s_writer, AUDIO_SAMPLE_RATE, 16, 2);
-
-    // R076-CODEC-18: 给 decoder 元素设 event callback, 同步 i2s sample rate
-    // (PV-MP3 mp3_decoder 元素内部自动同步; 我们的 simple_dec wrapper 不自动)
-    audio_element_set_event_callback(g_decoder, decoder_event_cb, g_i2s_writer);
 
     // 8. 启动管道（R032-209: 检查返回值，失败即终止，避免进入播放态却无声）
     if (audio_pipeline_run(g_pipeline) != ESP_OK) {

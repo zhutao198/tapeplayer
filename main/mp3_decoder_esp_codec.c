@@ -40,6 +40,7 @@ typedef struct {
     uint8_t *in_buf;
     uint8_t *out_buf;
     bool info_reported;
+    int  err_count;   // R078: 连续解码错误计数, 超阈值放弃本曲
 } mp3_esp_codec_t;
 
 static esp_err_t _mp3_esp_codec_open(audio_element_handle_t self)
@@ -64,7 +65,7 @@ static esp_err_t _mp3_esp_codec_open(audio_element_handle_t self)
         .dec_type      = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3,
         .dec_cfg       = NULL,
         .cfg_size      = 0,
-        .use_frame_dec = false,  // 启用 mpeg_parser 自动切帧
+        .use_frame_dec = true,   // R078: 启用 frame decoder 逐帧切分, 增强损坏帧容错
     };
     esp_audio_err_t ret = esp_audio_simple_dec_open(&cfg, &dec->dec_handle);
     if (ret != ESP_AUDIO_ERR_OK || !dec->dec_handle) {
@@ -86,6 +87,7 @@ static esp_err_t _mp3_esp_codec_open(audio_element_handle_t self)
     }
 
     dec->info_reported = false;
+    dec->err_count = 0;
     ESP_LOGI(TAG, "esp_audio_simple_dec(MP3, parser=auto) opened (handle %p)", dec->dec_handle);
     return ESP_OK;
 }
@@ -141,9 +143,21 @@ static audio_element_err_t _mp3_esp_codec_process(audio_element_handle_t self,
         if (ret != ESP_AUDIO_ERR_OK) {
             ESP_LOGW(TAG, "esp_audio_simple_dec_process err %d, skip %u bytes",
                      ret, raw.len);
+            // R078: 错误帧容错 - 若已消费部分字节则推进, 避免重复喂同一坏数据;
+            // 连续错误过多则放弃本曲 (return AEL_IO_DONE 触发跳下一曲), 避免卡死
+            if (raw.consumed > 0) {
+                raw.buffer += raw.consumed;
+                raw.len    -= raw.consumed;
+                continue;
+            }
+            if (++dec->err_count > 50) {
+                ESP_LOGE(TAG, "too many decode errors, abort this track");
+                return AEL_IO_DONE;
+            }
             break;
         }
         if (frame.decoded_size > 0) {
+            dec->err_count = 0;   // R078: 成功解出帧, 重置连续错误计数
             int wlen = audio_element_output(self, (char *)frame.buffer, (int)frame.decoded_size);
             if (wlen <= 0) {
                 return (audio_element_err_t)wlen;
