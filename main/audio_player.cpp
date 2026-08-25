@@ -140,15 +140,16 @@ static audio_element_handle_t create_decoder(const char *path)
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
 
     if (strcasecmp(ext, ".mp3") == 0) {
-        // R076-CODEC-7: 用 esp_audio_codec 开源 MP3 解码器 (esp_mp3_dec_*) 替代
-        // ADF 闭源 PV-MP3。coredump 反解确认 PV-MP3 的 mp3_decoder_open 在解码
-        // 特定 MP3 时崩溃 (BREAK/DoubleException)，且闭源无法 patch。
-        // 新 wrapper 完全绕开 PV-MP3，使用已编入固件的 esp_mp3_dec_*。
-        // R076-CODEC-15: 完全用 ADF release/v2.x mp3_decoder.h 默认配置
-        // (DEFAULT_MP3_DECODER_CONFIG) - task_stack=5K / out_rb=2K / stack_in_ext=true
-        // 不再调任何自定义 cfg 字段, 完全信任官方
-        ESP_LOGI(TAG, "Using ADF release/v2.x PV-MP3 decoder (libesp_processing.a, official default config)");
-        return mp3_decoder_esp_codec_init(NULL);
+        // R076-CODEC-17: 用 v2.6.2 simple_dec 路径 (mpeg_parser + esp_mp3_dec_decode)
+        // 必须用 32K task_stack (实测 2K/8K 都栈溢出崩, esp_audio_simple_dec_process
+        // 内部 esp_es_parse_frame + esp_mp3_dec_decode + minimp3 帧解码嵌套深)
+        // stack_in_ext=false 避免 PSRAM+Harvard 冲突
+        mp3_decoder_esp_codec_cfg_t cfg = DEFAULT_MP3_DECODER_ESP_CODEC_CONFIG();
+        cfg.task_stack   = 32 * 1024;
+        cfg.out_rb_size  = 16 * 1024;
+        cfg.stack_in_ext = false;
+        ESP_LOGI(TAG, "Using espressif/esp_audio_codec v2.6.2 simple_dec MP3 (CODEC-17, stack=32K)");
+        return mp3_decoder_esp_codec_init(&cfg);
     } else if (strcasecmp(ext, ".aac") == 0 || strcasecmp(ext, ".m4a") == 0) {
         ESP_LOGI(TAG, "Using AAC decoder");
         return aac_decoder_init(&aac_cfg);
