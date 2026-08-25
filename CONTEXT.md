@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-08-12（R047 — 全量代码评审通过；R048 打磨进行中：音量 15 档重构 + SD 检测增强 + 硬件 PCB 微调）
+> **最后更新**：2026-08-25（R076 — MP3 解码器崩溃根除（开源 esp_audio_codec 替闭源 PV-MP3）+ 蓝牙音箱 A2DP Sink + 中文 TTF 字体分区 + 统一设置菜单 + TF 卡 OTA）
 
 ---
 
@@ -42,6 +42,11 @@ git status --short            # 未提交改动
 | **书签** | `main/bookmark.cpp` | NVS 持久化书签（浏览中停止长按添加，R011） |
 | **电源** | `main/power_mgmt.cpp` | 定时关机 / 电量检测 stub + 锁存唤醒 |
 | **配置** | `main/config.h` | GPIO 引脚定义 + 音量 15 档 + SD_CD 极性 |
+| **蓝牙音箱** | `main/bt_speaker.cpp/.h` | A2DP Sink（手机推流到设备出声），菜单「蓝牙音箱」入口 |
+| **字体分区** | `main/font_partition.cpp/.h` | 中文 TTF 烧录分区 + freetype 初始化（LVGL 中文渲染） |
+| **统一菜单** | `main/menu.cpp/.h` | 设置/功能统一入口（A-B 复读/按键音/蓝牙/OTA 等） |
+| **MP3 开源解码** | `main/mp3_decoder_esp_codec.cpp/.h` | 绕开闭源 PV-MP3，用 esp_audio_codec 开源 `esp_mp3_dec`/`simple_dec` |
+| **TF 卡 OTA** | `main/ota_sd.cpp/.h` | 从 SD 卡读取固件做 OTA 升级 |
 | **自定义 Board** | `components/audio_board/` | 覆盖 ADF 自带 audio_board 的 tapebook 桩板（`CONFIG_ESP_TAPEBOOK_BOARD=y`） |
 | **构建** | `CMakeLists.txt` + `main/CMakeLists.txt` | 顶层 + 组件 |
 | **分区** | `partitions.csv` / `partitions_ota.csv` | 单一 factory / OTA |
@@ -99,6 +104,30 @@ git status --short            # 未提交改动
 | **R046** | **2026-08-03** | **—** | **修复"刚过长按倒退反少于短按"断层（进态先补 ±5s 基准跳退）** | ✅ |
 | **R047** | **2026-08-03** | `1d18f57` | **清理 button_manager 双击状态机死代码 + 全量代码评审报告 v2/v3（O6 已修）** | ✅ |
 | **R048** | **2026-08-12** | **（WIP，未提交）** | **音量系统 V1.2 重构（0-100 → 15 档逻辑音量 dB 线性 -96..+12）+ SD 卡检测增强（极性宏/状态栏图标/插拔提示）+ 硬件 PCB 微调 + 评审报告 v3 更新** | 🚧 |
+
+### R049–R076 阶段（功能扩展 + 崩溃攻坚，2026-08-20 ~ 08-24）
+
+| R 节点 | 日期 | commit | 内容 | 状态 |
+|---|---|---|---|---|
+| R049–R051 | 2026-08-20 | `02db091` `4ded1fb` `2ee61b9` | 统一设置菜单框架 + A-B 复读 + 按键提示音 + OTA/USB 入口 + **TF 卡(SD) 固件 OTA 升级** | ✅ |
+| R052/55/56/58 | 2026-08-20 | `4c11716` | TWDT / 屏保 / 音量键 / 按键响应修复 | ✅ |
+| R059-stage-end | 2026-08-20 | — | 阶段收尾基线（后续 fix-r053-audio 分支起点） | ✅ |
+| R061 | 2026-08-21 | — | 给 IDF 打 `idf_v5.5_freertos.patch`，让 ADF MP3 decoder 的 `xTaskCreateRestrictedPinnedToCore` 编入（否则无声音） | ✅ |
+| R062 | 2026-08-21 | — | 播放无限重启修复（`audio_element_reset_state` 拉回 i2s）+ 关疯狂 DBG | ✅ |
+| R063 | 2026-08-21 | — | P0 LVGL 死锁修复（main 设标志 + lvgl_task 异步消费，禁 main 直接调 LVGL）+ 无声音 H2 偏置诊断（后推翻） | ✅ |
+| R064 | 2026-08-21 | — | SD CRC 触发规律：长按 seek 几次后必现（非偶发） | ✅ |
+| R065 | 2026-08-21 | `59e746f` | **首次开机无声根因**：`get_i2s_pins()` 返回 -1 被 ADF memcpy 覆盖 → IO6/7/5 从未配成 I2S → 修复返回真实引脚 | ✅ |
+| R066 | 2026-08-21 | — | 暂停切歌野指针崩溃（R062 跨曲目复用 g_i2s_writer 引入）→ resume→stop 修复 | ✅ |
+| R067 | 2026-08-21 | `3ee8208` | 应用层 ID3v2 skip（heldec 混合流崩）+ seek 公式修正 | ✅ |
+| R068 | 2026-08-21 | `3ee8208` | stop 改用 `terminate` + i2s_writer 每次重建（放弃跨曲目复用） | ✅ |
+| R069–R071 | 2026-08-22 | — | 崩因定位在 ESP-ADF 静态库 MP3 decoder（项目代码无法修）；多种修复尝试失败；保留 R067+R068+R071(display 噪声清理) | ✅ |
+| R072 | 2026-08-22 | `3ee8208` | 清理无效修复（回退 R066/R070），保留 R067+R068+R071 | ✅ |
+| R073 | 2026-08-22 | `3ee8208` | splash 卡住 UX 修复（boot 后强制 tick 进 player 界面） | ✅ |
+| R074 | 2026-08-22 | — | 切歌黑屏（实为崩溃重启表象，非纯 UX） | 🚧 |
+| R075 | 2026-08-22 | `dd3e93e` | **double-free 根因**：stop 手动 deinit element + `audio_pipeline_deinit` 二次 deinit → 改只调一次 pipeline_deinit | ✅ |
+| R076 | 2026-08-22~24 | `c53662e` | **MP3 解码器崩溃根除**：coredump 反解确认 PV-MP3 闭源库 `mp3_decoder_open` 崩 → 切换开源 `esp_audio_codec`（`esp_mp3_dec`/`simple_dec`，mpeg_parser 自动切帧绕开异常帧）；同时引入蓝牙音箱(A2DP Sink) + 中文 TTF 字体分区(freetype) + 统一菜单 | 🚧 |
+
+> 注：R061–R075 多节点在开发日志中详细记录，但**历史未全部建 tag**（仅 R030/R048/R059-stage-end/R076-* 有 tag）；R076 系列已建 `R076-CODEC-*` annotated tag。
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`。（注：R016/R017/R041 编号在历史上被跳过/合并，不影响连续性）
 
 ---
@@ -118,6 +147,10 @@ git status --short            # 未提交改动
 | 蓝牙方案 | LE Audio（LC3，无需额外 BOM）| ESP32-S3 仅有 BLE 5.0，无 BT Classic | BT_AUDIO_PLAN.md |
 | 音量键 | GPIO0/GPIO3 专用 LCK 拨轮（R042）| 替代 EC11/Prev-Next 长按，避免双路径冲突 | button_manager.cpp |
 | ME6211C33 封装 | SOT-23-5（M5G-N）| 实际采购型号带 CE 使能引脚；非 SOT-89 | SCH_TapeBook_V1.3.md |
+| 蓝牙音箱 | A2DP Sink（Bluedroid + BT Classic）| 用户要"手机推流到设备出声"，A2DP Sink 最直接；ESP32-S3 仅 BLE 但 Bluedroid 支持 A2DP Sink | bt_speaker.cpp / BT_SPEAKER_FEASIBILITY.md |
+| MP3 解码器 | 开源 esp_audio_codec（esp_mp3_dec / simple_dec）替换闭源 PV-MP3 | PV-MP3 闭源黑盒，特定 MP3 触发 DoubleException 崩溃，coredump 反解确认无法 patch | mp3_decoder_esp_codec.cpp |
+| 中文显示 | ST7789 + LVGL + freetype + TTF 字体分区 | 中文字库烧录到独立 font 分区，freetype 动态渲染 | font_partition.cpp |
+| 固件升级 | TF 卡(SD) OTA | 量产免联机，用户插卡即升 | ota_sd.cpp |
 
 ---
 
@@ -131,6 +164,10 @@ git status --short            # 未提交改动
 | 模组切换脚本 | `configure.bat wroom-1-n16r8` / `configure.bat wroom-2-n32r16v` |
 | 构建脚本 | `build.bat build`（PowerShell 需 `cmd /c` 包裹）|
 | 烧录文档 | `docs/BUILD_FLASH.md`（esptool 直写完整命令）|
+| 构建运行器 | `tools/_run_in_clean_cmd.py` | 干净环境 build/flash/coredump（剥离 MSYSTEM，避免 cmd/c 误判"用户取消"）|
+| 蓝牙构建 | `configure.bat wroom-1-n16r8-bt` | 注入 `CONFIG_USE_BT_SPEAKER=y` + 关 Wi-Fi |
+| 字体烧录 | `flash_font.bat COM7` | font 分区 @0x620000 烧录 cjk.ttf |
+| coredump 抓取 | `tools/_run_in_clean_cmd.py coredump_save` | esptool 直读 coredump 分区（RTS 未接，须 no_reset）|
 | GitHub 远程 | `https://github.com/zhutao198/tapeplayer.git` |
 
 ---
