@@ -62,6 +62,24 @@ static audio_element_handle_t   g_fatfs_reader = NULL;
 static audio_element_handle_t   g_decoder = NULL;
 static audio_element_handle_t   g_i2s_writer = NULL;   // R068：每次 play 重建（弃用 R036-001 跨曲目复用）
 
+// R076-CODEC-18: decoder element event callback 同步 i2s sample rate
+// 当 decoder 上报 AEL_MSG_CMD_REPORT_MUSIC_INFO 时调 i2s_stream_set_clk
+// (PV-MP3 mp3_decoder 元素内部自动同步; 我们的 esp_audio_simple_dec wrapper 不自动)
+static esp_err_t decoder_event_cb(audio_element_handle_t el, audio_event_iface_msg_t *event, void *ctx)
+{
+    if (event->cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO && ctx != NULL) {
+        audio_element_info_t music_info = {0};
+        audio_element_getinfo(el, &music_info);
+        if (music_info.sample_rates > 0) {
+            audio_element_handle_t i2s = (audio_element_handle_t)ctx;
+            ESP_LOGI(TAG, "R076-CODEC-18: music info %d Hz, %d ch, %d bit -> reconfig i2s",
+                     music_info.sample_rates, music_info.channels, music_info.bits);
+            i2s_stream_set_clk(i2s, music_info.sample_rates, music_info.bits, music_info.channels);
+        }
+    }
+    return ESP_OK;
+}
+
 static bool         g_is_playing = false;
 static bool         g_is_paused = false;
 static int          g_volume = AUDIO_OUTPUT_VOL;
@@ -238,6 +256,7 @@ void audio_player_init(void)
 
     // R076-CODEC-18: init event_iface + 启动 event task
     // 用于把 decoder REPORT_MUSIC_INFO 转成 i2s_stream_set_clk 调用
+    // (实际方案 B: 用 audio_element_set_event_callback 直接注册 callback, 不需要 event_iface)
     if (!g_evt) {
         audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
         g_evt = audio_event_iface_init(&evt_cfg);
@@ -414,11 +433,9 @@ bool audio_player_play(const char *filepath)
     g_current_sample_rate = AUDIO_SAMPLE_RATE;
     i2s_stream_set_clk(g_i2s_writer, AUDIO_SAMPLE_RATE, 16, 2);
 
-    // R076-CODEC-18: 把 pipeline 事件转发到我们的 event_iface
-    // 让 audio_event_task 能收到 decoder REPORT_MUSIC_INFO 调 i2s_stream_set_clk
-    if (g_evt) {
-        audio_pipeline_set_listener(g_pipeline, g_evt);
-    }
+    // R076-CODEC-18: 给 decoder 元素设 event callback, 同步 i2s sample rate
+    // (PV-MP3 mp3_decoder 元素内部自动同步; 我们的 simple_dec wrapper 不自动)
+    audio_element_set_event_callback(g_decoder, decoder_event_cb, g_i2s_writer);
 
     // 8. 启动管道（R032-209: 检查返回值，失败即终止，避免进入播放态却无声）
     if (audio_pipeline_run(g_pipeline) != ESP_OK) {
