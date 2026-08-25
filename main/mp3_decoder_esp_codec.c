@@ -33,13 +33,11 @@ static const char *TAG = "MP3_DECODER";
 /* 配置默认参数 (参考 play_sdcard_mp3_control 示例 + 我们的 stack/out_rb 配置) */
 audio_element_handle_t mp3_decoder_esp_codec_init(mp3_decoder_esp_codec_cfg_t *config)
 {
+    // R076-CODEC-15: 完全用 ADF release/v2.x mp3_decoder.h 默认配置
+    // (DEFAULT_MP3_DECODER_CONFIG) - task_stack=5K / out_rb=2K / stack_in_ext=true
+    // 不再调任何自定义 cfg 字段, 完全信任官方
     mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
 
-    /* task_stack / out_rb_size 留 caller 改; 默认 DEFAULT_MP3_DECODER_CONFIG 是
-     *   - task_stack  = 8 * 1024
-     *   - out_rb_size = 8 * 1024
-     * 我们之前调到 32K stack 仍未消除崩溃 (PV-MP3 偶发崩), 这次先回退默认.
-     * caller 若有特殊需要可从 config 覆盖. */
     if (config && config->task_stack > 0) {
         mp3_cfg.task_stack = config->task_stack;
     }
@@ -55,7 +53,7 @@ audio_element_handle_t mp3_decoder_esp_codec_init(mp3_decoder_esp_codec_cfg_t *c
         ESP_LOGE(TAG, "mp3_decoder_init failed (ADF PV-MP3 element)");
         return NULL;
     }
-    ESP_LOGI(TAG, "mp3_decoder element created (ADF release/v2.x PV-MP3, stack=%u, out_rb=%u)",
-             (unsigned)mp3_cfg.task_stack, (unsigned)mp3_cfg.out_rb_size);
+    ESP_LOGI(TAG, "mp3_decoder element created (ADF release/v2.x PV-MP3, stack=%u, out_rb=%u, stack_in_ext=%d)",
+             (unsigned)mp3_cfg.task_stack, (unsigned)mp3_cfg.out_rb_size, mp3_cfg.stack_in_ext);
     return el;
 }

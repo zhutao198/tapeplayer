@@ -144,12 +144,11 @@ static audio_element_handle_t create_decoder(const char *path)
         // ADF 闭源 PV-MP3。coredump 反解确认 PV-MP3 的 mp3_decoder_open 在解码
         // 特定 MP3 时崩溃 (BREAK/DoubleException)，且闭源无法 patch。
         // 新 wrapper 完全绕开 PV-MP3，使用已编入固件的 esp_mp3_dec_*。
-        mp3_decoder_esp_codec_cfg_t cfg = DEFAULT_MP3_DECODER_ESP_CODEC_CONFIG();
-        cfg.task_stack   = 8 * 1024;     // R076-CODEC-14: 回退到 ADF release/v2.x 默认 8K 栈
-        cfg.out_rb_size  = 16 * 1024;    // 消除卡卡卡噪音
-        cfg.stack_in_ext = false;
-        ESP_LOGI(TAG, "Using ADF release/v2.x PV-MP3 decoder (libesp_processing.a, official path)");
-        return mp3_decoder_esp_codec_init(&cfg);
+        // R076-CODEC-15: 完全用 ADF release/v2.x mp3_decoder.h 默认配置
+        // (DEFAULT_MP3_DECODER_CONFIG) - task_stack=5K / out_rb=2K / stack_in_ext=true
+        // 不再调任何自定义 cfg 字段, 完全信任官方
+        ESP_LOGI(TAG, "Using ADF release/v2.x PV-MP3 decoder (libesp_processing.a, official default config)");
+        return mp3_decoder_esp_codec_init(NULL);
     } else if (strcasecmp(ext, ".aac") == 0 || strcasecmp(ext, ".m4a") == 0) {
         ESP_LOGI(TAG, "Using AAC decoder");
         return aac_decoder_init(&aac_cfg);
