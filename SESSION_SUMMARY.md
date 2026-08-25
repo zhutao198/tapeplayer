@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-25（R076 — MP3 解码器崩溃根除 + 蓝牙音箱 A2DP Sink + 中文 TTF 字体分区 + 统一菜单 + TF 卡 OTA）
+> **最后更新**：2026-08-25（R078 — 修复部分 MP3 必崩 + 蓝牙音箱 A2DP Sink + 中文 TTF 字体分区 + 统一菜单 + TF 卡 OTA）
 
 ---
 
@@ -401,6 +401,10 @@
 - **现象**：HALT/GDBSTUB 都拿不到第一现场 PC（DoubleException 掩盖 backtrace）。
 - **做法**：`esptool read_flash` 直读 coredump 分区 raw bin → `ESPCoreDumpFileLoader` 转标准 ELF core → `xtensa-esp32s3-elf-gdb target core` → `bt` 拿到 PV-MP3 `mp3_decoder_open` 真实崩点。
 - **教训**：面对预编译闭源库崩溃，离线 coredump + gdb 比任何日志猜测都准。
+
+### L031：audio_element 内部事件回调的 ctx 必须是对应的元素句柄，死链也要删
+- **现象**：R078 前 `decoder_event_cb` 把 `g_i2s_writer`（i2s_stream 元素）当 rsp_filter 句柄调 `rsp_filter_set_src_info`，向 i2s_stream 内部结构非法写字段（UB）；该回调由 element 内部事件每首 MP3 open 时必触发，成为"部分 MP3 必崩"的强候选真凶。
+- **教训**：(1) `audio_element_set_event_callback` 的 ctx 必须是回调内真正使用的元素，切勿把不相关的 writer 当 filter 传；(2) 创建了却未 link 进 pipeline 的元素（如 `g_rsp_filter`）+ 空转的事件监听任务（`g_evt`/`audio_event_task`）是死链，既浪费资源又埋踩内存坑，应随半成品一起清理，不要"先留着"。
 
 ## 5. 性能指标
 
