@@ -79,58 +79,12 @@ endif()
 # 严格编译警告: 仅作用于本组件源码, 提前暴露潜在问题 (review #33)
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra)
 
-# R076-CODEC-7/10: 手动链接 esp_audio_codec 的预编译库 (含开源 esp_mp3_dec_* 符号)
-# esp-adf-libs 把各子组件编成独立 .a，但只有 esp_codec (PV-MP3) 被自动链接；
-# esp_audio_codec 的 libesp_audio_codec.a 与 libesp_audio_simple_dec.a 需显式链接
-# 才能让 main 用到 esp_mp3_dec_* / esp_audio_simple_dec_*。
-#
-# 关键链接顺序问题：libesp_processing.a (PV-MP3) 与 libesp_audio_codec.a (开源 MP3)
-# 都内嵌了 minimp3 的 mp3dec_init/mp3dec_decode_frame，产生 multiple definition。
-# 我们用 --allow-multiple-definition 让链接器取「首个定义」，并用 --start-group/--end-group
-# 把开源库排在闭源库之前，确保 esp_mp3_dec_* 内部调用的 minimp3 解析到【开源版】，
-# 彻底避开 PV-MP3 闭源 minimp3 的崩溃点。
-set(ESP_ACODEC_LIB_BASE "D:/esp/esp-adf/components/esp-adf-libs/esp_audio_codec")
-set(ESP_ACODEC_LIB "${ESP_ACODEC_LIB_BASE}/lib/${CONFIG_IDF_TARGET}/libesp_audio_codec.a")
-set(ESP_SDEC_LIB   "${ESP_ACODEC_LIB_BASE}/lib/${CONFIG_IDF_TARGET}/libesp_audio_simple_dec.a")
-if(EXISTS "${ESP_ACODEC_LIB}")
-    # libesp_audio_simple_dec.a 内部依赖 libesp_audio_codec.a (esp_audio_dec_* vtable)
-    # 因此两组都要把 acodec 放进 start-group，让 sdec 链接时也能找到 acodec 符号
-    target_link_libraries(${COMPONENT_LIB} PRIVATE
-        # 组 1: main 直接调用的 acodec (esp_mp3_dec_*) + sdec (esp_audio_simple_dec_register_default)
-        # sdec 也在组 1 是因为 CODEC-11 在 main 直接调 esp_audio_simple_dec_register_default
-        "-Wl,--start-group"
-        "${ESP_ACODEC_LIB}"
-        "${ESP_SDEC_LIB}"
-        "-Wl,--end-group"
-        # 组 2: sdec 内部引用 acodec 符号 (esp_audio_dec_* vtable dispatch)
-        "-Wl,--start-group"
-        "${ESP_SDEC_LIB}"
-        "${ESP_ACODEC_LIB}"
-        "-Wl,--end-group")
-    # 允许重复定义 (组内的 mp3dec_* 由开源库优先)
-    target_link_options(${COMPONENT_LIB} PRIVATE "-Wl,--allow-multiple-definition")
-    message(STATUS "R076-CODEC-11: linked ${ESP_ACODEC_LIB} + ${ESP_SDEC_LIB} (open-source minimp3 first, simple_dec reg default)")
-else()
-    message(WARNING "R076-CODEC-11: libesp_audio_codec.a NOT FOUND at ${ESP_ACODEC_LIB}")
-endif()
+# R076-CODEC-14: 回退到 ADF release/v2.x 官方方案，全部使用 libesp_processing.a (PV-MP3 闭源)
+# 不再手工 link esp_audio_codec.a / esp_audio_simple_dec.a，
+# 不再需要 --allow-multiple-definition / --start-group 链接顺序。
+# PV-MP3 由 esp-adf-libs 顶层组件自动拉入 main 链接图。
+message(STATUS "R076-CODEC-14: using ADF release/v2.x stock PV-MP3 (libesp_processing.a via esp-adf-libs)")
 
-# R076-CODEC-7/10: 让 main 能直接 include esp_audio_codec 的 MP3 解码器头文件
-# (esp_mp3_dec.h 位于 esp-adf-libs/esp_audio_codec/include/decoder/impl/，
-#  simple_dec/esp_audio_simple_dec.h 位于 include/simple_dec/，
-#  这些目录是 esp_audio_codec 组件的内部 include，未对依赖者公开，需手动暴露)
-# 需同时暴露整条依赖链: impl -> decoder -> simple_dec -> include
-set(ESP_ACODEC_BASE "${CMAKE_CURRENT_SOURCE_DIR}/../managed_components/espressif__esp_audio_codec")
-if(NOT EXISTS "${ESP_ACODEC_BASE}/include/decoder/impl/esp_mp3_dec.h")
-    # 回退到本地 ADF 路径
-    set(ESP_ACODEC_BASE "D:/esp/esp-adf/components/esp-adf-libs/esp_audio_codec")
-endif()
-if(EXISTS "${ESP_ACODEC_BASE}/include/decoder/impl/esp_mp3_dec.h")
-    target_include_directories(${COMPONENT_LIB} PRIVATE
-        "${ESP_ACODEC_BASE}/include"
-        "${ESP_ACODEC_BASE}/include/decoder"
-        "${ESP_ACODEC_BASE}/include/decoder/impl"
-        "${ESP_ACODEC_BASE}/include/simple_dec")  # R076-CODEC-10: esp_audio_simple_dec.h 所在目录
-    message(STATUS "R076-CODEC-10: esp_audio_codec include -> ${ESP_ACODEC_BASE}/include (+simple_dec)")
-else()
-    message(WARNING "R076-CODEC-10: esp_mp3_dec.h NOT FOUND in ${ESP_ACODEC_BASE}")
-endif()
+# R076-CODEC-14: 回退到 ADF release/v2.x 官方 PV-MP3 方案
+#   - 不再 include esp_audio_codec (改用 ADF mp3_decoder.h, 由 audio_stream 组件已自动 expose)
+#   - 不再手工 link esp_audio_codec.a (PV-MP3 由 esp-adf-libs 顶层组件自动 link)
