@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-08-25（R079 — .mp3 回退 PV-MP3 恢复声音+噪音消除；崩溃根因定位为个别损坏 MP3，转码根治）
+> **最后更新**：2026-08-25（R080 — .mp3 换 Helix MP3 解码器(libhelix)根治 PV-MP3 崩溃 + 坏帧跳曲保护；R079 已回退 PV-MP3 恢复声音）
 
 ---
 
@@ -45,7 +45,7 @@ git status --short            # 未提交改动
 | **蓝牙音箱** | `main/bt_speaker.cpp/.h` | A2DP Sink（手机推流到设备出声），菜单「蓝牙音箱」入口 |
 | **字体分区** | `main/font_partition.cpp/.h` | 中文 TTF 烧录分区 + freetype 初始化（LVGL 中文渲染） |
 | **统一菜单** | `main/menu.cpp/.h` | 设置/功能统一入口（A-B 复读/按键音/蓝牙/OTA 等） |
-| **MP3 开源解码** | `main/mp3_decoder_esp_codec.cpp/.h` | 绕开闭源 PV-MP3，用 esp_audio_codec 开源 `esp_mp3_dec`/`simple_dec` |
+| **MP3 解码** | `main/mp3_decoder_libhelix.c/.h` | R080 起 .mp3 主解码器：Helix MP3(libhelix)，绕开闭源 PV-MP3；坏帧跳曲保护 |
 | **TF 卡 OTA** | `main/ota_sd.cpp/.h` | 从 SD 卡读取固件做 OTA 升级 |
 | **自定义 Board** | `components/audio_board/` | 覆盖 ADF 自带 audio_board 的 tapebook 桩板（`CONFIG_ESP_TAPEBOOK_BOARD=y`） |
 | **构建** | `CMakeLists.txt` + `main/CMakeLists.txt` | 顶层 + 组件 |
@@ -127,7 +127,8 @@ git status --short            # 未提交改动
 | R075 | 2026-08-22 | `dd3e93e` | **double-free 根因**：stop 手动 deinit element + `audio_pipeline_deinit` 二次 deinit → 改只调一次 pipeline_deinit | ✅ |
 | R076 | 2026-08-22~24 | `c53662e` | **MP3 解码器崩溃根除**：coredump 反解确认 PV-MP3 闭源库 `mp3_decoder_open` 崩 → 切换开源 `esp_audio_codec`（`esp_mp3_dec`/`simple_dec`，mpeg_parser 自动切帧绕开异常帧）；同时引入蓝牙音箱(A2DP Sink) + 中文 TTF 字体分区(freetype) + 统一菜单 | 🚧 |
 | R078 | 2026-08-25 | `5f109df` | 删 `decoder_event_cb`（误把 i2s_writer 当 rsp_filter 句柄踩内存）+ 删 `g_rsp_filter` 死链（崩未根除，仅清理 UB 死链） | ✅ |
-| R079 | 2026-08-25 | — | .mp3 回退 PV-MP3 恢复声音；栈 internal 32K+16K rb 消噪音；崩溃根因=个别损坏 MP3（全帧扫描失步），转码根治 | 🚧 |
+| R079 | 2026-08-25 | `d9d428f` | .mp3 回退 PV-MP3 恢复声音；栈 internal 32K+16K rb 消噪音；崩溃根因后证为 PV-MP3 对特定合法 MP3 确定性崩溃（转码 128k/320k 均复现），转码不能根治 → 引 R080 | ✅ |
+| R080 | 2026-08-25 | `e234fc5` | **根治 MP3 崩溃**：.mp3 解码器换 Helix MP3(libhelix, Apache-2.0)，彻底绕开闭源 PV-MP3；坏帧/连续错误>50→返回 AEL_IO_DONE 触发 audio_player_tick 自动跳下一首（跳曲保护）| ✅ |
 
 > 注：R061–R075 多节点在开发日志中详细记录，但**历史未全部建 tag**（仅 R030/R048/R059-stage-end/R076-* 有 tag）；R076 系列已建 `R076-CODEC-*` annotated tag。
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`。（注：R016/R017/R041 编号在历史上被跳过/合并，不影响连续性）
@@ -150,7 +151,7 @@ git status --short            # 未提交改动
 | 音量键 | GPIO0/GPIO3 专用 LCK 拨轮（R042）| 替代 EC11/Prev-Next 长按，避免双路径冲突 | button_manager.cpp |
 | ME6211C33 封装 | SOT-23-5（M5G-N）| 实际采购型号带 CE 使能引脚；非 SOT-89 | SCH_TapeBook_V1.3.md |
 | 蓝牙音箱 | A2DP Sink（Bluedroid + BT Classic）| 用户要"手机推流到设备出声"，A2DP Sink 最直接；ESP32-S3 仅 BLE 但 Bluedroid 支持 A2DP Sink | bt_speaker.cpp / BT_SPEAKER_FEASIBILITY.md |
-| MP3 解码器 | 开源 esp_audio_codec（esp_mp3_dec / simple_dec）替换闭源 PV-MP3 | PV-MP3 闭源黑盒，特定 MP3 触发 DoubleException 崩溃，coredump 反解确认无法 patch | mp3_decoder_esp_codec.cpp |
+| MP3 解码器 | **libhelix（chmorgan/esp-libhelix-mp3, Apache-2.0）**替换闭源 PV-MP3（esp_audio_codec 为备选 wrapper `mp3_decoder_esp_codec.c`）| PV-MP3 闭源黑盒，对特定合法 MP3 确定性崩溃@0x403743c0（转码 128k/320k 均复现），无法 patch；libhelix 坏帧返回负码不崩 | mp3_decoder_libhelix.c |
 | 中文显示 | ST7789 + LVGL + freetype + TTF 字体分区 | 中文字库烧录到独立 font 分区，freetype 动态渲染 | font_partition.cpp |
 | 固件升级 | TF 卡(SD) OTA | 量产免联机，用户插卡即升 | ota_sd.cpp |
 

@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-25（R079 — .mp3 回退 PV-MP3 恢复声音+噪音消除；崩溃根因定位为个别损坏 MP3，转码根治）
+> **最后更新**：2026-08-25（R080 — .mp3 换 Helix MP3 解码器(libhelix)根治 PV-MP3 崩溃 + 坏帧跳曲保护）
 
 ---
 
@@ -90,10 +90,11 @@
 - **决定**：改用 Bluedroid + BT Classic 的 A2DP Sink（`bt_speaker.cpp`），`configure.bat <target>-bt` 专用构建
 - **理由**：A2DP Sink 是 Bluedroid 直接支持的能力，比 LE Audio 实现成本低、成熟；ESP32-S3 虽有 BLE 但 Bluedroid 栈可跑 A2DP Sink
 
-### 决策 D009：MP3 解码器弃用闭源 PV-MP3，换开源 esp_audio_codec
-- **背景**：R061–R075 反复崩在特定 MP3 上（DoubleException @ 0x403743c0），coredump 反解确认崩在 PV-MP3 闭源库 `mp3_decoder_open`
-- **决定**：新增 `main/mp3_decoder_esp_codec.cpp`，用 esp_audio_codec 开源 `esp_mp3_dec_*` / `esp_audio_simple_dec_*`（mpeg_parser 自动切帧绕开异常帧）
-- **理由**：PV-MP3 完全闭源（本地只有 `.a`，无源码），无法 patch / 升级；开源解码器从根上消除崩溃
+### 决策 D009：MP3 解码器弃用闭源 PV-MP3，最终采用 libhelix（Helix MP3）
+- **背景**：R061–R075 反复崩在特定 MP3 上（DoubleException @ 0x403743c0），coredump 反解确认崩在 PV-MP3 闭源库 `mp3_decoder_open`；R076 试 esp_audio_codec 开源 `esp_mp3_dec_*`/`simple_dec`（mpeg_parser 切帧）仍崩在必崩 3 首
+- **决定**：R080 新增 `main/mp3_decoder_libhelix.c/.h`，用 **Helix MP3 解码器**（`chmorgan/esp-libhelix-mp3`，Apache-2.0，ESP 组件 registry 直接引入），`create_decoder` 的 .mp3 分支改用 `mp3_decoder_libhelix_init`
+- **理由**：PV-MP3 完全闭源（本地只有 `.a`，无源码），无法 patch；esp_audio_codec 在该项目仍崩；Helix 健壮性著称，坏帧返回负错误码而非崩溃，可由应用层 `MP3FindSyncWord` 跳过 + 超阈值返回 AEL_IO_DONE 触发跳曲保护。选 libhelix 而非 libmad：libmad 为 GPL，libhelix Apache-2.0 且有现成组件
+- **备选**：`mp3_decoder_esp_codec.c`（esp_audio_codec 路径）保留为可切换 wrapper，但默认 .mp3 走 libhelix
 
 ### 决策 D010：中文显示用 TTF 字体分区 + freetype
 - **背景**：LVGL 默认无中文字库
@@ -226,12 +227,13 @@
 - ✅ **R068 完成——stop 改用 `terminate` + i2s_writer 每首重建**（放弃 R036 跨曲目复用，消除野指针）
 - ✅ **R073 完成——splash 卡住 UX 修复**（boot 后强制 main tick 进 player 界面）
 - ✅ **R075 完成——double-free 根因定位与修复**：`audio_player_stop` 手动 deinit 三个 element + `audio_pipeline_deinit` 二次 deinit → 改只调一次 `pipeline_deinit`
-- ✅ **R076 完成（进行中）——MP3 解码器崩溃根除**：coredump 反解确认崩在闭源 PV-MP3 `mp3_decoder_open` → 新增 `mp3_decoder_esp_codec.cpp` 用开源 esp_audio_codec（`esp_mp3_dec_*` / `esp_audio_simple_dec_*`，mpeg_parser 自动切帧绕开异常帧）；必崩 3 首（白桦树/相反的我/躲避的爱）恢复播放
+- ✅ **R076 完成（进行中）——MP3 解码器崩溃根除尝试**：coredump 反解确认崩在闭源 PV-MP3 `mp3_decoder_open` → 新增 `mp3_decoder_esp_codec.cpp` 用开源 esp_audio_codec（mpeg_parser 切帧）；但实测必崩 3 首（白桦树/相反的我/躲避的爱）仍崩，R080 改用 libhelix 才根除
 - ✅ **R076 新增模块——蓝牙音箱(A2DP Sink)** `bt_speaker.cpp` + 菜单入口 + `configure.bat -bt` 构建变体
 - ✅ **R076 新增模块——中文 TTF 字体分区** `font_partition.cpp`（freetype + VFS `/font`，font 分区 @0x620000）
 - ✅ **R076 新增模块——统一设置菜单** `menu.cpp`（A-B 复读 / 按键音 / 蓝牙 / OTA 等统一入口）
 - ✅ **R078 完成——清理解码器 UB 死链**：删 `decoder_event_cb`（误把 i2s_writer 当 rsp_filter 句柄踩内存）+ 删 `g_rsp_filter` 死链（崩未根除，R076 开源库路径随后证伪）
-- ✅ **R079 完成（进行中）——.mp3 回退 PV-MP3 恢复声音+噪音消除**：栈 internal 32K+out_rb 16K；崩溃根因数据驱动定位为个别损坏 MP3（全帧扫描 ~23KB 失步），转码根治（debug/song→song_fixed）
+- ✅ **R079 完成（进行中）——.mp3 回退 PV-MP3 恢复声音+噪音消除**：栈 internal 32K+out_rb 16K；但崩溃根因后证为 PV-MP3 对特定合法 MP3 确定性崩溃（转码 128k/320k 均复现），转码不能根治 → 引 R080
+- ✅ **R080 完成——.mp3 解码器换 Helix MP3(libhelix) 根治崩溃**：新增 `mp3_decoder_libhelix.c/.h`，`create_decoder` 的 .mp3 分支改用 `mp3_decoder_libhelix_init`（彻底绕开闭源 PV-MP3）；坏帧/连续错误>50→返回 AEL_IO_DONE，由 `audio_player_tick` 监测 FINISHED 触发 `on_track_finished` 自动播下一首（跳曲保护）；构建通过，待真机验证
 
 ---
 
@@ -408,6 +410,11 @@
 - **现象**：R078 前 `decoder_event_cb` 把 `g_i2s_writer`（i2s_stream 元素）当 rsp_filter 句柄调 `rsp_filter_set_src_info`，向 i2s_stream 内部结构非法写字段（UB）；该回调由 element 内部事件每首 MP3 open 时必触发，成为"部分 MP3 必崩"的强候选真凶。
 - **教训**：(1) `audio_element_set_event_callback` 的 ctx 必须是回调内真正使用的元素，切勿把不相关的 writer 当 filter 传；(2) 创建了却未 link 进 pipeline 的元素（如 `g_rsp_filter`）+ 空转的事件监听任务（`g_evt`/`audio_event_task`）是死链，既浪费资源又埋踩内存坑，应随半成品一起清理，不要"先留着"。
 
+### L032：转码（任何码率/去 ID3）无法修复闭源库崩溃；Helix 是稳妥替代
+- **现象**：白桦树/相反的我 经 ffmpeg 干净重编码（128k 保留 ID3、320k 去 ID3，ffmpeg 对该文件 0 错误解码）仍崩在 0x403743c0（同一 PC）——证明崩因是 PV-MP3 闭源库对特定合法 MP3 的确定性 bug，与文件损坏/码率/ID3 无关。
+- **教训**：(1) 闭源解码库内部 BREAK 无法靠应用层规避（转码、跳帧、改采样率均无效），必须用 coredump 反解拿第一现场；(2) 替代解码器选 Helix MP3（Apache-2.0，有 registry 组件 `chmorgan/esp-libhelix-mp3`）而非 libmad（GPL）；Helix `MP3Decode` 坏帧返回负码、`MP3FindSyncWord` 可定位同步字跳过，配合 AEL_IO_DONE 实现跳曲保护。
+- **坑位**：ADF `audio_element` 为不透明结构，存每元素上下文须用 `audio_element_setdata/getdata`（非 `codec_lib_specific_data`）；`MP3Decode` 真实签名 `unsigned char **inbuf, int *bytesLeft`（非 const/size_t）；`audio_element_report_info(self)` 单参读 `self->info`，改用 `audio_element_set_music_info(self, rate, ch, bits)` 上报。
+
 ## 5. 性能指标
 
 | 指标 | R013 (MVP) | R014 (PRD fix + OLED) | R076 (崩溃根除 + BT + 字体) |
@@ -417,7 +424,7 @@
 | 分区空闲 | 77% | 76% | 46% |
 | OLED 驱动 | ❌ 黑屏 | ✅ u8g2 + I2C | ✅ ST7789 + LVGL（原生 esp_lcd）|
 | 音量控制 | ⚠️ 存值无效 | ✅ i2s_alc_volume_set | ✅ 15 档逻辑音量 |
-| MP3 崩溃 | — | — | ✅ 开源 esp_audio_codec 根除 |
+| MP3 崩溃 | — | — | ✅ libhelix 根除（R080，坏帧跳曲保护）|
 | 蓝牙音箱 | — | — | ✅ A2DP Sink（需 -bt 构建）|
 | 中文显示 | — | — | ✅ TTF 字体分区 + freetype |
 
@@ -426,7 +433,7 @@
 ## 6. 未来方向
 
 ### 下次会话
-1. **烧录验证 R076**：R076-CODEC 系列（开源 esp_audio_codec 根除 MP3 崩溃）+ 蓝牙音箱 A2DP Sink 配对 + 中文 TTF 字体渲染，逐项真机验证
+1. **烧录验证 R080**：R080（libhelix 根治 MP3 崩溃 + 坏帧跳曲保护）逐项真机验证——白桦树/相反的我是否不再崩、坏文件是否自动跳下一首
 2. **V1.1 打磨**：定时关机（ADC 实装）、A-B 复读 UX、按键提示音、屏幕保护
 3. **蓝牙音箱真机测试**：手机 A2DP 配对推流、AVRCP 播放/暂停/音量透传、断线回退喇叭
 4. **字体/显示验收**：中文字体清晰度、多字号、font 分区烧录流程固化
@@ -470,6 +477,7 @@
 ## 8. R 节点 Git 状态
 
 ```
+e234fc5 R080: .mp3 换 libhelix 根治 PV-MP3 崩溃 + 跳曲保护 (annotated tag R080)
 c53662e R076-CODEC-17c: 加回 ESP_AUDIO_ERR_DATA_LACK 处理 (silent 修复)
 8624548 R076-CODEC-17b: 加大 decoder task_stack 到 32K (v2.6.2 simple_dec 路径)
 22be546 R076-CODEC-17: 单路径用 espressif/esp_audio_codec v2.6.2 (component manager)
