@@ -65,6 +65,9 @@ static audio_element_handle_t   g_i2s_writer = NULL;   // R068：每次 play 重
 // R076-CODEC-18: decoder element event callback 同步 i2s sample rate
 // 当 decoder 上报 AEL_MSG_CMD_REPORT_MUSIC_INFO 时调 i2s_stream_set_clk
 // (PV-MP3 mp3_decoder 元素内部自动同步; 我们的 esp_audio_simple_dec wrapper 不自动)
+//
+// R076-CODEC-18c: 不能在 RUNNING state 直接 set_clk (i2s channel reconfig 时崩),
+// 必须先 pause i2s, 再 set_clk, 再 resume. 否则崩在 i2s_driver 内部.
 static esp_err_t decoder_event_cb(audio_element_handle_t el, audio_event_iface_msg_t *event, void *ctx)
 {
     if (event->cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO && ctx != NULL) {
@@ -72,9 +75,17 @@ static esp_err_t decoder_event_cb(audio_element_handle_t el, audio_event_iface_m
         audio_element_getinfo(el, &music_info);
         if (music_info.sample_rates > 0) {
             audio_element_handle_t i2s = (audio_element_handle_t)ctx;
-            ESP_LOGI(TAG, "R076-CODEC-18: music info %d Hz, %d ch, %d bit -> reconfig i2s",
+            ESP_LOGI(TAG, "R076-CODEC-18c: music info %d Hz, %d ch, %d bit -> pause+reconfig+resume i2s",
                      music_info.sample_rates, music_info.channels, music_info.bits);
+            // 关键: i2s 必须在 PAUSED 状态才能 reconfig
+            audio_element_state_t st = audio_element_get_state(i2s);
+            if (st == AEL_STATE_RUNNING) {
+                audio_element_pause(i2s);  // 不需要 wait, callback 是同步调用
+            }
             i2s_stream_set_clk(i2s, music_info.sample_rates, music_info.bits, music_info.channels);
+            if (st == AEL_STATE_RUNNING) {
+                audio_element_resume(i2s, 0, 0);
+            }
         }
     }
     return ESP_OK;
