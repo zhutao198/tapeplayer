@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-25（R078 — 修复部分 MP3 必崩 + 蓝牙音箱 A2DP Sink + 中文 TTF 字体分区 + 统一菜单 + TF 卡 OTA）
+> **最后更新**：2026-08-25（R079 — .mp3 回退 PV-MP3 恢复声音+噪音消除；崩溃根因定位为个别损坏 MP3，转码根治）
 
 ---
 
@@ -230,6 +230,8 @@
 - ✅ **R076 新增模块——蓝牙音箱(A2DP Sink)** `bt_speaker.cpp` + 菜单入口 + `configure.bat -bt` 构建变体
 - ✅ **R076 新增模块——中文 TTF 字体分区** `font_partition.cpp`（freetype + VFS `/font`，font 分区 @0x620000）
 - ✅ **R076 新增模块——统一设置菜单** `menu.cpp`（A-B 复读 / 按键音 / 蓝牙 / OTA 等统一入口）
+- ✅ **R078 完成——清理解码器 UB 死链**：删 `decoder_event_cb`（误把 i2s_writer 当 rsp_filter 句柄踩内存）+ 删 `g_rsp_filter` 死链（崩未根除，R076 开源库路径随后证伪）
+- ✅ **R079 完成（进行中）——.mp3 回退 PV-MP3 恢复声音+噪音消除**：栈 internal 32K+out_rb 16K；崩溃根因数据驱动定位为个别损坏 MP3（全帧扫描 ~23KB 失步），转码根治（debug/song→song_fixed）
 
 ---
 

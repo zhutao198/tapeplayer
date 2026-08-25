@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-08-25（R078 — 修复部分 MP3 必崩 + 蓝牙音箱 A2DP Sink + 中文 TTF 字体分区 + 统一设置菜单 + TF 卡 OTA）
+> **最后更新**：2026-08-25（R079 — .mp3 回退 PV-MP3 恢复声音+噪音消除；崩溃根因定位为个别损坏 MP3，转码根治）
 
 ---
 
@@ -126,7 +126,8 @@ git status --short            # 未提交改动
 | R074 | 2026-08-22 | — | 切歌黑屏（实为崩溃重启表象，非纯 UX） | 🚧 |
 | R075 | 2026-08-22 | `dd3e93e` | **double-free 根因**：stop 手动 deinit element + `audio_pipeline_deinit` 二次 deinit → 改只调一次 pipeline_deinit | ✅ |
 | R076 | 2026-08-22~24 | `c53662e` | **MP3 解码器崩溃根除**：coredump 反解确认 PV-MP3 闭源库 `mp3_decoder_open` 崩 → 切换开源 `esp_audio_codec`（`esp_mp3_dec`/`simple_dec`，mpeg_parser 自动切帧绕开异常帧）；同时引入蓝牙音箱(A2DP Sink) + 中文 TTF 字体分区(freetype) + 统一菜单 | 🚧 |
-| R078 | 2026-08-25 | `5f109df` | **修复部分 MP3 必崩**：删 `decoder_event_cb`（误把 i2s_writer 当 rsp_filter 句柄踩内存）+ 删未 link 的 `g_rsp_filter` 死链 + `use_frame_dec=true` 损坏帧容错 + 连续解码错误放弃本曲 | ✅ |
+| R078 | 2026-08-25 | `5f109df` | 删 `decoder_event_cb`（误把 i2s_writer 当 rsp_filter 句柄踩内存）+ 删 `g_rsp_filter` 死链（崩未根除，仅清理 UB 死链） | ✅ |
+| R079 | 2026-08-25 | — | .mp3 回退 PV-MP3 恢复声音；栈 internal 32K+16K rb 消噪音；崩溃根因=个别损坏 MP3（全帧扫描失步），转码根治 | 🚧 |
 
 > 注：R061–R075 多节点在开发日志中详细记录，但**历史未全部建 tag**（仅 R030/R048/R059-stage-end/R076-* 有 tag）；R076 系列已建 `R076-CODEC-*` annotated tag。
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`。（注：R016/R017/R041 编号在历史上被跳过/合并，不影响连续性）

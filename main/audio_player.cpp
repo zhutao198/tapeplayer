@@ -143,16 +143,14 @@ static audio_element_handle_t create_decoder(const char *path)
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
 
     if (strcasecmp(ext, ".mp3") == 0) {
-        // R076-CODEC-17: 用 v2.6.2 simple_dec 路径 (mpeg_parser + esp_mp3_dec_decode)
-        // 必须用 32K task_stack (实测 2K/8K 都栈溢出崩, esp_audio_simple_dec_process
-        // 内部 esp_es_parse_frame + esp_mp3_dec_decode + minimp3 帧解码嵌套深)
-        // stack_in_ext=false 避免 PSRAM+Harvard 冲突
-        mp3_decoder_esp_codec_cfg_t cfg = DEFAULT_MP3_DECODER_ESP_CODEC_CONFIG();
-        cfg.task_stack   = 32 * 1024;
-        cfg.out_rb_size  = 16 * 1024;
-        cfg.stack_in_ext = false;
-        ESP_LOGI(TAG, "Using espressif/esp_audio_codec v2.6.2 simple_dec MP3 (CODEC-17, stack=32K)");
-        return mp3_decoder_esp_codec_init(&cfg);
+        // R079 短期回退：esp_audio_codec v2.6.2 + es_parser v1.0.1 对本批 MP3 普遍无声/部分 BREAK(@0x403743c0)，
+        // R076 换库根除判断未经验证。回退到 ADF 内置 PV-MP3（R075 验证能出声，仅部分文件崩），先恢复可用播放。
+        ESP_LOGI(TAG, "Using ADF built-in PV-MP3 decoder (R079 fallback, restore audio)");
+        mp3_cfg.task_stack   = 32 * 1024;
+        mp3_cfg.out_rb_size  = 16 * 1024;
+        mp3_cfg.stack_in_ext = false;
+        mp3_cfg.id3_parse_enable = false;  // R079: 应用层已手动 set_byte_pos 跳过 ID3v2，关闭库内解析避免其解析异常触发崩溃
+        return mp3_decoder_init(&mp3_cfg);
     } else if (strcasecmp(ext, ".aac") == 0 || strcasecmp(ext, ".m4a") == 0) {
         ESP_LOGI(TAG, "Using AAC decoder");
         return aac_decoder_init(&aac_cfg);
@@ -359,8 +357,11 @@ bool audio_player_play(const char *filepath)
         int id3_sz = id3v2_total_size(real_path);
         if (id3_sz > 0) {
             g_id3_skip_bytes = id3_sz;
-            // R076-CODEC: 不再调 audio_element_set_byte_pos 手动跳
-            ESP_LOGI(TAG, "R076-CODEC: ID3v2 detected (%d bytes), skipping manual override", id3_sz);
+            // R079: 恢复 R067 手动跳过 ID3v2 —— 应用层把 reader 起点设到音频帧，
+            // PV-MP3 收到的就是纯音频，不碰 ID3 标签（id3_parse_enable=false）。
+            // R076 误以为库能自处理而移除此处，实测含 ID3v2 的 MP3 必崩。
+            audio_element_set_byte_pos(g_fatfs_reader, id3_sz);
+            ESP_LOGI(TAG, "R079: ID3v2 detected (%d bytes), skipping manually", id3_sz);
         }
     }
 
