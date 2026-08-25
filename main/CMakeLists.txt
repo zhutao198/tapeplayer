@@ -8,6 +8,7 @@ set(COMPONENT_REQUIRES
     audio_pipeline
     audio_stream
     esp-adf-libs
+    esp_audio_codec          # R076-CODEC-17: 单路径用 component manager 拉的 v2.6.2
     lvgl
     esp_lcd
     freetype

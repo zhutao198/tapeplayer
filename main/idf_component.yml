@@ -34,6 +34,15 @@
 ##   - 完全用 ADF 内部 prebuilt .a + ADF 内部 src/*.c，确保版本一致性
 ##   - wrapper (mp3_decoder_esp_codec.c) 继续用 esp_audio_simple_dec_* API，
 ##     但 .so/.a 全部来自 ADF 内置路径
+##
+## 2026-08-25 R076-CODEC-17: 重新添加 espressif/esp_audio_codec v2.6.2 (component manager)
+##   - 用户决策 (2026-08-25): '用最新稳定版, 不再混搭'
+##   - 赌 v2.6.2 的 parser 比 ADF 内置 v2.4.1 在 ID3v2 / 异常 VBR 上更稳
+##   - 唯一单路径: 完全依赖 component manager 拉的 v2.6.2,
+##     不再手工 link ADF 内置的 libesp_audio_codec.a / libesp_audio_simple_dec.a
+##   - 需要在 main/CMakeLists.txt 里手动排除 ADF 内部 esp_audio_codec 链接,
+##     避免双链路符号冲突
+##   - wrapper 改回 esp_audio_simple_dec_open/process 路径 (R076-CODEC-10)
 
 version: 1.0.0
 description: audiobook_player main firmware component
@@ -44,3 +53,5 @@ dependencies:
   lvgl/lvgl:
     version: '>=9.0.0'
   espressif/freetype: '*'
+  espressif/esp_audio_codec:
+    version: '*'
