@@ -8,7 +8,6 @@ set(COMPONENT_REQUIRES
     audio_pipeline
     audio_stream
     esp-adf-libs
-    esp_audio_codec       # R076-CODEC-11: 注册函数 simple_decoder_reg.c 在该组件里编译
     lvgl
     esp_lcd
     freetype

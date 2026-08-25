@@ -25,6 +25,15 @@
 ##   - 之前手工 link libesp_audio_codec.a + libesp_audio_simple_dec.a 是 prebuilt 库，
 ##     但注册函数实现不在 prebuilt 里而是在 esp_audio_codec 组件源码里，所以需显式
 ##     通过 idf component manager 拉该组件
+##
+## 2026-08-25 R076-CODEC-13: 删掉 espressif/esp_audio_codec 依赖
+##   - 切到 ESP-ADF release/v2.x 稳定分支 (eac70fd)，其 esp-adf-libs submodule
+##     锁定 3472016c (master HEAD 2026-08-06，已含 esp_audio v1.8.2 升级)
+##   - 不再依赖 component manager 拉的 espressif/esp_audio_codec v2.6.2 (与 ADF 内置
+##     路径不一致，怀疑这是双链路冲突 / es_parser v1.0.1 新 bug 的来源)
+##   - 完全用 ADF 内部 prebuilt .a + ADF 内部 src/*.c，确保版本一致性
+##   - wrapper (mp3_decoder_esp_codec.c) 继续用 esp_audio_simple_dec_* API，
+##     但 .so/.a 全部来自 ADF 内置路径
 
 version: 1.0.0
 description: audiobook_player main firmware component
@@ -35,5 +44,3 @@ dependencies:
   lvgl/lvgl:
     version: '>=9.0.0'
   espressif/freetype: '*'
-  espressif/esp_audio_codec:
-    version: '*'
