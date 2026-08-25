@@ -133,6 +133,11 @@ static audio_element_err_t _mp3_esp_codec_process(audio_element_handle_t self,
             }
             break;
         }
+        if (ret == ESP_AUDIO_ERR_DATA_LACK) {
+            // R076-CODEC-9: 流式输入数据不够凑一个完整 MP3 frame,正常中间态,
+            // 续喂新块即可,不要 break (break 会导致 i2s 立即 AEL_IO_DONE)
+            break;
+        }
         if (ret != ESP_AUDIO_ERR_OK) {
             ESP_LOGW(TAG, "esp_audio_simple_dec_process err %d, skip %u bytes",
                      ret, raw.len);
