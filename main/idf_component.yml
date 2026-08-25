@@ -55,3 +55,5 @@ dependencies:
   espressif/freetype: '*'
   espressif/esp_audio_codec:
     version: '*'
+  chmorgan/esp-libhelix-mp3:
+    version: ^1.0.3

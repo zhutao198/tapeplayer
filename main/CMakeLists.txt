@@ -31,6 +31,7 @@ idf_component_register(
         "font_partition.cpp"
         "audio_player.cpp"
         "mp3_decoder_esp_codec.c"   # R076-CODEC-7: 开源 MP3 解码器 wrapper (替代闭源 PV-MP3)
+        "mp3_decoder_libhelix.c"   # R080: Helix MP3 解码器 wrapper (替代闭源 PV-MP3, 不崩+坏帧跳过)
         "settings.cpp"
         "bookmark.cpp"
         "power_mgmt.cpp"

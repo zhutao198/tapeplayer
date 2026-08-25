@@ -35,6 +35,7 @@
 #include "raw_stream.h"
 #include "mp3_decoder.h"
 #include "mp3_decoder_esp_codec.h"   // R076-CODEC-7: 开源 MP3 解码器替代闭源 PV-MP3
+#include "mp3_decoder_libhelix.h"    // R080: Helix MP3 替代闭源 PV-MP3（不崩+坏帧跳过）
 #include "aac_decoder.h"
 #include "flac_decoder.h"
 #include "ogg_decoder.h"
@@ -143,14 +144,12 @@ static audio_element_handle_t create_decoder(const char *path)
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
 
     if (strcasecmp(ext, ".mp3") == 0) {
-        // R079 短期回退：esp_audio_codec v2.6.2 + es_parser v1.0.1 对本批 MP3 普遍无声/部分 BREAK(@0x403743c0)，
-        // R076 换库根除判断未经验证。回退到 ADF 内置 PV-MP3（R075 验证能出声，仅部分文件崩），先恢复可用播放。
-        ESP_LOGI(TAG, "Using ADF built-in PV-MP3 decoder (R079 fallback, restore audio)");
-        mp3_cfg.task_stack   = 32 * 1024;
-        mp3_cfg.out_rb_size  = 16 * 1024;
-        mp3_cfg.stack_in_ext = false;
-        mp3_cfg.id3_parse_enable = false;  // R079: 应用层已手动 set_byte_pos 跳过 ID3v2，关闭库内解析避免其解析异常触发崩溃
-        return mp3_decoder_init(&mp3_cfg);
+        // R080: 换 Helix MP3 解码器（chmorgan/esp-libhelix-mp3, Apache-2.0）替代闭源 PV-MP3。
+        // PV-MP3(minimp3) 对本批特定合法 MP3 确定性 BREAK(@0x403743c0) 崩溃（转码 128k/320k 均复现）；
+        // Helix 健壮性更好：错误返回负码不崩溃，坏帧自动跳过，连续错误超阈值返回 DONE 触发跳曲保护。
+        // ID3v2 仍由 play() 中 audio_element_set_byte_pos 手动跳过（decoder 收到纯音频帧）。
+        ESP_LOGI(TAG, "Using Helix MP3 decoder (R080, replace PV-MP3)");
+        return mp3_decoder_libhelix_init(NULL);
     } else if (strcasecmp(ext, ".aac") == 0 || strcasecmp(ext, ".m4a") == 0) {
         ESP_LOGI(TAG, "Using AAC decoder");
         return aac_decoder_init(&aac_cfg);
