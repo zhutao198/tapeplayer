@@ -10,6 +10,7 @@
  * R080: 新增本文件替换 pvmp3。
  */
 #include <string.h>
+#include "esp_log.h"
 #include "audio_element.h"
 #include "audio_mem.h"
 #include "mp3dec.h"
@@ -106,6 +107,7 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
     bool eos = false;
     if (r == AEL_IO_DONE) {
         eos = true;
+        ESP_LOGW("mp3_dec", "DEC-DBG: input returned AEL_IO_DONE (eos), s_in_len=%d", (int)s_in_len);
     } else if (r < 0) {
         return r;
     } else {
@@ -113,6 +115,7 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
     }
 
     if (eos && s_in_len == 0) {
+        ESP_LOGW("mp3_dec", "DEC-DBG: DONE via eos+s_in_len==0");
         return AEL_IO_DONE;
     }
 
@@ -157,17 +160,19 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
                 return w;
             }
             out_total += w;
-        } else if (err == ERR_MP3_INDATA_UNDERFLOW || err == ERR_MP3_MAINDATA_UNDERFLOW) {
+        } else         if (err == ERR_MP3_INDATA_UNDERFLOW || err == ERR_MP3_MAINDATA_UNDERFLOW) {
             /* 数据不足：等下次补更多输入。若缓冲已塞满仍解不出一整帧 -> 损坏，丢弃重来 */
             if (s_in_len >= HELIX_IN_BUF) {
                 c->err_cnt++;
                 if (c->err_cnt > 50) {
+                    ESP_LOGW("mp3_dec", "DEC-DBG: DONE via maindata underflow err_cnt=%d", c->err_cnt);
                     return AEL_IO_DONE;
                 }
                 s_in_len = 0;
             }
             if (eos) {
                 /* 上游已结束且残片不足一帧，直接结束（跳曲保护） */
+                ESP_LOGW("mp3_dec", "DEC-DBG: DONE via eos underflow");
                 return AEL_IO_DONE;
             }
             break;
@@ -175,6 +180,7 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
             /* 坏帧：定位下一个同步字跳过，连续坏帧过多则结束（跳曲） */
             c->err_cnt++;
             if (c->err_cnt > 50) {
+                ESP_LOGW("mp3_dec", "DEC-DBG: DONE via badframe err_cnt=%d", c->err_cnt);
                 return AEL_IO_DONE;
             }
             int off = MP3FindSyncWord(s_in, (int)s_in_len);
