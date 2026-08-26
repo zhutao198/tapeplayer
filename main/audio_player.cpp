@@ -661,18 +661,33 @@ static void audio_player_seek_ms_internal(int ms)
     g_play_offset_us = (int64_t)ms * 1000;
 }
 
+// R085: ADF 的 pause/resume 会重开元素(fatfs_reader/decoder 重新 open)，但不清空 ringbuffer 的
+// done 标志(audio_element_on_cmd_resume 仅在 state 非 PAUSED 时 reset，pause 后 state==PAUSED
+// 被跳过)。若不重置，resume 后 decoder 首次 audio_element_input 即拿到 AEL_IO_DONE → 误判曲终跳
+// 下一首。因此在 resume 前显式重置 decoder 的 input(reader→decoder)/output(decoder→i2s) ringbuffer。
+static void audio_player_pause_seek_resume(int ms)
+{
+    if (!g_pipeline || !g_is_playing || !g_decoder) return;
+    audio_pipeline_pause(g_pipeline);
+    audio_player_seek_ms_internal(ms);
+    audio_element_reset_input_ringbuf(g_decoder);   // 清 reader→decoder 的 done 标志
+    audio_element_reset_output_ringbuf(g_decoder);  // 清 decoder→i2s 的 done 标志
+    audio_pipeline_resume(g_pipeline);
+}
+
 void audio_player_seek_ms(int ms)
 {
     if (!g_pipeline || !g_is_playing) return;
     // S5：保留原暂停态——暂停时 seek 不再静默 resume
     bool was_paused = g_is_paused;
     if (!was_paused) {
-        audio_pipeline_pause(g_pipeline);
-    }
-    audio_player_seek_ms_internal(ms);
-    if (!was_paused) {
-        audio_pipeline_resume(g_pipeline);
+        audio_player_pause_seek_resume(ms);
     } else {
+        audio_player_seek_ms_internal(ms);
+        if (g_decoder) {
+            audio_element_reset_input_ringbuf(g_decoder);
+            audio_element_reset_output_ringbuf(g_decoder);
+        }
         // R035-020：保持 paused：清掉内部函数的 start_us 赋值，避免 get_position_ms 在暂停态累积。
         g_play_start_us = 0;
     }
@@ -820,9 +835,7 @@ void audio_player_tick(void)
         int cur = audio_player_get_position_ms();
         if (cur >= g_ab_b_ms) {
             ESP_LOGD(TAG, "AB loop: seek back to A (%d ms)", g_ab_a_ms);
-            audio_pipeline_pause(g_pipeline);
-            audio_player_seek_ms_internal(g_ab_a_ms);
-            audio_pipeline_resume(g_pipeline);
+            audio_player_pause_seek_resume(g_ab_a_ms);
         }
     }
 
@@ -866,10 +879,8 @@ void audio_player_tick(void)
         if (target_ms < 0) target_ms = 0;
     }
 
-    // M2 + C1: pause 确保 reader idle，seek 后 resume
-    audio_pipeline_pause(g_pipeline);
-    audio_player_seek_ms_internal(target_ms);
-    audio_pipeline_resume(g_pipeline);
+    // M2 + C1: pause 确保 reader idle，seek 后 resume（含 ringbuffer done 标志重置）
+    audio_player_pause_seek_resume(target_ms);
 }
 
 void audio_player_set_callback(audio_status_cb_t cb, void *user_data)
