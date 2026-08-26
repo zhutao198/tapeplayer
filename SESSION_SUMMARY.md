@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-26（R088 — 修复 FF/REW 非帧边界落点连续坏帧误判曲终：真因=落点非帧边界时 Helix 撞大量假同步字(0xFFE)，MP3FindSyncWord 被带偏，err_cnt 单个缓冲内爆表>50 误触跳曲保护；audio_player.cpp 新增 mp3_valid_frame_header + 重写 mp3_frame_align(32KB 扫合法真帧) + resume 也帧对齐；mp3_decoder_libhelix.c 坏帧重同步改扫合法帧头、找到真帧即 err_cnt=0 续播。R087 pause/resume 跳曲：UNDERFLOW 时 AEL_IO_OK→AEL_IO_TIMEOUT；R086 seek rb 重置；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快）
+> **最后更新**：2026-08-26（R090 — 音量 ALC 生效（create_i2s_writer 设 use_alc=true）+ 屏蔽自动 light-sleep（power_mgmt_should_sleep 恒 false，屏幕常亮）。R089 回退 R088（decoder 坏帧重同步 off=0 死循环 WDT 回归）。R087 pause/resume 跳曲：UNDERFLOW 时 AEL_IO_OK→AEL_IO_TIMEOUT；R086 seek rb 重置；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快。FF/REW 偶发跳曲为已知待办）
 
 ---
 

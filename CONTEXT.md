@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-08-26（**🏁 里程碑 v1.0-stable（基于 R088）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（低采样率 24000Hz 不再变快）+ R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲（AEL_IO_OK→AEL_IO_TIMEOUT）+ R088 FF/REW 非帧边界坏帧（合法帧头重同步））
+> **最后更新**：2026-08-26（**🏁 里程碑 v1.0-stable（基于 R090）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（低采样率 24000Hz 不再变快）+ R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲 + R089 回退 R088 + R090 音量 ALC 生效 + 屏蔽自动 light-sleep（屏幕常亮）。FF/REW 偶发跳曲为已知待办）
 
 ---
 
@@ -136,9 +136,11 @@ git status --short            # 未提交改动
 | R085 | 2026-08-26 | `b2eeb9b` | **修复 FF/REW 跳曲 + 进度条不匹配 + 计时器与转轮重叠（两轮）**：① 根因=Helix `err_cnt` 只增不减→跨曲累积>50 误判曲终跳下一首，成功帧复位 `err_cnt`；② seek 落点 `mp3_frame_align` 帧对齐；③ 进度条改真实码率算时长；④ `display.cpp` 计时标签 y=122→130 | ⏳ |
 | R086 | 2026-08-26 | `3c75e83` | **修复 FF/REW seek 后跳曲（残留 done 标志层）**：ADF `pause→resume` 重开元素不清 ringbuffer done 标志；seek 路径新增 `audio_player_pause_seek_resume` 在 resume 前 `audio_element_reset_input/output_ringbuf(g_decoder)` 清两端 done 标志 | ✅(部分) |
 | R087 | 2026-08-26 | `0ae3ef1` | **真正根因修复 pause/resume（及 seek）一恢复即跳曲**：`mp3_decoder_libhelix.c` 在 UNDERFLOW(`out_total==0`) 时返回 `AEL_IO_OK`(0)，ADF `audio_element_process_running` 将 `AEL_IO_OK` 与 `AEL_IO_DONE` 同等对待→立即 set_ringbuf_done+finish 误判曲终；改为返回 `AEL_IO_TIMEOUT`（稍后再试），曲终仍走 eos 的 `AEL_IO_DONE`；`audio_player_resume` 同样加 rb 重置双保险 | ✅ |
-| R088 | 2026-08-26 | `a021cf2`+`18da374` | **修复 FF/REW（及恢复）非帧边界落点连续坏帧误判曲终**：真因=落点非帧边界时 Helix 撞大量假同步字(`0xFFE`)，`MP3FindSyncWord` 被带偏，`err_cnt` 单个缓冲内爆表>50 误触跳曲保护。`audio_player.cpp` 新增 `mp3_valid_frame_header` + 重写 `mp3_frame_align`(32KB 扫合法真帧) + resume 也帧对齐；`mp3_decoder_libhelix.c` 坏帧重同步改扫**合法帧头**、找到真帧即 `err_cnt=0` 续播 | ⏳ |
+| R088 | 2026-08-26 | `a021cf2`+`18da374` | **修复 FF/REW（及恢复）非帧边界落点连续坏帧误判曲终**：真因=落点非帧边界时 Helix 撞大量假同步字(`0xFFE`)，`MP3FindSyncWord` 被带偏，`err_cnt` 单个缓冲内爆表>50 误触跳曲保护。`audio_player.cpp` 新增 `mp3_valid_frame_header` + 重写 `mp3_frame_align`(32KB 扫合法真帧) + resume 也帧对齐；`mp3_decoder_libhelix.c` 坏帧重同步改扫**合法帧头**、找到真帧即 `err_cnt=0` 续播 | ❌(回归,WDT) |
+| R089 | 2026-08-26 | `b1fe453` | **回退 R088**：decoder 坏帧重同步 `mp3_find_valid_sync` 在数据头通过简单校验但 Helix 拒绝时 `off==0` 原地死循环 → decoder 任务不 yield → WDT 播放回归；`git checkout 0ae3ef1` 完全回退到 R087。恢复可播放 | ✅ |
+| R090 | 2026-08-26 | `3a6d3e6` | **音量 ALC 生效 + 屏蔽自动 light-sleep 息屏**：`create_i2s_writer` 设 `use_alc=true` 使 `i2s_alc_volume_set` 生效（原默认 false 仅告警无效）；`power_mgmt_should_sleep()` 恒返回 false（用户决定屏蔽自动息屏，屏保本身 R055 已禁用，黑屏真源是 light sleep 且偶发唤醒失败） | ⏳ |
 
-> **🏁 里程碑 `v1.0-stable`（2026-08-26，基于 R088）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（修复低采样率 MP3 变快）+ R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲（AEL_IO_OK→AEL_IO_TIMEOUT）+ R088 FF/REW 非帧边界坏帧（合法帧头重同步）。回滚：`git checkout v1.0-stable` / `git checkout R088`。
+> **🏁 里程碑 `v1.0-stable`（2026-08-26，基于 R090）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置 + R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲（AEL_IO_OK→AEL_IO_TIMEOUT）+ R089 回退 R088 + R090 音量 ALC 生效 + 屏蔽自动 light-sleep（屏幕常亮）。FF/REW 偶发跳曲为已知待办。回滚：`git checkout v1.0-stable` / `git checkout R090`。
 
 > 注：R061–R075 多节点在开发日志中详细记录，但**历史未全部建 tag**（仅 R030/R048/R059-stage-end/R076-* 有 tag）；R076 系列已建 `R076-CODEC-*` annotated tag。
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`。（注：R016/R017/R041 编号在历史上被跳过/合并，不影响连续性）
