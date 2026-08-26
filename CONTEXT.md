@@ -133,7 +133,7 @@ git status --short            # 未提交改动
 | R082 | 2026-08-25 | `ebf5fcb` | **修复低采样率 MP3 变快变尖（理论误判）**：改解码器逐帧解析 MPEG 帧头上报 i2s；真机验证无效——证明 i2s 运行时忽略解码器上报，根因在 play() 硬锁时钟 → 引 R083 | ⚠️ |
 | R083 | 2026-08-26 | `ab26ae5` | **真因修复**：根因是 `play()` 用固定 `AUDIO_SAMPLE_RATE`(48000) 硬锁 I2S 时钟，`i2s_stream.c` 无 REPORT_MUSIC_INFO 回调故解码器上报无效；新增 `mp3_sniff_sample_rate` 在 play() 嗅探文件真实采样率并据此设 I2S 时钟（speed 倍率改以文件基准速率计） | ✅ |
 | R084 | 2026-08-26 | `948b9b9` | **修复 R083 栈溢出崩溃**：`mp3_sniff_sample_rate` 栈缓冲 8192→1024，消除 main 任务栈溢出（R083 后播放任意歌曲即崩） | ✅ |
-| R085 | 2026-08-26 | `0a59443` | **修复 FF/REW 跳曲 + 进度条不匹配 + 计时器与转轮重叠**：`mp3_sniff_sample_rate` 增 bitrate 输出，时长改按真实码率算（进度条到 100%）；`audio_player_seek_ms_internal` 删除对 decoder 的 `set_byte_pos`（消除 resume 时 AEL_IO_DONE 导致的"短按 FF/REW 跳下一首"）；`display.cpp` 计时标签 y=122→130 避转轮重叠 | ⏳ |
+| R085 | 2026-08-26 | `b2eeb9b` | **修复 FF/REW 跳曲 + 进度条不匹配 + 计时器与转轮重叠（两轮）**：① 根因=Helix `err_cnt` 只增不减→跨曲累积>50 误判曲终跳下一首，成功帧复位 `err_cnt`；② seek 落点 `mp3_frame_align` 帧对齐；③ 进度条改真实码率算时长；④ `display.cpp` 计时标签 y=122→130 | ⏳ |
 
 > **🏁 里程碑 `v1.0-stable`（2026-08-26，基于 R085）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（修复低采样率 MP3 变快）+ R084 修复栈溢出崩溃 + R085 修复 FF/REW 跳曲/进度条/计时器重叠。回滚：`git checkout v1.0-stable` / `git checkout R085`。
 

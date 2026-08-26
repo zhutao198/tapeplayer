@@ -238,7 +238,7 @@
 - ✅ **R082 完成——修复低采样率 MP3 变快变尖**：用户指出真正异常是 `躲避的爱.mp3`（ffmpeg 确认 24000Hz），Helix 对其**每帧持续误报 ~44100** → R081 逐帧比对无效；改为**每帧自行解析 MPEG 帧头**取真实采样率/声道上报 i2s，绕过 Helix 误报；构建通过，待真机验证（🏁 里程碑 `v1.0-stable` 移到 R082）
 - ⚠️ **R083 真因修复但引入回归**：R083 改 `play()` 在打开 I2S 前用真实文件采样率设时钟（新增 `mp3_sniff_sample_rate` 嗅探帧头），根因是 `play()` 此前用固定 `AUDIO_SAMPLE_RATE`(48000) 硬锁 I2S，且 `i2s_stream.c` 无 REPORT_MUSIC_INFO 回调→解码器上报无效；但 `mp3_sniff_sample_rate` 在 main 任务栈开 8KB 缓冲导致**播放任意歌曲即栈溢出崩**，用户实测全崩 → 引 R084
 - ✅ **R084 完成——修复栈溢出崩溃**：`mp3_sniff_sample_rate` 栈缓冲 8192→1024（仅扫首帧 4 字节，1KB 足够），消除 main 任务栈溢出；全新 `build/` 构建通过，待真机验证（🏁 里程碑 `v1.0-stable` 移到 R084）
-- ⏳ **R085 进行——修复 3 项交互/UI 回归**：① 进度条不匹配——`mp3_sniff_sample_rate` 增 bitrate 输出，`play()` 时长改按真实码率（`g_total_file_bytes*8/bitrate_kbps`）算，进度条可到 100%；② 计时文字与转轮重叠——`display.cpp` 计时标签 y=122→130；③ FF/REW 跳曲——根因是 `audio_player_seek_ms_internal` 对 decoder 调 `set_byte_pos(0)`，decoder 输入是 ringbuffer（不可 seek），resume 时 seek 失败返回 `AEL_IO_DONE` 致当前曲"播完"跳下一首，删除该调用即可（MP3 管线只 seek 源 `g_fatfs_reader`，decoder 自动重新同步帧）。已构建+烧录，待真机验证（🏁 里程碑 `v1.0-stable` 移到 R085）
+- ⏳ **R085 进行——修复 3 项交互/UI 回归（两轮）**：第一轮误判 FF/REW 跳曲为 decoder `set_byte_pos(0)`，删后仍跳曲。真因：① Helix decoder `err_cnt` 成功帧后从不复位，跨曲累积>50→误判曲终跳下一首（任何坏帧场景都会触发，含开头 ID3 未跳过）；② seek 非帧对齐落点吃垃圾。修复：`mp3_decoder_libhelix.c` 成功帧 `err_cnt=0`；`audio_player.cpp` 新增 `mp3_frame_align` 帧对齐 + `g_seek_path`；进度条改真实码率算时长；`display.cpp` 计时标签 y=122→130。已构建+烧录第二轮（b2eeb9b），待真机验证（🏁 里程碑 `v1.0-stable` 在 R085）
 
 ---
 
