@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-26（R087 — 真正根因修复 pause/resume(及 seek) 一恢复即跳曲：mp3_decoder_libhelix.c 在 UNDERFLOW(out_total==0) 返回 AEL_IO_OK(0)，ADF audio_element_process_running 将 AEL_IO_OK 与 AEL_IO_DONE 同等对待→立即 set_ringbuf_done+finish 误判曲终；改为返回 AEL_IO_TIMEOUT；audio_player_resume 同样加 rb 重置双保险；R086 seek rb 重置；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快）
+> **最后更新**：2026-08-26（R088 — 修复 FF/REW 非帧边界落点连续坏帧误判曲终：真因=落点非帧边界时 Helix 撞大量假同步字(0xFFE)，MP3FindSyncWord 被带偏，err_cnt 单个缓冲内爆表>50 误触跳曲保护；audio_player.cpp 新增 mp3_valid_frame_header + 重写 mp3_frame_align(32KB 扫合法真帧) + resume 也帧对齐；mp3_decoder_libhelix.c 坏帧重同步改扫合法帧头、找到真帧即 err_cnt=0 续播。R087 pause/resume 跳曲：UNDERFLOW 时 AEL_IO_OK→AEL_IO_TIMEOUT；R086 seek rb 重置；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快）
 
 ---
 
