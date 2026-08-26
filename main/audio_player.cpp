@@ -76,7 +76,8 @@ static uint32_t     g_total_file_bytes = 0;
 // seek byte_pos = id3_skip + (ms * audio_bytes / duration_ms)，
 // audio_bytes = total_file_bytes - id3_skip_bytes。
 static int          g_id3_skip_bytes = 0;
-static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // R076-CODEC: I2S 当前采样率缓存 (48kHz via AUDIO_SAMPLE_RATE 定义)
+static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // R076-CODEC: I2S 当前采样率缓存 (去重 i2s_set_clk 调用)
+static int          g_base_sample_rate   = AUDIO_SAMPLE_RATE;  // R083: 当前曲目真实基准速率(供 speed 倍率计算)
 
 
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
@@ -119,6 +120,37 @@ static int id3v2_total_size(const char *path)
                 | ((uint32_t)(hdr[9] & 0x7F));
     int total = 10 + (int)sz;
     return total > 0 ? total : -1;
+}
+
+// R083: 打开文件嗅探首个 MP3 音频帧头的真实采样率，用于把 I2S 时钟设成文件实际速率
+// （否则 I2S 被 R076-CODEC 锁死在 48000Hz，低采样率文件会被放快变尖）。
+// 返回采样率(Hz)，失败返回 0。需跳过 ID3v2(id3_sz) 从首个音频帧开始扫。
+static int mp3_sniff_sample_rate(const char *path, int id3_sz)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    if (fseek(fp, id3_sz, SEEK_SET) != 0) { fclose(fp); return 0; }
+    uint8_t buf[8192];
+    size_t n = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    static const int rates[3][4] = {
+        {11025, 12000, 8000, 0},   // MPEG2.5
+        {22050, 24000, 16000, 0},  // MPEG2
+        {44100, 48000, 32000, 0},  // MPEG1
+    };
+    for (size_t i = 0; i + 4 <= n; i++) {
+        uint8_t b0 = buf[i], b1 = buf[i + 1], b2 = buf[i + 2];
+        // 帧同步 11bit + 合法 layer(非00) + 合法 bitrate(非1111) + 合法 samplerate(非11)
+        if (b0 == 0xFF && (b1 & 0xE0) == 0xE0 &&
+            (b1 & 0x06) != 0 && (b2 & 0xF0) != 0xF0 && (b2 & 0x0C) != 0x0C) {
+            int vbits = (b1 >> 3) & 3;
+            int ver = (vbits == 3) ? 2 : (vbits == 2) ? 1 : 0;  // 3=MPEG1,2=MPEG2,0=MPEG2.5
+            int sri = (b2 >> 2) & 3;
+            int rate = rates[ver][sri];
+            if (rate > 0) return rate;
+        }
+    }
+    return 0;
 }
 
 static audio_status_cb_t g_status_cb = NULL;
@@ -349,6 +381,7 @@ bool audio_player_play(const char *filepath)
     // - 去掉手动 ID3v2 字节跳过 (R067/R076-EXP)，让 DEFAULT_MP3_DECODER_CONFIG 自己处理
     // - i2s 时钟改为 48000Hz（MAX98357A 支持 8k-96kHz；PV-MP3 在 44.1kHz 路径可能有 bug 触发 BREAK）
     g_id3_skip_bytes = 0;  // R076-CODEC: 保留用于 seek 修正，但不再手动跳过
+    int file_rate = AUDIO_SAMPLE_RATE;  // R083: 默认基准 48000，下述 mp3 会嗅探真实速率
     if (strcasecmp(get_file_ext(filepath), ".mp3") == 0) {
         const char *mp3_path = strstr(filepath, "://");
         const char *real_path = mp3_path ? mp3_path + 3 : filepath;
@@ -362,11 +395,21 @@ bool audio_player_play(const char *filepath)
             audio_element_set_byte_pos(g_fatfs_reader, id3_sz);
             ESP_LOGI(TAG, "R079: ID3v2 detected (%d bytes), skipping manually", id3_sz);
         }
+        // R083: 嗅探首个音频帧真实采样率，让 I2S 时钟匹配文件（避免被锁 48000 放快）
+        int sn = mp3_sniff_sample_rate(real_path, g_id3_skip_bytes);
+        if (sn > 0) {
+            file_rate = sn;
+            ESP_LOGI(TAG, "R083: sniffed MP3 sample rate = %d Hz", sn);
+        } else {
+            ESP_LOGW(TAG, "R083: sniff MP3 sample rate failed, fallback %d Hz", file_rate);
+        }
     }
 
-    // 7. 设置 I2S 时钟 — 改用 48000Hz 替代 44100Hz (R076-CODEC: AUDIO_SAMPLE_RATE 现已为 48000)
-    g_current_sample_rate = AUDIO_SAMPLE_RATE;
-    i2s_stream_set_clk(g_i2s_writer, AUDIO_SAMPLE_RATE, 16, 2);
+    // 7. 设置 I2S 时钟 — R083: 改用文件真实速率(mp3 嗅探)替代固定的 AUDIO_SAMPLE_RATE(48000)，
+    //    否则低采样率文件(如 24000Hz 的躲避的爱)会被 48000 时钟放快变尖。
+    g_base_sample_rate   = file_rate;
+    g_current_sample_rate = file_rate;
+    i2s_stream_set_clk(g_i2s_writer, file_rate, 16, 2);
 
     // 8. 启动管道（R032-209: 检查返回值，失败即终止，避免进入播放态却无声）
     if (audio_pipeline_run(g_pipeline) != ESP_OK) {
@@ -625,17 +668,17 @@ void audio_player_set_speed(float speed)
     if (speed > 0) {
         // C3: 跳帧模式 — I2S 正常速率，seek 跳帧提供"快进"感（R034-011）
         if (tape_control_is_scrub_mode()) {
-            sample_rate = AUDIO_SAMPLE_RATE;
+            sample_rate = g_base_sample_rate;
         } else {
-            sample_rate = (int)(AUDIO_SAMPLE_RATE * speed);
-            // R035-009: sample_rate limits derived from AUDIO_SAMPLE_RATE * {0.5, 4.0}
-            if (sample_rate < (AUDIO_SAMPLE_RATE / 2)) sample_rate = AUDIO_SAMPLE_RATE / 2;
-            if (sample_rate > (AUDIO_SAMPLE_RATE * 4)) sample_rate = AUDIO_SAMPLE_RATE * 4;
+            // R083: 以文件真实基准速率倍乘，而非固定 AUDIO_SAMPLE_RATE(48000)
+            sample_rate = (int)(g_base_sample_rate * speed);
+            if (sample_rate < (g_base_sample_rate / 2)) sample_rate = g_base_sample_rate / 2;
+            if (sample_rate > (g_base_sample_rate * 4)) sample_rate = g_base_sample_rate * 4;
         }
     } else {
         // R032-203：快退（speed<0）方向由 audio_player_tick 的跳帧向后 seek 实现，
         // 此处保持正常音高不变调（负采样率只会让音高失真，且跳帧已能模拟快退听感）。
-        sample_rate = AUDIO_SAMPLE_RATE;
+        sample_rate = g_base_sample_rate;
     }
 
     // 缓存命中则跳过冗余的 i2s_set_clk 调用
