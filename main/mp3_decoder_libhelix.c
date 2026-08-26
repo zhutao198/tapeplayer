@@ -193,7 +193,12 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
         }
     }
 
-    return (out_total > 0) ? out_total : AEL_IO_OK;
+    // R086: 本帧未能解出(out_total==0，多为输入尚不足一整帧的 UNDERFLOW)时，必须返回
+    // AEL_IO_TIMEOUT 而非 AEL_IO_OK。ADF 的 audio_element_process_running 把 AEL_IO_OK(0)
+    // 与 AEL_IO_DONE 同等对待(直接 set_ringbuf_done + finish)，会导致 decoder 一恢复/seek 后
+    // 因“暂无解码输出”被误判曲终跳下一首。AEL_IO_TIMEOUT 让 ADF 继续等待后续输入重试，
+    // 真正的曲终仍由 eos 分支(AEL_IO_DONE)处理。
+    return (out_total > 0) ? out_total : AEL_IO_TIMEOUT;
 }
 
 audio_element_handle_t mp3_decoder_libhelix_init(const mp3_decoder_libhelix_cfg_t *config)

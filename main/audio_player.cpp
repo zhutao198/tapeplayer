@@ -532,6 +532,13 @@ void audio_player_resume(void)
 {
     if (g_is_playing && g_is_paused && g_pipeline) {
         g_play_start_us = esp_timer_get_time();
+        // R086: 同 seek 路径，普通 resume 也会因 ADF pause→resume 不清 ringbuffer done 标志而
+        // 残留 done 态：resume 后 decoder 一读即 AEL_IO_DONE 误判曲终跳下一首。恢复前重置 decoder
+        // 的 input(reader→decoder)/output(decoder→i2s) ringbuffer。
+        if (g_decoder) {
+            audio_element_reset_input_ringbuf(g_decoder);
+            audio_element_reset_output_ringbuf(g_decoder);
+        }
         audio_pipeline_resume(g_pipeline);
         g_is_paused = false;
         ESP_LOGI(TAG, "Resumed");
