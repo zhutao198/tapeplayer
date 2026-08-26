@@ -64,20 +64,15 @@ static int g_vol_gain_q15 = 32768;
 
 void mp3_decoder_set_volume(int level)
 {
-    /* level 0..14 -> 0dB(最大, 统一增益 32768) .. -50dB(可闻的较小声)，恒定 ~3.6dB 步进。
-       用 0..-50dB 而非 -96dB：-96dB 低档低于可听阈导致无声，高档 6.9dB 步进又偏大。
-       -50dB 档位可闻、高档步进减半，接近感知线性。 */
+    /* level 0..14 -> 线性增益 gain = level/14 (Q15: 32768=1.0)。
+       用户要求"线性"：dB 曲线(即使 0..-50dB)最低几档仍低至 -40dB 以下经功放听不到。
+       线性增益下第 1 档≈-23dB(可闻)、第 2/3 档 -17/-13.4dB(清楚)，高档步进小不跳变。 */
     if (level <= 0) {
         g_vol_gain_q15 = 0;
     } else if (level >= 14) {
         g_vol_gain_q15 = 32768;
     } else {
-        float db = -(14.0f - (float)level) * 50.0f / 14.0f;
-        float gain = powf(10.0f, db / 20.0f);
-        int q = (int)(gain * 32768.0f + 0.5f);
-        if (q > 32768) q = 32768;
-        if (q < 0)     q = 0;
-        g_vol_gain_q15 = q;
+        g_vol_gain_q15 = (int)(((uint32_t)level * 32768u) / 14u);
     }
 }
 
