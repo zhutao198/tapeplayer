@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-08-25（**🏁 里程碑 v1.0-stable**：R080 libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护，真机验证全部 MP3 正常播放不崩）
+> **最后更新**：2026-08-25（**🏁 里程碑 v1.0-stable（基于 R081）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + 采样率每帧校正，真机全部 MP3 可播放不崩、语速正常）
 
 ---
 
@@ -129,8 +129,9 @@ git status --short            # 未提交改动
 | R078 | 2026-08-25 | `5f109df` | 删 `decoder_event_cb`（误把 i2s_writer 当 rsp_filter 句柄踩内存）+ 删 `g_rsp_filter` 死链（崩未根除，仅清理 UB 死链） | ✅ |
 | R079 | 2026-08-25 | `d9d428f` | .mp3 回退 PV-MP3 恢复声音；栈 internal 32K+16K rb 消噪音；崩溃根因后证为 PV-MP3 对特定合法 MP3 确定性崩溃（转码 128k/320k 均复现），转码不能根治 → 引 R080 | ✅ |
 | R080 | 2026-08-25 | `e234fc5` | **根治 MP3 崩溃**：.mp3 解码器换 Helix MP3(libhelix, Apache-2.0)，彻底绕开闭源 PV-MP3；坏帧/连续错误>50→返回 AEL_IO_DONE 触发 audio_player_tick 自动跳下一首（跳曲保护）| ✅ |
+| R081 | 2026-08-25 | `2eb0d94` | **修复个别 MP3 语速/音调异常**：解码器由"首帧上报一次"改为"每帧比对采样率/声道/位宽变化才上报"，纠正 Helix 首帧误报高采样率导致整首变快变尖 | ✅ |
 
-> **🏁 里程碑 `v1.0-stable`（2026-08-25）**：R080 真机验证全部 MP3 正常播放、崩溃根除，打 annotated tag `v1.0-stable`（基于 `e234fc5`）。首个全功能稳定固件。回滚：`git checkout v1.0-stable` / `git checkout R080`。
+> **🏁 里程碑 `v1.0-stable`（2026-08-25，基于 R081）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + 采样率每帧校正，真机全部 MP3 可播放不崩、语速正常。回滚：`git checkout v1.0-stable` / `git checkout R081`。
 
 > 注：R061–R075 多节点在开发日志中详细记录，但**历史未全部建 tag**（仅 R030/R048/R059-stage-end/R076-* 有 tag）；R076 系列已建 `R076-CODEC-*` annotated tag。
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`。（注：R016/R017/R041 编号在历史上被跳过/合并，不影响连续性）
