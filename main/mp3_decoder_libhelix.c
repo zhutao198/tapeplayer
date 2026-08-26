@@ -131,6 +131,7 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
         size_t consumed = s_in_len - (size_t)bytesLeft;
 
         if (err == ERR_MP3_NONE) {
+            c->err_cnt = 0;   // R085: 成功解出一帧即清零坏帧计数，避免 err_cnt 跨整曲单调累积到 >50 导致误判曲终(AEL_IO_DONE→跳下一首)
             if (consumed > 0) {
                 memmove(s_in, s_in + consumed, s_in_len - consumed);
                 s_in_len -= consumed;

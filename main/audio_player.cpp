@@ -76,6 +76,7 @@ static uint32_t     g_total_file_bytes = 0;
 // seek byte_pos = id3_skip + (ms * audio_bytes / duration_ms)，
 // audio_bytes = total_file_bytes - id3_skip_bytes。
 static int          g_id3_skip_bytes = 0;
+static char         g_seek_path[256] = {0};  // R085: 保存当前曲目真实路径，供 seek 帧对齐扫描使用
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // R076-CODEC: I2S 当前采样率缓存 (去重 i2s_set_clk 调用)
 static int          g_base_sample_rate   = AUDIO_SAMPLE_RATE;  // R083: 当前曲目真实基准速率(供 speed 倍率计算)
 
@@ -402,10 +403,13 @@ bool audio_player_play(const char *filepath)
     g_id3_skip_bytes = 0;  // R076-CODEC: 保留用于 seek 修正，但不再手动跳过
     int file_rate = AUDIO_SAMPLE_RATE;  // R083: 默认基准 48000，下述 mp3 会嗅探真实速率
     int bitrate_kbps = 0;               // R085: 嗅探到的真实码率，用于准确估算 duration
+    g_seek_path[0] = '\0';  // R085: 非 MP3 时清空，避免 seek 帧对齐误用上一首的路径
     if (strcasecmp(get_file_ext(filepath), ".mp3") == 0) {
         const char *mp3_path = strstr(filepath, "://");
         const char *real_path = mp3_path ? mp3_path + 3 : filepath;
         if (real_path[0] == '/' && real_path[1] == '/') real_path++;
+        strncpy(g_seek_path, real_path, sizeof(g_seek_path) - 1);  // R085: 供 seek 帧对齐扫描
+
         int id3_sz = id3v2_total_size(real_path);
         if (id3_sz > 0) {
             g_id3_skip_bytes = id3_sz;
@@ -607,27 +611,45 @@ void audio_player_seek(int seconds)
     audio_player_seek_ms(seconds * 1000);
 }
 
+// R085: 将 seek 落点向前扫描到下一个 MP3 帧同步字(0xFF [111]xxxx)，
+// 避免非帧对齐定位导致解码器开头吃一截垃圾、坏帧累积触发误判曲终。
+static int mp3_frame_align(const char *path, int byte_pos)
+{
+    if (!path || !*path) return byte_pos;
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return byte_pos;
+    if (fseek(fp, byte_pos, SEEK_SET) != 0) { fclose(fp); return byte_pos; }
+    uint8_t buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    for (size_t i = 0; i + 1 < n; i++) {
+        if (buf[i] == 0xFF && (buf[i + 1] & 0xE0) == 0xE0) {
+            return byte_pos + (int)i;
+        }
+    }
+    return byte_pos;  // 未找到同步字则不强行对齐
+}
+
 static void audio_player_seek_ms_internal(int ms)
 {
     if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
 
+    // R067：g_total_file_bytes 已经是音频字节数（去掉 ID3v2）；
+    // seek 目标 = id3_skip + ms * audio_bytes / duration。
+    int64_t byte_pos = 0;
     if (g_total_duration_ms > 0 && g_total_file_bytes > 0) {
-        // R067：g_total_file_bytes 已经是音频字节数（去掉 ID3v2）；
-        // seek 目标 = id3_skip + ms * audio_bytes / duration。
-        // R028/L1: int64_t 中转避免 uint64 隐式截断
-        int64_t byte_pos = g_id3_skip_bytes
-                         + (int64_t)ms * g_total_file_bytes / g_total_duration_ms;
-        // R032-002 复审修订：ADF audio_element_set_byte_pos 入参为 int（32-bit），
-        // 必须钳位到 INT32_MAX，避免 >2.1 GB 文件隐式窄化截断导致 seek 失准/跳轨。
-        if (byte_pos > INT32_MAX) byte_pos = INT32_MAX;
-        audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);
+        byte_pos = g_id3_skip_bytes + (int64_t)ms * g_total_file_bytes / g_total_duration_ms;
     } else if (g_total_file_bytes > 0) {
-        int64_t byte_pos = g_id3_skip_bytes
-                         + (int64_t)ms * g_total_file_bytes / 3600000;
-        // R032-002 复审修订：ADF 入参为 int，必须钳位避免窄化截断。
-        if (byte_pos > INT32_MAX) byte_pos = INT32_MAX;
-        audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);
+        byte_pos = g_id3_skip_bytes + (int64_t)ms * g_total_file_bytes / 3600000;
     }
+    // R032-002 复审修订：ADF audio_element_set_byte_pos 入参为 int（32-bit），钳位避免窄化截断。
+    if (byte_pos > INT32_MAX) byte_pos = INT32_MAX;
+    if (byte_pos < 0) byte_pos = 0;
+    // R085: MP3 帧对齐，减少解码器坏帧（叠加 err_cnt 误判曲终）
+    if (strcasecmp(get_file_ext(g_seek_path), ".mp3") == 0) {
+        byte_pos = mp3_frame_align(g_seek_path, (int)byte_pos);
+    }
+    audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);
 
     // R085: 不再对 decoder 做 set_byte_pos。decoder 的底层输入是 ringbuffer（不可 seek），
     // 在其上 set_byte_pos(0) 会导致 resume 时解码器对自身输入执行 seek 失败并立即返回
