@@ -122,11 +122,13 @@ static int id3v2_total_size(const char *path)
     return total > 0 ? total : -1;
 }
 
-// R083: 打开文件嗅探首个 MP3 音频帧头的真实采样率，用于把 I2S 时钟设成文件实际速率
-// （否则 I2S 被 R076-CODEC 锁死在 48000Hz，低采样率文件会被放快变尖）。
-// 返回采样率(Hz)，失败返回 0。需跳过 ID3v2(id3_sz) 从首个音频帧开始扫。
-static int mp3_sniff_sample_rate(const char *path, int id3_sz)
+// R083/R085: 打开文件嗅探首个 MP3 音频帧头，得到真实采样率与码率。
+// 采样率用于把 I2S 时钟设成文件实际速率（否则被 R076-CODEC 锁死 48000Hz 放快）；
+// 码率用于按真实比特率估算 duration（替代固定 128kbps 估算，修复进度条到不了一端）。
+// 返回采样率(Hz)，失败返回 0；*bitrate_kbps 输出码率(kbps)，失败置 0。需跳过 ID3v2(id3_sz)。
+static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps)
 {
+    if (bitrate_kbps) *bitrate_kbps = 0;
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
     if (fseek(fp, id3_sz, SEEK_SET) != 0) { fclose(fp); return 0; }
@@ -138,6 +140,18 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz)
         {22050, 24000, 16000, 0},  // MPEG2
         {44100, 48000, 32000, 0},  // MPEG1
     };
+    // 码率表 [version:0=MPEG2.5,1=MPEG2,2=MPEG1][layer:0=I,1=II,2=III][bitrate_index 1..14]
+    static const int br[3][3][14] = {
+        { {32,48,56,64,80,96,112,128,144,160,176,192,224,256},    // MPEG2.5 L1
+          { 8,16,24,32,40,48,56,64,80,96,112,128,144,160},        // MPEG2.5 L2
+          { 8,16,24,32,40,48,56,64,80,96,112,128,144,160} },      // MPEG2.5 L3
+        { {32,48,56,64,80,96,112,128,144,160,176,192,224,256},    // MPEG2 L1
+          { 8,16,24,32,40,48,56,64,80,96,112,128,144,160},        // MPEG2 L2
+          { 8,16,24,32,40,48,56,64,80,96,112,128,144,160} },      // MPEG2 L3
+        { {32,64,96,128,160,192,224,256,288,320,352,384,416,448}, // MPEG1 L1
+          {32,48,56,64,80,96,112,128,160,192,224,256,320,384},    // MPEG1 L2
+          {32,40,48,56,64,80,96,112,128,160,192,224,256,320} },   // MPEG1 L3
+    };
     for (size_t i = 0; i + 4 <= n; i++) {
         uint8_t b0 = buf[i], b1 = buf[i + 1], b2 = buf[i + 2];
         // 帧同步 11bit + 合法 layer(非00) + 合法 bitrate(非1111) + 合法 samplerate(非11)
@@ -145,9 +159,14 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz)
             (b1 & 0x06) != 0 && (b2 & 0xF0) != 0xF0 && (b2 & 0x0C) != 0x0C) {
             int vbits = (b1 >> 3) & 3;
             int ver = (vbits == 3) ? 2 : (vbits == 2) ? 1 : 0;  // 3=MPEG1,2=MPEG2,0=MPEG2.5
+            int layer = (b1 >> 1) & 3;                           // 1=L1,2=L2,3=L3
+            int bi = (b2 >> 4) & 0x0F;                           // bitrate index 1..14
             int sri = (b2 >> 2) & 3;
             int rate = rates[ver][sri];
-            if (rate > 0) return rate;
+            if (rate > 0 && layer >= 1 && bi >= 1 && bi <= 14) {
+                if (bitrate_kbps) *bitrate_kbps = br[ver][layer - 1][bi - 1];
+                return rate;
+            }
         }
     }
     return 0;
@@ -382,6 +401,7 @@ bool audio_player_play(const char *filepath)
     // - i2s 时钟改为 48000Hz（MAX98357A 支持 8k-96kHz；PV-MP3 在 44.1kHz 路径可能有 bug 触发 BREAK）
     g_id3_skip_bytes = 0;  // R076-CODEC: 保留用于 seek 修正，但不再手动跳过
     int file_rate = AUDIO_SAMPLE_RATE;  // R083: 默认基准 48000，下述 mp3 会嗅探真实速率
+    int bitrate_kbps = 0;               // R085: 嗅探到的真实码率，用于准确估算 duration
     if (strcasecmp(get_file_ext(filepath), ".mp3") == 0) {
         const char *mp3_path = strstr(filepath, "://");
         const char *real_path = mp3_path ? mp3_path + 3 : filepath;
@@ -396,7 +416,7 @@ bool audio_player_play(const char *filepath)
             ESP_LOGI(TAG, "R079: ID3v2 detected (%d bytes), skipping manually", id3_sz);
         }
         // R083: 嗅探首个音频帧真实采样率，让 I2S 时钟匹配文件（避免被锁 48000 放快）
-        int sn = mp3_sniff_sample_rate(real_path, g_id3_skip_bytes);
+        int sn = mp3_sniff_sample_rate(real_path, g_id3_skip_bytes, &bitrate_kbps);
         if (sn > 0) {
             file_rate = sn;
             ESP_LOGI(TAG, "R083: sniffed MP3 sample rate = %d Hz", sn);
@@ -455,24 +475,31 @@ bool audio_player_play(const char *filepath)
     // 注意：实际编码比特率与文件有关，进度条仅作粗略展示，不用于精确 seek。
     g_total_duration_ms = 0;
     if (g_total_file_bytes > 0) {
-        const char *ext = get_file_ext(filepath);
-        int bytes_per_ms;
-        if (strcasecmp(ext, ".mp3") == 0 || strcasecmp(ext, ".aac") == 0 ||
-            strcasecmp(ext, ".m4a") == 0 || strcasecmp(ext, ".ogg") == 0) {
-            bytes_per_ms = 16;
-        } else if (strcasecmp(ext, ".opus") == 0) {
-            bytes_per_ms = 12;
-        } else if (strcasecmp(ext, ".flac") == 0) {
-            bytes_per_ms = 64;
-        } else if (strcasecmp(ext, ".wav") == 0) {
-            bytes_per_ms = 176;
+        // R085: 优先用嗅探到的真实 MP3 码率算时长（duration_ms = 字节数*8/码率_kbps），
+        // 修复固定 128kbps 估算导致进度条到不了一端的问题；其余格式仍回退字节率估算。
+        if (bitrate_kbps > 0) {
+            g_total_duration_ms = (int)((int64_t)g_total_file_bytes * 8 / bitrate_kbps);
+            ESP_LOGD(TAG, "Duration from real MP3 bitrate: %d ms (%dkbps)", g_total_duration_ms, bitrate_kbps);
         } else {
-            bytes_per_ms = 16;  // fallback 同 MP3
+            const char *ext = get_file_ext(filepath);
+            int bytes_per_ms;
+            if (strcasecmp(ext, ".mp3") == 0 || strcasecmp(ext, ".aac") == 0 ||
+                strcasecmp(ext, ".m4a") == 0 || strcasecmp(ext, ".ogg") == 0) {
+                bytes_per_ms = 16;
+            } else if (strcasecmp(ext, ".opus") == 0) {
+                bytes_per_ms = 12;
+            } else if (strcasecmp(ext, ".flac") == 0) {
+                bytes_per_ms = 64;
+            } else if (strcasecmp(ext, ".wav") == 0) {
+                bytes_per_ms = 176;
+            } else {
+                bytes_per_ms = 16;  // fallback 同 MP3
+            }
+            g_total_duration_ms = g_total_file_bytes / bytes_per_ms;
+            ESP_LOGD(TAG, "Duration estimated from file size: %d ms (bytes/ms=%d, ext=%s)",
+                     g_total_duration_ms, bytes_per_ms, ext);
+            ESP_LOGW(TAG, "Estimated duration is approximate; progress bar/seek may be imprecise");
         }
-        g_total_duration_ms = g_total_file_bytes / bytes_per_ms;
-        ESP_LOGD(TAG, "Duration estimated from file size: %d ms (bytes/ms=%d, ext=%s)",
-                 g_total_duration_ms, bytes_per_ms, ext);
-        ESP_LOGW(TAG, "Estimated duration is approximate; progress bar/seek may be imprecise");
     }
 
     // 11. 应用当前音量
@@ -602,8 +629,11 @@ static void audio_player_seek_ms_internal(int ms)
         audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);
     }
 
-    // C1: 重置 decoder byte_pos，使其从 reader 新位置重新开始解码
-    audio_element_set_byte_pos(g_decoder, 0);
+    // R085: 不再对 decoder 做 set_byte_pos。decoder 的底层输入是 ringbuffer（不可 seek），
+    // 在其上 set_byte_pos(0) 会导致 resume 时解码器对自身输入执行 seek 失败并立即返回
+    // AEL_IO_DONE —— 表现为“短按 FF/REW 直接播到曲尾跳下一首”。MP3 解码管线只需对源
+    // 元素（fatfs_reader）seek，decoder 会从 ringbuffer 新数据自动重新同步帧边界。
+    // （原 C1 逻辑已废弃）
 
     g_play_start_us = esp_timer_get_time();
     g_play_offset_us = (int64_t)ms * 1000;
@@ -622,8 +652,6 @@ void audio_player_seek_ms(int ms)
         audio_pipeline_resume(g_pipeline);
     } else {
         // R035-020：保持 paused：清掉内部函数的 start_us 赋值，避免 get_position_ms 在暂停态累积。
-        // 注意此处依赖 audio_player_seek_ms_internal 已写入正确的 g_play_offset_us，
-        // 否则 seek 后的位置计算会偏移。如有疑问，请同时审计 seek_ms_internal。
         g_play_start_us = 0;
     }
 }

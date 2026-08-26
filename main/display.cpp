@@ -621,17 +621,17 @@ static void ui_create(void)
 
     /* 时间行: 当前(左) / 档位(中) / 总时长(右) */
     lbl_cur = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_cur, M, 122);
+    lv_obj_set_pos(lbl_cur, M, 130);
     lv_obj_set_style_text_color(lbl_cur, lv_color_hex(0x8a93a6), 0);
     lv_obj_set_style_text_font(lbl_cur, &lv_font_montserrat_14, 0);
 
     lbl_gear = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_gear, W / 2 - 22, 122);
+    lv_obj_set_pos(lbl_gear, W / 2 - 22, 130);
     lv_obj_set_style_text_color(lbl_gear, lv_color_hex(0xf5a623), 0);
     lv_obj_set_style_text_font(lbl_gear, &lv_font_montserrat_14, 0);
 
     lbl_dur = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_dur, W - M, 122);
+    lv_obj_set_pos(lbl_dur, W - M, 130);
     lv_obj_set_style_text_align(lbl_dur, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_dur, lv_color_hex(0x8a93a6), 0);
     lv_obj_set_style_text_font(lbl_dur, &lv_font_montserrat_14, 0);
