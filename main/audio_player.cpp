@@ -228,6 +228,7 @@ static audio_element_handle_t create_i2s_writer(void)
 {
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
     i2s_cfg.type = AUDIO_STREAM_WRITER;
+    i2s_cfg.use_alc = true;   // 启用 ALC，使 i2s_alc_volume_set 音量调节生效（否则仅告警且无效）
     i2s_cfg.std_cfg.gpio_cfg.bclk = I2S_BCK_IO;
     i2s_cfg.std_cfg.gpio_cfg.ws   = I2S_WS_IO;
     i2s_cfg.std_cfg.gpio_cfg.dout = I2S_DOUT_IO;

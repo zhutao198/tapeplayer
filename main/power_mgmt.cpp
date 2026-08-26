@@ -155,9 +155,9 @@ void power_mgmt_record_activity(void)
 
 bool power_mgmt_should_sleep(void)
 {
-    if (g_auto_off_min > 0) return false;  // 定时关机开启时不自动休眠
-    uint64_t idle_us = esp_timer_get_time() - g_last_activity_us;
-    return idle_us >= SLEEP_TIMEOUT_US;
+    // 用户决定（R089 后）：屏蔽所有自动息屏/休眠，开机即屏幕常亮。
+    // 此前 light sleep 会使屏幕熄灭且偶发无法恢复。恒返回 false → 永不自动休眠。
+    return false;
 }
 
 void power_mgmt_set_auto_off(int minutes)
