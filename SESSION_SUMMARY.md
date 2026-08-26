@@ -233,7 +233,7 @@
 - ✅ **R076 新增模块——统一设置菜单** `menu.cpp`（A-B 复读 / 按键音 / 蓝牙 / OTA 等统一入口）
 - ✅ **R078 完成——清理解码器 UB 死链**：删 `decoder_event_cb`（误把 i2s_writer 当 rsp_filter 句柄踩内存）+ 删 `g_rsp_filter` 死链（崩未根除，R076 开源库路径随后证伪）
 - ✅ **R079 完成（进行中）——.mp3 回退 PV-MP3 恢复声音+噪音消除**：栈 internal 32K+out_rb 16K；但崩溃根因后证为 PV-MP3 对特定合法 MP3 确定性崩溃（转码 128k/320k 均复现），转码不能根治 → 引 R080
-- ✅ **R080 完成——.mp3 解码器换 Helix MP3(libhelix) 根治崩溃**：新增 `mp3_decoder_libhelix.c/.h`，`create_decoder` 的 .mp3 分支改用 `mp3_decoder_libhelix_init`（彻底绕开闭源 PV-MP3）；坏帧/连续错误>50→返回 AEL_IO_DONE，由 `audio_player_tick` 监测 FINISHED 触发 `on_track_finished` 自动播下一首（跳曲保护）；构建通过，待真机验证
+- ✅ **R080 完成——.mp3 解码器换 Helix MP3(libhelix) 根治崩溃**：新增 `mp3_decoder_libhelix.c/.h`，`create_decoder` 的 .mp3 分支改用 `mp3_decoder_libhelix_init`（彻底绕开闭源 PV-MP3）；坏帧/连续错误>50→返回 AEL_IO_DONE，由 `audio_player_tick` 监测 FINISHED 触发 `on_track_finished` 自动播下一首（跳曲保护）；**2026-08-25 真机验证全部 MP3 正常播放不崩（🏁 里程碑 `v1.0-stable`，基于 `e234fc5`）**
 
 ---
 
@@ -433,7 +433,7 @@
 ## 6. 未来方向
 
 ### 下次会话
-1. **烧录验证 R080**：R080（libhelix 根治 MP3 崩溃 + 坏帧跳曲保护）逐项真机验证——白桦树/相反的我是否不再崩、坏文件是否自动跳下一首
+1. ✅ **R080 已验证（🏁 里程碑 v1.0-stable）**：libhelix 根治 PV-MP3 崩溃真机通过，全部 MP3 正常播放不崩、跳曲保护生效；下一步 V1.1 打磨（定时关机 ADC 实装、A-B 复读 UX、按键音、屏保）
 2. **V1.1 打磨**：定时关机（ADC 实装）、A-B 复读 UX、按键提示音、屏幕保护
 3. **蓝牙音箱真机测试**：手机 A2DP 配对推流、AVRCP 播放/暂停/音量透传、断线回退喇叭
 4. **字体/显示验收**：中文字体清晰度、多字号、font 分区烧录流程固化
