@@ -64,13 +64,15 @@ static int g_vol_gain_q15 = 32768;
 
 void mp3_decoder_set_volume(int level)
 {
-    /* level 0..14 -> 0dB(最大, 统一增益 32768) .. -96dB(静音, 0)，线性感知(dB) */
+    /* level 0..14 -> 0dB(最大, 统一增益 32768) .. -50dB(可闻的较小声)，恒定 ~3.6dB 步进。
+       用 0..-50dB 而非 -96dB：-96dB 低档低于可听阈导致无声，高档 6.9dB 步进又偏大。
+       -50dB 档位可闻、高档步进减半，接近感知线性。 */
     if (level <= 0) {
         g_vol_gain_q15 = 0;
     } else if (level >= 14) {
         g_vol_gain_q15 = 32768;
     } else {
-        float db = -(14.0f - (float)level) * 96.0f / 14.0f;
+        float db = -(14.0f - (float)level) * 50.0f / 14.0f;
         float gain = powf(10.0f, db / 20.0f);
         int q = (int)(gain * 32768.0f + 0.5f);
         if (q > 32768) q = 32768;
