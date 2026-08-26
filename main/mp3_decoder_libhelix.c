@@ -15,6 +15,39 @@
 #include "mp3dec.h"
 #include "mp3_decoder_libhelix.h"
 
+/* 自行解析 MPEG 音频帧头，取真实采样率/声道。
+   原因：Helix 的 MP3GetLastFrameInfo 对部分文件（如 躲避的爱.mp3, 24000Hz）误报为更高采样率，
+   导致 i2s 时钟跑快变尖；自行解析帧头可得与 ffmpeg 一致的真实值。 */
+static int mp3_hdr_samplerate(const unsigned char *p)
+{
+    if (!p || (p[0] & 0xFF) != 0xFF || (p[1] & 0xE0) != 0xE0) {
+        return 0;
+    }
+    int ver = (p[1] >> 3) & 0x03;
+    int sri = (p[2] >> 2) & 0x03;
+    if (sri == 3) {
+        return 0;
+    }
+    if (ver == 3) {        /* MPEG1 */
+        int t[] = {44100, 48000, 32000, 0};
+        return t[sri];
+    } else if (ver == 2) { /* MPEG2 */
+        int t[] = {22050, 24000, 16000, 0};
+        return t[sri];
+    }
+    int t[] = {11025, 12000, 8000, 0}; /* MPEG2.5 (ver==0) */
+    return t[sri];
+}
+
+static int mp3_hdr_channels(const unsigned char *p)
+{
+    if (!p || (p[0] & 0xFF) != 0xFF || (p[1] & 0xE0) != 0xE0) {
+        return -1;
+    }
+    int ch = (p[3] >> 6) & 0x03;
+    return (ch == 3) ? 1 : 2; /* 3=mono, 其余=stereo */
+}
+
 /* 单次喂给 Helix 的输入缓冲（足够容纳一个最大 MP3 帧 ~1441B + 余量） */
 #define HELIX_IN_BUF   2048
 /* 单帧 PCM 输出上限：2ch * 1152 样本 * 2B = 4608B */
@@ -87,6 +120,13 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
     while (s_in_len > 0) {
         unsigned char *inptr = s_in;
         int bytesLeft = (int)s_in_len;
+        /* 解码前捕获当前帧头（缓冲区起点即 Helix 即将解的那一帧），自行解析真实采样率/声道 */
+        unsigned char hdr[4];
+        int have_hdr = 0;
+        if (s_in_len >= 4 && (s_in[0] & 0xFF) == 0xFF && (s_in[1] & 0xE0) == 0xE0) {
+            memcpy(hdr, s_in, 4);
+            have_hdr = 1;
+        }
         int err = MP3Decode(c->decoder, &inptr, &bytesLeft, s_pcm, 0);
         size_t consumed = s_in_len - (size_t)bytesLeft;
 
@@ -97,13 +137,17 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
             }
             MP3FrameInfo fi;
             MP3GetLastFrameInfo(c->decoder, &fi);
-            /* 每帧比对：首帧上报；若 Helix 对后续帧上报的采样率/声道/位宽变化，
-               立即重配 i2s 时钟（避免首帧误报高采样率导致整首变快） */
-            if (fi.samprate != c->last_rate || fi.nChans != c->last_ch ||
+            /* 用自行解析的真实采样率/声道上报 i2s（不信任 Helix 误报的高采样率）；
+               逐帧比对，变化才重配时钟 */
+            int true_rate = have_hdr ? mp3_hdr_samplerate(hdr) : fi.samprate;
+            int true_ch   = have_hdr ? mp3_hdr_channels(hdr)  : fi.nChans;
+            if (true_rate <= 0) true_rate = fi.samprate;
+            if (true_ch   < 0)  true_ch   = fi.nChans;
+            if (true_rate != c->last_rate || true_ch != c->last_ch ||
                 fi.bitsPerSample != c->last_bits) {
-                audio_element_set_music_info(self, fi.samprate, fi.nChans, fi.bitsPerSample);
-                c->last_rate  = fi.samprate;
-                c->last_ch    = fi.nChans;
+                audio_element_set_music_info(self, true_rate, true_ch, fi.bitsPerSample);
+                c->last_rate  = true_rate;
+                c->last_ch    = true_ch;
                 c->last_bits  = fi.bitsPerSample;
             }
             size_t outlen = (size_t)fi.outputSamps * sizeof(short);
