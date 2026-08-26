@@ -228,7 +228,7 @@ static audio_element_handle_t create_i2s_writer(void)
 {
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
     i2s_cfg.type = AUDIO_STREAM_WRITER;
-    i2s_cfg.use_alc = true;   // 启用 ALC，使 i2s_alc_volume_set 音量调节生效（否则仅告警且无效）
+    i2s_cfg.use_alc = false;  // R091: ALC 在 IDF5.x 崩溃(alc_volume_setup_process BREAK)，音量改由 decoder 软件缩放
     i2s_cfg.std_cfg.gpio_cfg.bclk = I2S_BCK_IO;
     i2s_cfg.std_cfg.gpio_cfg.ws   = I2S_WS_IO;
     i2s_cfg.std_cfg.gpio_cfg.dout = I2S_DOUT_IO;
@@ -761,23 +761,12 @@ void audio_player_set_speed(float speed)
     }
 }
 
-/* 内部：仅设置 g_volume 并应用 I2S ALC（不触达 BT 回传，避免音量循环） */
+/* 内部：仅设置 g_volume 并应用 decoder 软件音量（不触达 BT 回传，避免音量循环）。
+   R091: 弃用 i2s ALC（IDF5.x 下 alc_volume_setup_process BREAK 崩溃），改由 decoder 缩放 PCM。 */
 static void apply_volume_alc(int volume)
 {
     g_volume = volume;
-    if (g_i2s_writer) {
-        int alc_vol;
-        if (volume <= 0) {
-            alc_vol = VOL_DB_MIN;                          // -96 dB 静音
-        } else {
-            // 线性 dB：level 0..14 映射到 -96..+12，四舍五入
-            alc_vol = VOL_DB_MIN + (volume * (VOL_DB_MAX - VOL_DB_MIN) + VOLUME_LEVEL_MAX / 2) / VOLUME_LEVEL_MAX;
-        }
-        // 安全钳位 (i2s_alc_volume_set 仅接受 -96..+12)
-        if (alc_vol < VOL_DB_MIN) alc_vol = VOL_DB_MIN;
-        if (alc_vol > VOL_DB_MAX) alc_vol = VOL_DB_MAX;
-        i2s_alc_volume_set(g_i2s_writer, alc_vol);
-    }
+    mp3_decoder_set_volume(volume);   // 设置全局增益，decoder 每帧输出前缩放
 }
 
 void audio_player_set_volume(int volume)

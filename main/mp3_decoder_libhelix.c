@@ -10,6 +10,7 @@
  * R080: 新增本文件替换 pvmp3。
  */
 #include <string.h>
+#include <math.h>
 #include "audio_element.h"
 #include "audio_mem.h"
 #include "mp3dec.h"
@@ -56,6 +57,27 @@ static int mp3_hdr_channels(const unsigned char *p)
 static short      s_pcm[HELIX_PCM_SAMPLES];
 static unsigned char s_in[HELIX_IN_BUF];
 static size_t     s_in_len = 0;   /* s_in 中尚未喂给 Helix 的字节数 */
+
+/* R091: 软件音量。Q15 固定点增益(32768=1.0 统一)，由 mp3_decoder_set_volume 设置，
+   _mp3_helix_process 输出前缩放 PCM。替代 ADF 脆弱的 i2s ALC（IDF5.x 会 BREAK 崩溃）。 */
+static int g_vol_gain_q15 = 32768;
+
+void mp3_decoder_set_volume(int level)
+{
+    /* level 0..14 -> 0dB(最大, 统一增益 32768) .. -96dB(静音, 0)，线性感知(dB) */
+    if (level <= 0) {
+        g_vol_gain_q15 = 0;
+    } else if (level >= 14) {
+        g_vol_gain_q15 = 32768;
+    } else {
+        float db = -(14.0f - (float)level) * 96.0f / 14.0f;
+        float gain = powf(10.0f, db / 20.0f);
+        int q = (int)(gain * 32768.0f + 0.5f);
+        if (q > 32768) q = 32768;
+        if (q < 0)     q = 0;
+        g_vol_gain_q15 = q;
+    }
+}
 
 typedef struct {
     HMP3Decoder decoder;
@@ -152,6 +174,15 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
                 c->last_bits  = fi.bitsPerSample;
             }
             size_t outlen = (size_t)fi.outputSamps * sizeof(short);
+            if (g_vol_gain_q15 != 32768) {
+                /* R091: 软件音量缩放 Q15，输出前处理，避免 i2s ALC 崩溃 */
+                for (int i = 0; i < fi.outputSamps; i++) {
+                    int v = ((int)s_pcm[i] * g_vol_gain_q15) >> 15;
+                    if (v >  32767) v =  32767;
+                    if (v < -32768) v = -32768;
+                    s_pcm[i] = (short)v;
+                }
+            }
             audio_element_err_t w = audio_element_output(self, (char *)s_pcm, (int)outlen);
             if (w < 0) {
                 return w;

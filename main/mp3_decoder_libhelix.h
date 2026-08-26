@@ -46,6 +46,13 @@ typedef struct {
  */
 audio_element_handle_t mp3_decoder_libhelix_init(const mp3_decoder_libhelix_cfg_t *config);
 
+/**
+ * @brief  设置解码器软件音量（R091：替代 ADF 脆弱的 i2s ALC，改在 decoder 侧缩放 PCM）
+ *
+ * @param[in]  level  逻辑音量 0..14（0=静音，14=最大/0dB 统一增益）
+ */
+void mp3_decoder_set_volume(int level);
+
 #ifdef __cplusplus
 }
 #endif
