@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-08-26（**🏁 里程碑 v1.0-stable（基于 R091）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（低采样率 24000Hz 不再变快）+ R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲 + R089 回退 R088 + R090 屏蔽自动 light-sleep（屏幕常亮）+ R091 音量 decoder 软件缩放（弃 ALC）。FF/REW 偶发跳曲为已知待办）
+> **最后更新**：2026-08-26（**🏁 里程碑 v1.0-stable（基于 R092）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（低采样率 24000Hz 不再变快）+ R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲 + R089 回退 R088 + R090 屏蔽自动 light-sleep（屏幕常亮）+ R091 音量 decoder 软件缩放（弃 ALC）+ R092 音量曲线 0..-50dB。FF/REW 偶发跳曲为已知待办）
 
 ---
 
@@ -139,9 +139,10 @@ git status --short            # 未提交改动
 | R088 | 2026-08-26 | `a021cf2`+`18da374` | **修复 FF/REW（及恢复）非帧边界落点连续坏帧误判曲终**：真因=落点非帧边界时 Helix 撞大量假同步字(`0xFFE`)，`MP3FindSyncWord` 被带偏，`err_cnt` 单个缓冲内爆表>50 误触跳曲保护。`audio_player.cpp` 新增 `mp3_valid_frame_header` + 重写 `mp3_frame_align`(32KB 扫合法真帧) + resume 也帧对齐；`mp3_decoder_libhelix.c` 坏帧重同步改扫**合法帧头**、找到真帧即 `err_cnt=0` 续播 | ❌(回归,WDT) |
 | R089 | 2026-08-26 | `b1fe453` | **回退 R088**：decoder 坏帧重同步 `mp3_find_valid_sync` 在数据头通过简单校验但 Helix 拒绝时 `off==0` 原地死循环 → decoder 任务不 yield → WDT 播放回归；`git checkout 0ae3ef1` 完全回退到 R087。恢复可播放 | ✅ |
 | R090 | 2026-08-26 | `3a6d3e6` | **屏蔽自动 light-sleep 息屏**：`power_mgmt_should_sleep()` 恒 false（屏幕常亮）。音量 ALC 尝试因崩溃由 R091 推翻 | ✅(屏幕) |
-| R091 | 2026-08-26 | `52f9c70` | **音量改 decoder 软件 PCM 缩放**：i2s ALC（use_alc=true）在 IDF5.x 下 `alc_volume_setup_process` BREAK 崩溃（PC 0x403743c0）→ 弃用；decoder 新增 `g_vol_gain_q15`+`mp3_decoder_set_volume`（level 0..14→0..-96dB）+ 输出前 Q15 缩放钳位；`apply_volume_alc` 改调 decoder setter；`use_alc` 恢复 false | ⏳ |
+| R091 | 2026-08-26 | `52f9c70` | **音量改 decoder 软件 PCM 缩放**：i2s ALC（use_alc=true）在 IDF5.x 下 `alc_volume_setup_process` BREAK 崩溃（PC 0x403743c0）→ 弃用；decoder 新增 `g_vol_gain_q15`+`mp3_decoder_set_volume`+ 输出前 Q15 缩放钳位；`apply_volume_alc` 改调 decoder setter；`use_alc` 恢复 false | ✅ |
+| R092 | 2026-08-26 | `b37bdc4` | **音量曲线 0..-50dB**：R091 的 0..-96dB 低档静音、高档步进大(6.9dB)；改 0..-50dB 恒定 3.6dB 步进，低档可闻、高档更细腻、感知线性 | ⏳ |
 
-> **🏁 里程碑 `v1.0-stable`（2026-08-26，基于 R091）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置 + R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲 + R089 回退 R088 + R090 屏蔽 light-sleep（屏幕常亮）+ R091 音量 decoder 软件缩放（弃 ALC）。FF/REW 偶发跳曲为已知待办。回滚：`git checkout v1.0-stable` / `git checkout R091`。
+> **🏁 里程碑 `v1.0-stable`（2026-08-26，基于 R092）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置 + R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲 + R089 回退 R088 + R090 屏蔽 light-sleep（屏幕常亮）+ R091 音量 decoder 软件缩放（弃 ALC）+ R092 音量曲线 0..-50dB。FF/REW 偶发跳曲为已知待办。回滚：`git checkout v1.0-stable` / `git checkout R092`。
 
 > 注：R061–R075 多节点在开发日志中详细记录，但**历史未全部建 tag**（仅 R030/R048/R059-stage-end/R076-* 有 tag）；R076 系列已建 `R076-CODEC-*` annotated tag。
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`。（注：R016/R017/R041 编号在历史上被跳过/合并，不影响连续性）
