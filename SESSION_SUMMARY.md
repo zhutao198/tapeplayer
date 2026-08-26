@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-26（R085 — 修复 FF/REW 跳曲/进度条不匹配/计时器与转轮重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快）
+> **最后更新**：2026-08-26（R086 — 彻底修复 FF/REW seek 后跳曲：ADF pause→resume 不清 ringbuffer done 标志，seek 路径新增 audio_player_pause_seek_resume 在 resume 前 reset_input+reset_output_ringbuf(g_decoder)；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快）
 
 ---
 

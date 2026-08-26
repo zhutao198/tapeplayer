@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-08-26（**🏁 里程碑 v1.0-stable（基于 R085）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（低采样率 24000Hz 不再变快）+ R084 修栈溢出 + R085 修 FF/REW 跳曲/进度条/计时器重叠）
+> **最后更新**：2026-08-26（**🏁 里程碑 v1.0-stable（基于 R086）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（低采样率 24000Hz 不再变快）+ R084 修栈溢出 + R085 进度条/计时器重叠 + R086 彻底修 FF/REW seek 跳曲）
 
 ---
 
@@ -134,8 +134,9 @@ git status --short            # 未提交改动
 | R083 | 2026-08-26 | `ab26ae5` | **真因修复**：根因是 `play()` 用固定 `AUDIO_SAMPLE_RATE`(48000) 硬锁 I2S 时钟，`i2s_stream.c` 无 REPORT_MUSIC_INFO 回调故解码器上报无效；新增 `mp3_sniff_sample_rate` 在 play() 嗅探文件真实采样率并据此设 I2S 时钟（speed 倍率改以文件基准速率计） | ✅ |
 | R084 | 2026-08-26 | `948b9b9` | **修复 R083 栈溢出崩溃**：`mp3_sniff_sample_rate` 栈缓冲 8192→1024，消除 main 任务栈溢出（R083 后播放任意歌曲即崩） | ✅ |
 | R085 | 2026-08-26 | `b2eeb9b` | **修复 FF/REW 跳曲 + 进度条不匹配 + 计时器与转轮重叠（两轮）**：① 根因=Helix `err_cnt` 只增不减→跨曲累积>50 误判曲终跳下一首，成功帧复位 `err_cnt`；② seek 落点 `mp3_frame_align` 帧对齐；③ 进度条改真实码率算时长；④ `display.cpp` 计时标签 y=122→130 | ⏳ |
+| R086 | 2026-08-26 | `3c75e83` | **彻底修复 FF/REW seek 后跳曲**：真因=ADF `pause→resume` 重开元素但不清 ringbuffer done 标志（`audio_element_on_cmd_resume` 仅非 PAUSED 态才 reset），resume 后 decoder 输入 rb 仍 done→立即 AEL_IO_DONE 误判曲终；seek 路径新增 `audio_player_pause_seek_resume` 在 resume 前 `audio_element_reset_input_ringbuf`+`reset_output_ringbuf(g_decoder)` 清两端 done 标志 | ⏳ |
 
-> **🏁 里程碑 `v1.0-stable`（2026-08-26，基于 R085）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（修复低采样率 MP3 变快）+ R084 修复栈溢出崩溃 + R085 修复 FF/REW 跳曲/进度条/计时器重叠。回滚：`git checkout v1.0-stable` / `git checkout R085`。
+> **🏁 里程碑 `v1.0-stable`（2026-08-26，基于 R086）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（修复低采样率 MP3 变快）+ R084 修复栈溢出崩溃 + R085 进度条/计时器重叠 + R086 彻底修复 FF/REW seek 跳曲。回滚：`git checkout v1.0-stable` / `git checkout R086`。
 
 > 注：R061–R075 多节点在开发日志中详细记录，但**历史未全部建 tag**（仅 R030/R048/R059-stage-end/R076-* 有 tag）；R076 系列已建 `R076-CODEC-*` annotated tag。
 > 详细变更见 `开发日志.md`，回滚命令：`git checkout <tag>`。（注：R016/R017/R041 编号在历史上被跳过/合并，不影响连续性）
