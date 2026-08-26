@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-26（R090 — 音量 ALC 生效（create_i2s_writer 设 use_alc=true）+ 屏蔽自动 light-sleep（power_mgmt_should_sleep 恒 false，屏幕常亮）。R089 回退 R088（decoder 坏帧重同步 off=0 死循环 WDT 回归）。R087 pause/resume 跳曲：UNDERFLOW 时 AEL_IO_OK→AEL_IO_TIMEOUT；R086 seek rb 重置；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快。FF/REW 偶发跳曲为已知待办）
+> **最后更新**：2026-08-26（R091 — 音量改 decoder 软件 PCM 缩放（Q15，弃用 i2s ALC：use_alc=true 在 IDF5.x 下 alc_volume_setup_process BREAK 崩溃 PC 0x403743c0）；mp3_decoder_set_volume(level 0..14→0..-96dB)+输出前缩放钳位。R090 屏蔽自动 light-sleep（屏幕常亮）。R089 回退 R088（decoder 坏帧重同步 off=0 死循环 WDT 回归）。R087 pause/resume 跳曲：UNDERFLOW 时 AEL_IO_OK→AEL_IO_TIMEOUT；R086 seek rb 重置；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快。FF/REW 偶发跳曲为已知待办）
 
 ---
 
