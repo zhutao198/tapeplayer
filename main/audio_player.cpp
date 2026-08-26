@@ -130,7 +130,7 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz)
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
     if (fseek(fp, id3_sz, SEEK_SET) != 0) { fclose(fp); return 0; }
-    uint8_t buf[8192];
+    uint8_t buf[1024];   // R083-fix: 仅需扫首个帧头(4B)，1KB 足够；避免大栈数组撑爆 main 任务栈
     size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
     static const int rates[3][4] = {
