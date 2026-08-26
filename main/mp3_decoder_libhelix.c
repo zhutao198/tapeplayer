@@ -26,7 +26,9 @@ static size_t     s_in_len = 0;   /* s_in 中尚未喂给 Helix 的字节数 */
 
 typedef struct {
     HMP3Decoder decoder;
-    bool        reported;   /* 是否已上报采样率/声道，用于 i2s 重配时钟 */
+    int         last_rate;  /* 上次上报的采样率，用于变化时重配 i2s 时钟 */
+    int         last_ch;    /* 上次上报的声道数 */
+    int         last_bits;  /* 上次上报的位宽 */
     int         err_cnt;    /* 连续不可恢复错误计数（坏帧/溢出） */
 } helix_ctx_t;
 
@@ -95,9 +97,14 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
             }
             MP3FrameInfo fi;
             MP3GetLastFrameInfo(c->decoder, &fi);
-            if (!c->reported) {
+            /* 每帧比对：首帧上报；若 Helix 对后续帧上报的采样率/声道/位宽变化，
+               立即重配 i2s 时钟（避免首帧误报高采样率导致整首变快） */
+            if (fi.samprate != c->last_rate || fi.nChans != c->last_ch ||
+                fi.bitsPerSample != c->last_bits) {
                 audio_element_set_music_info(self, fi.samprate, fi.nChans, fi.bitsPerSample);
-                c->reported = true;
+                c->last_rate  = fi.samprate;
+                c->last_ch    = fi.nChans;
+                c->last_bits  = fi.bitsPerSample;
             }
             size_t outlen = (size_t)fi.outputSamps * sizeof(short);
             audio_element_err_t w = audio_element_output(self, (char *)s_pcm, (int)outlen);
