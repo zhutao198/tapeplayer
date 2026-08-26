@@ -10,7 +10,6 @@
  * R080: 新增本文件替换 pvmp3。
  */
 #include <string.h>
-#include "esp_log.h"
 #include "audio_element.h"
 #include "audio_mem.h"
 #include "mp3dec.h"
@@ -47,34 +46,6 @@ static int mp3_hdr_channels(const unsigned char *p)
     }
     int ch = (p[3] >> 6) & 0x03;
     return (ch == 3) ? 1 : 2; /* 3=mono, 其余=stereo */
-}
-
-/* R088: 校验是否为合法 MPEG 音频帧头（同步+版本+层+码率索引+采样率索引全合法）。
-   用于坏帧重同步时跳过假同步、定位真帧起点。 */
-static int mp3_valid_frame(const unsigned char *p)
-{
-    if (!p || p[0] != 0xFF) return 0;
-    if ((p[1] & 0xE0) != 0xE0) return 0;
-    int ver = (p[1] >> 3) & 0x03;
-    if (ver == 1) return 0;            /* 版本保留值非法 */
-    int layer = (p[1] >> 1) & 0x03;
-    if (layer == 0) return 0;          /* 层保留值非法 */
-    int bitrate = (p[2] >> 4) & 0x0F;
-    if (bitrate == 0 || bitrate == 0x0F) return 0; /* 自由格式/无效码率索引 */
-    int sr = (p[2] >> 2) & 0x03;
-    if (sr == 3) return 0;             /* 采样率索引无效 */
-    return 1;
-}
-
-/* R088: 在 buf[0..len) 中找第一个合法 MPEG 帧头偏移，找不到返回 -1 */
-static int mp3_find_valid_sync(const unsigned char *buf, int len)
-{
-    for (int i = 0; i + 3 < len; i++) {
-        if (mp3_valid_frame(buf + i)) {
-            return i;
-        }
-    }
-    return -1;
 }
 
 /* 单次喂给 Helix 的输入缓冲（足够容纳一个最大 MP3 帧 ~1441B + 余量） */
@@ -135,7 +106,6 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
     bool eos = false;
     if (r == AEL_IO_DONE) {
         eos = true;
-        ESP_LOGW("mp3_dec", "DEC-DBG: input returned AEL_IO_DONE (eos), s_in_len=%d", (int)s_in_len);
     } else if (r < 0) {
         return r;
     } else {
@@ -143,7 +113,6 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
     }
 
     if (eos && s_in_len == 0) {
-        ESP_LOGW("mp3_dec", "DEC-DBG: DONE via eos+s_in_len==0");
         return AEL_IO_DONE;
     }
 
@@ -188,39 +157,30 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
                 return w;
             }
             out_total += w;
-        } else         if (err == ERR_MP3_INDATA_UNDERFLOW || err == ERR_MP3_MAINDATA_UNDERFLOW) {
+        } else if (err == ERR_MP3_INDATA_UNDERFLOW || err == ERR_MP3_MAINDATA_UNDERFLOW) {
             /* 数据不足：等下次补更多输入。若缓冲已塞满仍解不出一整帧 -> 损坏，丢弃重来 */
             if (s_in_len >= HELIX_IN_BUF) {
                 c->err_cnt++;
                 if (c->err_cnt > 50) {
-                    ESP_LOGW("mp3_dec", "DEC-DBG: DONE via maindata underflow err_cnt=%d", c->err_cnt);
                     return AEL_IO_DONE;
                 }
                 s_in_len = 0;
             }
             if (eos) {
                 /* 上游已结束且残片不足一帧，直接结束（跳曲保护） */
-                ESP_LOGW("mp3_dec", "DEC-DBG: DONE via eos underflow");
                 return AEL_IO_DONE;
             }
             break;
         } else {
-            /* 坏帧：R088 改为扫描"合法帧头"重同步（而非任意 0xFFE 同步字）。
-               音频数据里随机出现的假同步会被 MP3FindSyncWord 命中，Helix 连续解码失败、
-               err_cnt 在单个缓冲内快速爆表 → 误触 R080 跳曲保护切下一首。
-               改为：找到合法帧头即跳过垃圾并清零 err_cnt 续播；只有长时间找不到合法帧
-               （真损坏）才 err_cnt 爆表结束。 */
-            int off = mp3_find_valid_sync(s_in, (int)s_in_len);
+            /* 坏帧：定位下一个同步字跳过，连续坏帧过多则结束（跳曲） */
+            c->err_cnt++;
+            if (c->err_cnt > 50) {
+                return AEL_IO_DONE;
+            }
+            int off = MP3FindSyncWord(s_in, (int)s_in_len);
             if (off < 0) {
-                c->err_cnt++;
-                if (c->err_cnt > 50) {
-                    ESP_LOGW("mp3_dec", "DEC-DBG: DONE via badframe err_cnt=%d", c->err_cnt);
-                    return AEL_IO_DONE;
-                }
                 s_in_len = 0;
             } else {
-                /* 找到合法帧头：跳到它并清零坏帧计数，继续解码 */
-                c->err_cnt = 0;
                 memmove(s_in, s_in + off, s_in_len - (size_t)off);
                 s_in_len -= (size_t)off;
             }

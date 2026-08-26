@@ -518,8 +518,6 @@ bool audio_player_play(const char *filepath)
     return true;
 }
 
-static int mp3_frame_align(const char *path, int byte_pos);  // R088: 前向声明（定义在 seek 段，resume 先用）
-
 void audio_player_pause(void)
 {
     if (g_is_playing && !g_is_paused && g_pipeline) {
@@ -534,19 +532,6 @@ void audio_player_resume(void)
 {
     if (g_is_playing && g_is_paused && g_pipeline) {
         g_play_start_us = esp_timer_get_time();
-        // R088: 恢复起点做 MP3 帧对齐——暂停点常落在帧中间，Helix 从非帧边界起手会连续坏帧、
-        // err_cnt 爆表触发 R080 跳曲保护误判曲终。这里取 reader 当前字节位置，向前对齐到下一个
-        // 合法帧头（reader 已暂停，set_byte_pos 在 resume 重开时经 lseek 生效）。
-        if (strcasecmp(get_file_ext(g_seek_path), ".mp3") == 0 && g_fatfs_reader) {
-            audio_element_info_t info;
-            audio_element_getinfo(g_fatfs_reader, &info);
-            int cur = (int)info.byte_pos;
-            int aligned = mp3_frame_align(g_seek_path, cur);
-            if (aligned > cur) {
-                audio_element_set_byte_pos(g_fatfs_reader, aligned);
-                // 帧对齐会向前跳一小截(亚帧级，可忽略)，位置显示以对齐后为准即可
-            }
-        }
         // R086: 同 seek 路径，普通 resume 也会因 ADF pause→resume 不清 ringbuffer done 标志而
         // 残留 done 态：resume 后 decoder 一读即 AEL_IO_DONE 误判曲终跳下一首。恢复前重置 decoder
         // 的 input(reader→decoder)/output(decoder→i2s) ringbuffer。
@@ -633,45 +618,23 @@ void audio_player_seek(int seconds)
     audio_player_seek_ms(seconds * 1000);
 }
 
-// R088: 校验是否为"合法"MPEG 音频帧头。仅同步字(0xFF [111]xxxx)不够——音频数据里会随机
-// 出现假同步，Helix 撞上假同步会连续坏帧、err_cnt 爆表触发 R080 跳曲保护误判曲终。
-// 必须同时校验版本/层/码率索引/采样率索引都在合法范围，才是真帧起点。
-static bool mp3_valid_frame_header(const uint8_t *p)
-{
-    if (p[0] != 0xFF) return false;
-    if ((p[1] & 0xE0) != 0xE0) return false;
-    int ver = (p[1] >> 3) & 0x03;
-    if (ver == 1) return false;            // 版本保留值非法
-    int layer = (p[1] >> 1) & 0x03;
-    if (layer == 0) return false;          // 层保留值非法
-    int bitrate = (p[2] >> 4) & 0x0F;
-    if (bitrate == 0 || bitrate == 0x0F) return false; // 自由格式/无效码率索引
-    int sr = (p[2] >> 2) & 0x03;
-    if (sr == 3) return false;             // 采样率索引无效
-    return true;
-}
-
-// R088: 将 seek/恢复落点向前扫描到下一个"合法"MP3 帧头(完整校验，见 mp3_valid_frame_header)，
-// 避免非帧对齐定位导致解码器开头连续坏帧、err_cnt 累积误判曲终跳曲。找不到则原样返回。
+// R085: 将 seek 落点向前扫描到下一个 MP3 帧同步字(0xFF [111]xxxx)，
+// 避免非帧对齐定位导致解码器开头吃一截垃圾、坏帧累积触发误判曲终。
 static int mp3_frame_align(const char *path, int byte_pos)
 {
     if (!path || !*path) return byte_pos;
     FILE *fp = fopen(path, "rb");
     if (!fp) return byte_pos;
     if (fseek(fp, byte_pos, SEEK_SET) != 0) { fclose(fp); return byte_pos; }
-    uint8_t *buf = (uint8_t *)malloc(32768);
-    if (!buf) { fclose(fp); return byte_pos; }
-    size_t n = fread(buf, 1, 32768, fp);
+    uint8_t buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
-    int found = -1;
-    for (size_t i = 0; i + 3 < n; i++) {
-        if (mp3_valid_frame_header(buf + i)) {
-            found = (int)i;
-            break;
+    for (size_t i = 0; i + 1 < n; i++) {
+        if (buf[i] == 0xFF && (buf[i + 1] & 0xE0) == 0xE0) {
+            return byte_pos + (int)i;
         }
     }
-    free(buf);
-    return (found >= 0) ? byte_pos + found : byte_pos;  // 未找到合法帧则不强行对齐
+    return byte_pos;  // 未找到同步字则不强行对齐
 }
 
 static void audio_player_seek_ms_internal(int ms)
