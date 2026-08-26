@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-26（R086 — 彻底修复 FF/REW seek 后跳曲：ADF pause→resume 不清 ringbuffer done 标志，seek 路径新增 audio_player_pause_seek_resume 在 resume 前 reset_input+reset_output_ringbuf(g_decoder)；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快）
+> **最后更新**：2026-08-26（R087 — 真正根因修复 pause/resume(及 seek) 一恢复即跳曲：mp3_decoder_libhelix.c 在 UNDERFLOW(out_total==0) 返回 AEL_IO_OK(0)，ADF audio_element_process_running 将 AEL_IO_OK 与 AEL_IO_DONE 同等对待→立即 set_ringbuf_done+finish 误判曲终；改为返回 AEL_IO_TIMEOUT；audio_player_resume 同样加 rb 重置双保险；R086 seek rb 重置；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快）
 
 ---
 
