@@ -65,8 +65,8 @@ static int g_vol_gain_q15 = 32768;
 void mp3_decoder_set_volume(int level)
 {
     /* level 0..14 -> 线性增益 gain = level/14 (Q15: 32768=1.0)。
-       用户要求"线性"：dB 曲线(即使 0..-50dB)最低几档仍低至 -40dB 以下经功放听不到。
-       线性增益下第 1 档≈-23dB(可闻)、第 2/3 档 -17/-13.4dB(清楚)，高档步进小不跳变。 */
+        用户要求"线性"：dB 曲线(即使 0..-50dB)最低几档仍低至 -40dB 以下经功放听不到。
+        线性增益下第 1 档≈-23dB(可闻)、第 2/3 档 -17/-13.4dB(清楚)，高档步进小不跳变。 */
     if (level <= 0) {
         g_vol_gain_q15 = 0;
     } else if (level >= 14) {
@@ -111,6 +111,22 @@ static esp_err_t _mp3_helix_close(audio_element_handle_t self)
     }
     s_in_len = 0;
     return ESP_OK;
+}
+
+/* R094: seek/跳曲前重置解码器输入缓冲与坏帧计数。
+   根因：s_in/s_in_len 为模块级 static，跨 pause/resume/seek 保留。
+   播放中 seek 后 reader 在新位置重开文件，但 decoder 元素不会被 close/reopen，
+   s_in 仍残留旧位置的半截数据；resume 后新数据追加到旧数据尾部形成非法 MP3
+   流 → Helix 解不出帧 → err_cnt 累积>50 → 误返 AEL_IO_DONE → 误判曲终跳下一首
+   （FF/REW 偶发跳曲的真正的根因）。seek 前清空 s_in 并从新位置重新同步帧边界即可根治，
+   同时清零 err_cnt 避免旧错误计数叠加。 */
+void mp3_decoder_libhelix_reset(audio_element_handle_t el)
+{
+    s_in_len = 0;
+    if (el) {
+        helix_ctx_t *c = (helix_ctx_t *)audio_element_getdata(el);
+        if (c) c->err_cnt = 0;
+    }
 }
 
 static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char *el_buffer, int el_buf_len)

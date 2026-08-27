@@ -53,6 +53,17 @@ audio_element_handle_t mp3_decoder_libhelix_init(const mp3_decoder_libhelix_cfg_
  */
 void mp3_decoder_set_volume(int level);
 
+/**
+ * @brief  seek/跳曲前重置解码器输入缓冲与坏帧计数（R094）
+ *
+ * s_in/s_in_len 为模块级 static，跨 pause/resume/seek 保留；播放中 seek 后
+ * reader 在新位置重开但 decoder 元素未 close/reopen，残留的旧位置半截数据会
+ * 与新数据拼接成非法 MP3 导致误判曲终跳下一首。调用本函数清空并从新位置重新同步。
+ *
+ * @param[in]  el  解码器 audio_element handle（用于清零其实例级 err_cnt；可传 NULL）
+ */
+void mp3_decoder_libhelix_reset(audio_element_handle_t el);
+
 #ifdef __cplusplus
 }
 #endif

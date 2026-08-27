@@ -680,6 +680,7 @@ static void audio_player_pause_seek_resume(int ms)
     audio_player_seek_ms_internal(ms);
     audio_element_reset_input_ringbuf(g_decoder);   // 清 reader→decoder 的 done 标志
     audio_element_reset_output_ringbuf(g_decoder);  // 清 decoder→i2s 的 done 标志
+    mp3_decoder_libhelix_reset(g_decoder);          // R094: 清 decoder 内部残留旧位置输入缓冲/坏帧计数，避免与新数据拼接成非法 MP3 误判曲终
     audio_pipeline_resume(g_pipeline);
 }
 
@@ -695,6 +696,7 @@ void audio_player_seek_ms(int ms)
         if (g_decoder) {
             audio_element_reset_input_ringbuf(g_decoder);
             audio_element_reset_output_ringbuf(g_decoder);
+            mp3_decoder_libhelix_reset(g_decoder);   // R094: 同 pause_seek_resume，避免残留缓冲误判曲终
         }
         // R035-020：保持 paused：清掉内部函数的 start_us 赋值，避免 get_position_ms 在暂停态累积。
         g_play_start_us = 0;

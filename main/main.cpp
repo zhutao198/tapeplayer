@@ -151,6 +151,8 @@ static uint32_t browse_repeat_interval(uint32_t hold_ms)
 
 static sdmmc_card_t   *g_sd_card = NULL;  // SD 鍗″彞鏌?
 static uint64_t    g_last_sd_check_us = 0;
+static int         g_sd_read_fail_cnt = 0;  // R094: SD 健康检查连续失败计数，避免瞬时 CRC 误判移除
+#define SD_READ_FAIL_THRESHOLD   2          // 连续 N 次(每次含重试)读失败才判为移除
 static bool        g_sd_inserted = false; // SD 鍗″湪浣?鍘绘姈鍚庢彁浜ょ姸鎬?
 static int         g_sd_cd_raw = -1;      // SD_CD 鍘熷鐢靛钩(鍘绘姈鐢?
 static int         g_sd_cd_stable_cnt = 0;// 鍚岀數骞宠繛缁噰鏍锋鏁?
@@ -1451,17 +1453,31 @@ extern "C" void app_main(void)
                 g_last_sd_check_us = now;
                 if (g_sd_card != NULL) {
                     uint32_t buf;
-                    // ESP_LOGI(TAG, "DBG: SD health read sector 0");
-                    esp_err_t ret = sdmmc_read_sectors(g_sd_card, (uint8_t *)&buf, 0, 1);
+                    // R094: 单次读失败(如偶发 data CRC)不应直接判移除并停播。
+                    // 先原地重试几次过滤瞬态错误；仅当本次检查(含重试)全失败才累加计数，
+                    // 连续 SD_READ_FAIL_THRESHOLD 次检查都失败才真正判为移除（与真实拔卡区分）。
+                    esp_err_t ret = ESP_FAIL;
+                    for (int attempt = 0; attempt < 3; attempt++) {
+                        ret = sdmmc_read_sectors(g_sd_card, (uint8_t *)&buf, 0, 1);
+                        if (ret == ESP_OK) break;
+                        vTaskDelay(pdMS_TO_TICKS(2));  // 短暂退避后重试
+                    }
                     if (ret != ESP_OK) {
-                        ESP_LOGW(TAG, "SD card removed (read fail)!");
-                        audio_player_stop();
-                        display_show_no_card();
-                        g_app_state = APP_STATE_IDLE;
-                        esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, g_sd_card);
-                        spi_bus_free(SD_SPI_HOST);
-                        g_sd_card = NULL;
-                        // 涓嶆敼鍔?g_sd_inserted: 鐢?SD_CD 鍘绘姈閫昏緫鍐冲畾鍚庣画(閲嶆柊鎸傝浇鎴栫疆鐏?
+                        g_sd_read_fail_cnt++;
+                        ESP_LOGW(TAG, "SD health read fail (cnt=%d), ret=0x%x", g_sd_read_fail_cnt, ret);
+                        if (g_sd_read_fail_cnt >= SD_READ_FAIL_THRESHOLD) {
+                            ESP_LOGW(TAG, "SD card removed (read fail)!");
+                            audio_player_stop();
+                            display_show_no_card();
+                            g_app_state = APP_STATE_IDLE;
+                            esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, g_sd_card);
+                            spi_bus_free(SD_SPI_HOST);
+                            g_sd_card = NULL;
+                            g_sd_read_fail_cnt = 0;
+                            // 涓嶆敼鍔?g_sd_inserted: 鐢?SD_CD 鍘绘姈閫昏緫鍐冲畾鍚庣画(閲嶆柊鎸傝浇鎴栫疆鐏?
+                        }
+                    } else {
+                        g_sd_read_fail_cnt = 0;  // 读成功，清零连续失败计数
                     }
                 }
             }
