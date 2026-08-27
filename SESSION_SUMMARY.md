@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-26（R093 — 音量改线性增益 gain=level/14（最低档可闻、高档步进小）。R092 音量 0..-50dB（最低三档仍无声）。R091 音量改 decoder 软件 PCM 缩放（Q15，弃 i2s ALC：use_alc=true 在 IDF5.x 下 alc_volume_setup_process BREAK 崩溃）。R090 屏蔽自动 light-sleep（屏幕常亮）。R089 回退 R088（decoder 坏帧重同步 off=0 死循环 WDT 回归）。R087 pause/resume 跳曲：UNDERFLOW 时 AEL_IO_OK→AEL_IO_TIMEOUT；R086 seek rb 重置；R085 进度条/计时器重叠；R084 修栈溢出；I2S 时钟按文件真实采样率修复低采样率变快。待办：FF/REW 偶发跳曲、SD 热拔插 main 卡死）
+> **最后更新**：2026-08-26（R094 — 修复 FF/REW 偶发跳曲（seek 前调 mp3_decoder_libhelix_reset 清 decoder 残留输入缓冲 s_in/err_cnt，根因：s_in 模块级 static 残留旧位置数据拼接成非法 MP3 致 err_cnt>50 误判曲终）+ SD 误报移除（健康检查读扇区 0 偶发 CRC 误判，改 3 次重试+连续 2 次失败阈值）+ R093 音量线性增益 gain=level/14（用户满意）+ R091 decoder 软件 PCM 缩放（弃 i2s ALC：IDF5.x BREAK 崩溃）+ R090 屏蔽自动 light-sleep（屏幕常亮）+ R087 pause/resume 跳曲 AEL_IO_OK→TIMEOUT。待办：SD 热拔插 main 卡死、FF/REW 仍可能偶发（已根治，待实测））
 
 ---
 
