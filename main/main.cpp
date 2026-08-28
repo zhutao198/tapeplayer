@@ -164,6 +164,22 @@ static int         g_sd_cd_stable_cnt = 0;// 鍚岀數骞宠繛缁噰鏍锋�
 /* ============================================================
  * 杈呭姪锛氫繚瀛樺綋鍓嶆柇鐐?
  * ============================================================ */
+/* R095: NVS commit(Flash 写)期间 ESP32-S3 会全局禁用 cache；若解码任务(另一核执行 Flash
+ * 中的 MP3Decode)正在运行，会触发 "Cache disabled but cached memory region accessed" 崩溃
+ * (实际复现于 FF/REW seek)。故仅在解码停止(PAUSED/STOPPED/IDLE)时才真正落盘；PLAYING/FF/REW
+ * 解码活跃时只写 NVS RAM(staged)，由暂停/停止/休眠等安全点统一 flush。 */
+static void flush_nvs_if_safe(void)
+{
+    /* R098: 仅在解码活跃态(PLAYING/FF/REW)跳过落盘，避免 nvs_commit 禁用 Flash cache
+       撞上并发 IROM/PSRAM 访问(解码任务)。PAUSED/STOPPED/IDLE 等解码已停态落盘，保证
+       音量/位置等设置持久化(重启不丢)。崩溃根因已确认是 seek 垃圾头 nSlots(自对齐已修)，
+       与落盘无关，故恢复 PAUSED 态落盘。 */
+    bool decoding = (g_app_state == APP_STATE_PLAYING ||
+                     g_app_state == APP_STATE_FAST_FORWARD ||
+                     g_app_state == APP_STATE_REWIND);
+    if (!decoding) settings_flush();
+}
+
 static void save_current_position(void)
 {
     // R034-002锛氬寘鍚?FF/RW 鎬侊紝閬垮厤蹇繘/蹇€€涓帀鐢靛悗缁挱鐐瑰仠鐣欏湪涓婃鏅€氭挱鏀句綅缃?
@@ -173,7 +189,7 @@ static void save_current_position(void)
         playlist_get_name(g_current_track, name, sizeof(name));
         settings_save_position(g_current_track, audio_player_get_position(), name);
         // S8锛歴eek/鍒囨瓕鍚庣珛鍗?flush锛岄伩鍏嶆柇鐢典涪澶辨渶杩戜竴娆℃柇鐐?
-        settings_flush();
+        flush_nvs_if_safe();
     }
 }
 
@@ -266,7 +282,7 @@ static void skip_seconds(int seconds)
     if (new_pos < 0) new_pos = 0;
     int duration = audio_player_get_duration();
     if (duration > 0 && new_pos > duration) new_pos = duration;
-    audio_player_seek(new_pos);
+    audio_player_seek(new_pos);   // R099: 暂停式 seek(re-open 应用 byte_pos 可靠跳转)，单次不淹队列
     save_current_position();   // R032-104: seek 鍚庣珛鍗充繚瀛樻柇鐐瑰苟 flush锛岄伩鍏嶆柇鐢典涪澶?
     ESP_LOGI(TAG, "Skip %ds 鈫?pos=%d", seconds, new_pos);
 }
@@ -663,6 +679,7 @@ static void handle_button_events(void)
                 if (vol > 0) {
                     audio_player_set_volume(vol - 1);
                     display_show_volume(audio_player_get_volume());
+                    settings_save_volume(audio_player_get_volume());
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS ||
                        e->event == BTN_EVENT_HOLD ||
@@ -690,6 +707,7 @@ static void handle_button_events(void)
                 if (vol < VOLUME_LEVEL_MAX) {
                     audio_player_set_volume(vol + 1);
                     display_show_volume(audio_player_get_volume());
+                    settings_save_volume(audio_player_get_volume());
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS ||
                        e->event == BTN_EVENT_HOLD ||
@@ -721,6 +739,7 @@ static void handle_button_events(void)
                     skip_seconds(5);            // R046锛氬厛缁ф壙鐭寜鍩哄噯璺宠繘 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
                     tape_control_ff_press();
                     audio_player_set_speed(tape_control_get_speed());
+                    audio_player_scrub_enter();   /* R098: 暂停播放仅跳帧，decoder 停止后重置才安全 */
                     g_app_state = APP_STATE_FAST_FORWARD;
                     g_combo_rew_us = 0; g_combo_stop_us = 0;  // 杩涘叆鍙橀€熸€侊紝鏀惧純鏈畬鎴愮殑缁勫悎閿鏃?
                 }
@@ -734,6 +753,7 @@ static void handle_button_events(void)
             } else if (e->event == BTN_EVENT_RELEASE) {
                 tape_control_ff_release();
                 audio_player_set_speed(TAPE_SPEED_NORMAL);
+                audio_player_scrub_exit();   /* R098: 从最后 seek 位置恢复播放 */
                 g_app_state = APP_STATE_PLAYING;
                 g_combo_rew_us = 0; g_combo_stop_us = 0;  // 閫€鍑哄彉閫熸€侊紝娓呯┖缁勫悎閿鏃?
             }
@@ -762,6 +782,7 @@ static void handle_button_events(void)
                     skip_seconds(-5);           // R046锛氬厛缁ф壙鐭寜鍩哄噯鍚庨€€ 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
                     tape_control_rewind_press();
                     audio_player_set_speed(tape_control_get_speed());
+                    audio_player_scrub_enter();   /* R098: 暂停播放仅跳帧，decoder 停止后重置才安全 */
                     g_app_state = APP_STATE_REWIND;
                     g_combo_rew_us = 0; g_combo_stop_us = 0;  // 杩涘叆鍙橀€熸€侊紝鏀惧純鏈畬鎴愮殑缁勫悎閿鏃?
                 }
@@ -774,6 +795,7 @@ static void handle_button_events(void)
             } else if (e->event == BTN_EVENT_RELEASE) {
                 tape_control_rewind_release();
                 audio_player_set_speed(TAPE_SPEED_NORMAL);
+                audio_player_scrub_exit();   /* R098: 从最后 seek 位置恢复播放 */
                 g_app_state = APP_STATE_PLAYING;
                 g_combo_rew_us = 0; g_combo_stop_us = 0;  // 閫€鍑哄彉閫熸€侊紝娓呯┖缁勫悎閿鏃?
             }
@@ -964,7 +986,7 @@ static void indicator_led_set(uint8_t r, uint8_t g, uint8_t b)
     if (!s_ws2812) return;
     /* 璋冭瘯锛氭殏鏃朵笉璋?refresh锛岄伩鍏嶅湪鏃犵‖浠舵椂闃诲 */
     esp_err_t r1 = led_strip_set_pixel(s_ws2812, 0, r, g, b);
-    esp_err_t r2 = ESP_OK;  // led_strip_refresh(s_ws2812);  // 鏆傛椂绂佺敤
+    esp_err_t r2 = led_strip_refresh(s_ws2812);
     if (r1 != ESP_OK || r2 != ESP_OK) {
         ESP_LOGW(TAG, "WS2812 set failed: %s / %s", esp_err_to_name(r1), esp_err_to_name(r2));
     }
@@ -1092,6 +1114,7 @@ static void init_hardware(void)
 
     // 10. 鍔犺浇鎸佷箙鍖栬缃?
     int vol = settings_load_volume();
+    ESP_LOGI(TAG, "DBG boot volume=%d", vol);
     audio_player_set_volume(vol);
     g_play_mode = (play_mode_t)settings_load_play_mode();
     display_set_play_mode((int)g_play_mode);
@@ -1245,7 +1268,7 @@ extern "C" void app_main(void)
             char name[FILENAME_MAX_LEN] = "";
             playlist_get_name(g_pending_save_track, name, sizeof(name));
             settings_save_position(g_pending_save_track, g_pending_save_position, name);
-            settings_flush();   // R032-104: 鎾畬鍚庣珛鍗宠惤鐩橈紝閬垮厤 30s 鑷姩淇濆瓨绐楀彛鍐呮柇鐢典涪鏂偣
+            flush_nvs_if_safe();   // R032-104: 鎾畬鍚庣珛鍗宠惤鐩橈紝閬垮厤 30s 鑷姩淇濆瓨绐楀彛鍐呮柇鐢典涪鏂偣
             g_pending_save_track = -1;
         }
         // 6. 姣?30 绉掕嚜鍔ㄤ繚瀛樻柇鐐?+ 鎵归噺 flush NVS锛堟挱鏀?鏆傚仠/FF/RW 鍧囦繚瀛橈紝R034-002 / R035-004锛?
@@ -1256,7 +1279,7 @@ extern "C" void app_main(void)
                 if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
                     g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
                     save_current_position();
-                    settings_flush();
+                    flush_nvs_if_safe();
                     // R035-010锛氳嚜鍔ㄤ繚瀛樹篃绠楃敤鎴锋椿鍔紝閲嶇疆 auto-off 璁℃椂
                     power_mgmt_record_activity();
                 }
@@ -1278,7 +1301,7 @@ extern "C" void app_main(void)
             char name[FILENAME_MAX_LEN] = "";
             playlist_get_name(g_pending_save_track, name, sizeof(name));
             settings_save_position(g_pending_save_track, g_pending_save_position, name);
-            settings_flush();   // R032-104: 鎾畬鍚庣珛鍗宠惤鐩橈紝閬垮厤 30s 鑷姩淇濆瓨绐楀彛鍐呮柇鐢典涪鏂偣
+            flush_nvs_if_safe();   // R032-104: 鎾畬鍚庣珛鍗宠惤鐩橈紝閬垮厤 30s 鑷姩淇濆瓨绐楀彛鍐呮柇鐢典涪鏂偣
             g_pending_save_track = -1;
         }
 
@@ -1290,7 +1313,7 @@ extern "C" void app_main(void)
                 if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
                     g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
                     save_current_position();
-                    settings_flush();
+                    flush_nvs_if_safe();
                     // R035-010锛氳嚜鍔ㄤ繚瀛樹篃绠楃敤鎴锋椿鍔紝閲嶇疆 auto-off 璁℃椂
                     power_mgmt_record_activity();
                 }
@@ -1311,7 +1334,7 @@ extern "C" void app_main(void)
                 power_mgmt_set_auto_off(0);
                 // R034-007锛氳Е鍙戝悗钀界洏娓呴浂 NVS锛岄伩鍏嶉噸鍚?power_mgmt_init 閲嶆柊姝﹁
                 settings_save_auto_off(0);
-                settings_flush();
+                flush_nvs_if_safe();
             }
         }
 
@@ -1319,7 +1342,7 @@ extern "C" void app_main(void)
         {
             static uint64_t last_power_tick = 0;
             uint64_t now = esp_timer_get_time();
-            if (false && (now - last_power_tick) >= 1000000) {  /* DEBUG: 禁用 #7b 块排查死锁 */
+            if ((now - last_power_tick) >= 1000000ULL) {  /* #7b 电源管理 tick (1Hz): ADC 采样 + LED 指示 + 低电关机 */
                 last_power_tick = now;
                 power_mgmt_tick();
 
@@ -1345,9 +1368,9 @@ extern "C" void app_main(void)
                 // 鐢甸噺鏋佷綆鏃朵繚瀛樼姸鎬佸苟杞叧鏈?(鑴夊啿 POW_EN 纭柇鐢?
                 if (power_mgmt_should_shutdown()) {
                     ESP_LOGE(TAG, "Battery critical, saving state and powering off");
-                    save_current_position();
-                    settings_flush();
                     audio_player_stop();
+                    save_current_position();
+                    flush_nvs_if_safe();
                     // 浠?RTC GPIO 鍙綔鍞ら啋婧? 璁剧疆鎺╃爜渚?power_off 鐨?deep-sleep 鍏滃簳
                     uint64_t wakeup_mask = build_rtc_wakeup_mask();
                     if (wakeup_mask) {
@@ -1367,7 +1390,7 @@ extern "C" void app_main(void)
             // ESP_LOGI(TAG, "DBG: before esp_light_sleep_start");
 
             save_current_position();   // R032-103: sleep 鍓嶄繚瀛樻柇鐐癸紙FF/RW 涓嶄細杩涘叆姝ゅ垎鏀紝宸插湪姝ゅ墠閲婃斁锛?
-            settings_flush();
+            flush_nvs_if_safe();
             audio_player_stop();
             g_app_state = APP_STATE_IDLE;
 

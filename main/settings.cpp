@@ -160,6 +160,11 @@ void settings_save_volume(int volume)
     if (!g_nvs_handle) return;
     esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_VOLUME, (uint8_t)volume);
     if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_VOLUME, err);
+    /* R098: 音量立即落盘，保证重启后恢复上次设置。
+       ESP-IDF flash 写(spi_flash_disable_interrupts_caches_and_other_cpu)会挂起另一核，
+       解码任务(另一核)在写期间不执行 IROM，播放中落盘安全(崩溃根因是 seek 垃圾头 nSlots,已修)。 */
+    esp_err_t cerr = nvs_commit(g_nvs_handle);
+    ESP_LOGI(TAG, "DBG save_volume=%d commit=%s", volume, (cerr == ESP_OK) ? "OK" : "FAIL");
     // 不立即 commit：由 save_position 或下一次循环统一提交
 }
 
@@ -171,6 +176,7 @@ int settings_load_volume(void)
     if (err != ESP_OK) {
         vol = AUDIO_OUTPUT_VOL;
     }
+    ESP_LOGI(TAG, "DBG load_volume=%d err=0x%x", (int)vol, (unsigned)err);
     return (int)vol;
 }
 

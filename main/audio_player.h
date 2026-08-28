@@ -61,6 +61,9 @@ void audio_player_seek(int seconds);
  * @param ms 目标毫秒数
  */
 void audio_player_seek_ms(int ms);
+void audio_player_scrub_seek(int ms);
+void audio_player_scrub_enter(void);
+void audio_player_scrub_exit(void);
 
 /**
  * @brief 获取当前播放位置 (毫秒)

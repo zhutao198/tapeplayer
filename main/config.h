@@ -176,15 +176,15 @@
  * 磁带机加速参数
  * ============================================================ */
 #define TAPE_SPEED_NORMAL   1.0f          // 正常速度
-#define TAPE_SPEED_1        2.0f          // 第一档加速（慢速精确定位）
-#define TAPE_SPEED_2        4.0f          // 第二档加速（贴近真实磁带倒带下限）
-#define TAPE_SPEED_3        8.0f          // 最高加速（跳帧模式）
+#define TAPE_SPEED_1        4.0f          // 第一档加速（原 2.0x 翻倍）
+#define TAPE_SPEED_2        8.0f          // 第二档加速（原 4.0x 翻倍）
+#define TAPE_SPEED_3        16.0f         // 最高加速（原 8.0x 翻倍，跳帧模式）
 
-// 加速档位切换时间阈值 (进入变速态后的累计按住时长) — 无 1x 缓冲，进即 2x
-// 档位: 0=2.0x(进入即), 1=4.0x, 2=8.0x
-#define TAPE_ACCEL_STEP1_MS  0            // 进入变速态立即 2x（无 1x 缓冲，R045）
-#define TAPE_ACCEL_STEP2_MS  5000         // 累计5.0s后进入4x
-#define TAPE_ACCEL_STEP3_MS  8000         // 累计8.0s后进入8x（跳帧）
+// 加速档位切换时间阈值 (进入变速态后的累计按住时长) — 无 1x 缓冲，进即 4x
+// 档位: 0=4.0x(进入即), 1=8.0x, 2=16.0x
+#define TAPE_ACCEL_STEP1_MS  0            // 进入变速态立即 4x（无 1x 缓冲，R045）
+#define TAPE_ACCEL_STEP2_MS  5000         // 累计5.0s后进入8x
+#define TAPE_ACCEL_STEP3_MS  8000         // 累计8.0s后进入16x（跳帧）
 
 /* ============================================================
  * 音频配置

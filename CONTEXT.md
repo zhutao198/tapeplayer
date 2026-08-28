@@ -231,3 +231,12 @@ git clean -fdx
 
 **作者**：Claude（按全局 CLAUDE.md 9.x 规范创建）  
 **维护规则**：每次 R 节点 commit 后必须更新
+
+
+---
+
+## R095 里程碑（2026-08-28）
+- 修复"按播放即崩"Cache error（根因：seek 落点给 Helix 解析出巨大 nSlots -> mp3dec.c:380 超大 memcpy 越界，并非并发 Flash 操作）。
+- FF/REW 全面重构：严格帧头校验 + decoder 自对齐；FF/REW 静音、进度不计播放流逝（g_scrub_active），skip=速度x实际流逝时间（线性自校正）；释放时一次暂停式 seek 物理跳转。
+- 音量持久化：settings_save_volume 立即 nvs_commit + 每次调整即存。
+- 待办：一曲播完自动播下一首异常（见开发日志 R095 待办）。

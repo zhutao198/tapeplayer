@@ -502,3 +502,10 @@ f17d6b5 R030: 批量修复合并评审 15 项（S1+S2+S3+C08）
 
 **作者**：Claude  
 **更新规则**：每次 R 节点 commit 后同步更新
+
+
+### R095 会话要点（2026-08-28）
+- 重大根因：播放崩溃不是"并发 Flash 操作"，而是 seek 落点在伪帧头（Layer I/free-format）-> Helix nSlots 巨大 -> mp3dec.c:380 memcpy 越界。
+- 教训：decoder 重建（free/realloc）绝不能在解码任务运行时调用（tlsf 双释放）；ADF pause/resume 每 tick 高频调用会爆 event 队列。
+- 方案：FF/REW 用"静音 + 仅 seek(命中 g_scrub_active 不计播放流逝) + 释放时一次暂停式 seek"，进度锁定=seek 目标，线性准确且无队列压力。
+- 经验：ADF fatfs_stream 的 set_byte_pos 仅在元素重开(open)时生效，运行中 set_byte_pos 不物理 seek。

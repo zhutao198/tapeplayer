@@ -66,6 +66,8 @@ static audio_element_handle_t   g_i2s_writer = NULL;   // R068：每次 play 重
 static bool         g_is_playing = false;
 static bool         g_is_paused = false;
 static int          g_volume = AUDIO_OUTPUT_VOL;
+static int          g_volume_saved = AUDIO_OUTPUT_VOL;
+static bool         g_scrub_active = false;   /* R099: FF/REW 期间进度不计播放流逝，仅由 seek 推进 */
 
 /* V1.2 音量 dB 线性映射边界 (MAX98357A ALC 范围) */
 #define VOL_DB_MIN  (-96)   // 静音
@@ -619,23 +621,77 @@ void audio_player_seek(int seconds)
     audio_player_seek_ms(seconds * 1000);
 }
 
-// R085: 将 seek 落点向前扫描到下一个 MP3 帧同步字(0xFF [111]xxxx)，
-// 避免非帧对齐定位导致解码器开头吃一截垃圾、坏帧累积触发误判曲终。
+// R095: 将 seek 落点扫描到下一个【合法 MP3 帧头】。
+// 旧逻辑仅用 (buf[i+1]&0xE0)==0xE0 判同步字，会把 0xFF 0xFF / 0xFF 0xFE 等
+// 伪同步字当帧边界返回；Helix 从该垃圾位置连续解坏帧(err_cnt>50)→误判曲终
+// 跳下一首（实测切歌前 seek-data 首字节为 ffff fecf）。此处改校验完整帧头
+// （版本/层/位率/采样率索引均合法），避免伪同步字误对齐。
+static bool mp3_valid_hdr_strict(const uint8_t *p, int *frame_len_out)
+{
+    /* R097: 严格校验，仅接受 MPEG1/2/2.5 的 Layer III(01) 且非 free-format。
+       旧 R095 版放行 0xFF 0xFE(实为 Layer I / free-format) 等伪同步字当帧边界，
+       致 Helix 从垃圾位置解析出异常 nSlots -> mp3dec.c:380 超大 memcpy 越界读 Flash
+       -> "Cache disabled" 崩溃。 */
+    if (p[0] != 0xFF || (p[1] & 0xE0) != 0xE0) return false;
+    int version = (p[1] >> 3) & 0x03;
+    int layer   = (p[1] >> 1) & 0x03;
+    if (version == 0x01) return false;                       // 01 = reserved
+    if (layer   != 0x01) return false;                       // 仅 Layer III(01)；I/II(10/11) 非 MP3
+    int bitrate_idx = (p[2] >> 4) & 0x0F;
+    if (bitrate_idx == 0x00 || bitrate_idx == 0x0F) return false;  // 0=free format,15=bad
+    int sr_idx = (p[2] >> 2) & 0x03;
+    if (sr_idx == 0x03) return false;                        // 11 = reserved
+    int padding = (p[2] >> 1) & 0x01;
+
+    static const int br_v1[16] = {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0};
+    static const int br_v2[16] = {0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0};
+    static const int sr_v1[4]  = {44100,48000,32000,0};
+    static const int sr_v2[4]  = {22050,24000,16000,0};
+    static const int sr_v25[4] = {11025,12000,8000,0};
+
+    int bitrate, samplerate;
+    if (version == 3)      { bitrate = br_v1[bitrate_idx] * 1000; samplerate = sr_v1[sr_idx]; }
+    else if (version == 2) { bitrate = br_v2[bitrate_idx] * 1000; samplerate = sr_v2[sr_idx]; }
+    else                   { bitrate = br_v2[bitrate_idx] * 1000; samplerate = sr_v25[sr_idx]; }
+    if (bitrate == 0 || samplerate == 0) return false;
+
+    int flen = ((version == 3) ? 144 : 72) * bitrate / samplerate + padding;
+    if (flen <= 0) return false;
+    if (frame_len_out) *frame_len_out = flen;
+    return true;
+}
+
 static int mp3_frame_align(const char *path, int byte_pos)
 {
     if (!path || !*path) return byte_pos;
     FILE *fp = fopen(path, "rb");
     if (!fp) return byte_pos;
     if (fseek(fp, byte_pos, SEEK_SET) != 0) { fclose(fp); return byte_pos; }
-    uint8_t buf[4096];
+    // R095: 用 static 缓冲，避免 8KB 局部变量压垮 main 任务栈（R083/R084 曾因
+    // main 栈上 8KB 缓冲溢出崩）。mp3_frame_align 仅由 main 任务串行调用，static 安全。
+    static uint8_t buf[8192];
     size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
-    for (size_t i = 0; i + 1 < n; i++) {
-        if (buf[i] == 0xFF && (buf[i + 1] & 0xE0) == 0xE0) {
-            return byte_pos + (int)i;
+    for (size_t i = 0; i + 3 < n; i++) {
+        int flen = 0;
+        if (mp3_valid_hdr_strict(&buf[i], &flen)) {
+            // 用"连续两帧"确认真实帧边界，拒绝单字节伪同步
+            if (i + flen + 4 <= n) {
+                int flen2 = 0;
+                if (mp3_valid_hdr_strict(&buf[i + flen], &flen2)) {
+                    ESP_LOGW("mp3_dbg", "R097 frame_align +%d (byte_pos=%d -> %d, flen=%d)",
+                             (int)i, byte_pos, byte_pos + (int)i, flen);
+                    return byte_pos + (int)i;
+                }
+            } else {
+                ESP_LOGW("mp3_dbg", "R097 frame_align +%d (byte_pos=%d -> %d, last-frame)",
+                         (int)i, byte_pos, byte_pos + (int)i);
+                return byte_pos + (int)i;
+            }
         }
     }
-    return byte_pos;  // 未找到同步字则不强行对齐
+    // 窗口内无合法帧头：不强行对齐到伪同步字，返回原落点交 decoder 自行重同步
+    return byte_pos;
 }
 
 static void audio_player_seek_ms_internal(int ms)
@@ -703,13 +759,43 @@ void audio_player_seek_ms(int ms)
     }
 }
 
+void audio_player_scrub_seek(int ms)
+{
+    if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
+    /* R098: FF/REW ctrl: seek reader + update position + clear decoder bad-frame
+       counter (prevents err_cnt>=51 -> mistaken end-of-track -> teardown double-free).
+       NO decoder free/realloc, NO pipeline pause/resume (event-queue overflow). */
+    audio_player_seek_ms_internal(ms);
+    mp3_decoder_libhelix_clear_errors(g_decoder);
+}
+
+void audio_player_scrub_enter(void)
+{
+    if (!g_pipeline) return;
+    g_volume_saved = g_volume;
+    mp3_decoder_set_volume(0);
+    g_scrub_active = true;                    /* R099: 快进/快退期进度不计播放流逝，仅由 seek 推进 */
+    g_last_scrub_us = esp_timer_get_time();   /* 重置 tick 计时 */
+}
+
+void audio_player_scrub_exit(void)
+{
+    if (!g_pipeline) return;
+    int final_ms = audio_player_get_position_ms();   /* 释放时显示位置(最后 seek 目标) */
+    g_scrub_active = false;
+    mp3_decoder_set_volume(g_volume_saved);
+    /* R099: 轻量 seek 仅更新显示(reader 重开才应用 byte_pos)，释放时做一次暂停式 seek
+       真正跳到最终位置并恢复播放。FF 期间不进队列，此单次操作可干净完成。 */
+    audio_player_pause_seek_resume(final_ms);
+}
+
 int audio_player_get_position_ms(void)
 {
     if (!g_pipeline) return 0;
 
     // 累计播放时间 = 暂停前已累计 + 当前段播放时间（暂停期间不增加）
     int64_t total = g_play_offset_us;
-    if (g_is_playing && !g_is_paused && g_play_start_us > 0) {
+    if (g_is_playing && !g_is_paused && !g_scrub_active && g_play_start_us > 0) {
         total += (int64_t)(esp_timer_get_time() - g_play_start_us);
     }
     return (int)(total / 1000);
@@ -739,24 +825,11 @@ void audio_player_set_speed(float speed)
 {
     if (!g_i2s_writer) return;
 
-    int sample_rate;
-    if (speed > 0) {
-        // C3: 跳帧模式 — I2S 正常速率，seek 跳帧提供"快进"感（R034-011）
-        if (tape_control_is_scrub_mode()) {
-            sample_rate = g_base_sample_rate;
-        } else {
-            // R083: 以文件真实基准速率倍乘，而非固定 AUDIO_SAMPLE_RATE(48000)
-            sample_rate = (int)(g_base_sample_rate * speed);
-            if (sample_rate < (g_base_sample_rate / 2)) sample_rate = g_base_sample_rate / 2;
-            if (sample_rate > (g_base_sample_rate * 4)) sample_rate = g_base_sample_rate * 4;
-        }
-    } else {
-        // R032-203：快退（speed<0）方向由 audio_player_tick 的跳帧向后 seek 实现，
-        // 此处保持正常音高不变调（负采样率只会让音高失真，且跳帧已能模拟快退听感）。
-        sample_rate = g_base_sample_rate;
-    }
+    (void)speed;
+    /* R098: seek-based FF/REW; keep I2S at file sample rate to avoid i2s-writer
+       overriding the variable clock (speed-up lost) and buffer starvation. */
+    int sample_rate = g_base_sample_rate;
 
-    // 缓存命中则跳过冗余的 i2s_set_clk 调用
     if (sample_rate != g_current_sample_rate) {
         g_current_sample_rate = sample_rate;
         i2s_stream_set_clk(g_i2s_writer, sample_rate, 16, 2);
@@ -849,37 +922,31 @@ void audio_player_tick(void)
     // 快退所有档位都跳帧（因为没有"倒放"能力，只能断续 seek）
     // R034-011：阈值由硬编码 4.0f 改为派生 tape_control_get_max_gear_speed()，
     // 避免修改 g_speed_steps[] 后此处 magic number 漂移
-    bool need_seek = (abs_speed >= tape_control_get_max_gear_speed()) || (mode == TAPE_MODE_REWIND);
+    // R098: FF/REW 全部改为跳帧式(持续 seek)，任一档位都 seek，I2S 保持正常速率
+    bool need_seek = (mode == TAPE_MODE_FAST_FORWARD) || (mode == TAPE_MODE_REWIND);
 
     if (!need_seek) return;
 
-    uint64_t now = esp_timer_get_time();
-
-    if ((now - g_last_scrub_us) < 50000) return; // 50ms 间隔
+uint64_t now = esp_timer_get_time();
+    uint64_t elapsed_us = now - g_last_scrub_us;
+    if (elapsed_us < 500000) return; // 500ms min interval
     g_last_scrub_us = now;
 
-    // C3: 跳帧模式 — 跳 7/8（skip 350ms/50ms），其他档位 50ms × abs_speed（R034-011）
-    int skip_ms;
-    if (tape_control_is_scrub_mode() && mode == TAPE_MODE_FAST_FORWARD) {
-        skip_ms = (int)(50.0f * (abs_speed - 1.0f));  // 跳帧模式：50 × (8-1) = 350ms
-    } else {
-        skip_ms = (int)(50.0f * abs_speed);           // 常规跳帧：50 × speed
-    }
+    int elapsed_ms = (int)(elapsed_us / 1000);
+    if (elapsed_ms > 1000) elapsed_ms = 1000;   // cap first-tick anomaly
+
+    // R099: g_scrub_active stops playback-time counting (get_position_ms = last seek target),
+    // so each tick advances exactly speed*elapsed. Total = speed*hold-time, precise & linear.
+    int skip_ms = (speed > 0) ? (int)(abs_speed * elapsed_ms)
+                              : -(int)(abs_speed * elapsed_ms);
 
     int cur_ms = audio_player_get_position_ms();
-    int target_ms;
+    int target_ms = cur_ms + skip_ms;
+    if (target_ms < 0) target_ms = 0;
+    int duration_ms = g_total_duration_ms > 0 ? g_total_duration_ms : 3600000;
+    if (target_ms > duration_ms) target_ms = duration_ms;
 
-    if (speed > 0) {
-        target_ms = cur_ms + skip_ms;
-        int duration_ms = g_total_duration_ms > 0 ? g_total_duration_ms : 3600000;
-        if (target_ms > duration_ms) target_ms = duration_ms;
-    } else {
-        target_ms = cur_ms - skip_ms;
-        if (target_ms < 0) target_ms = 0;
-    }
-
-    // M2 + C1: pause 确保 reader idle，seek 后 resume（含 ringbuffer done 标志重置）
-    audio_player_pause_seek_resume(target_ms);
+    audio_player_scrub_seek(target_ms);
 }
 
 void audio_player_set_callback(audio_status_cb_t cb, void *user_data)

@@ -11,6 +11,7 @@
  */
 #include <string.h>
 #include <math.h>
+#include "esp_log.h"
 #include "audio_element.h"
 #include "audio_mem.h"
 #include "mp3dec.h"
@@ -40,6 +41,8 @@ static int mp3_hdr_samplerate(const unsigned char *p)
     return t[sri];
 }
 
+static bool g_seek_dbg_first = false;
+
 static int mp3_hdr_channels(const unsigned char *p)
 {
     if (!p || (p[0] & 0xFF) != 0xFF || (p[1] & 0xE0) != 0xE0) {
@@ -53,6 +56,35 @@ static int mp3_hdr_channels(const unsigned char *p)
 #define HELIX_IN_BUF   2048
 /* 单帧 PCM 输出上限：2ch * 1152 样本 * 2B = 4608B */
 #define HELIX_PCM_SAMPLES (1152 * 2)
+
+/* R098: 从合法 Layer III 帧头计算帧长(字节)，供 seek/坏帧后跳过当前帧到下一帧边界。
+   非法/非 Layer III/非 free-format 头返回 -1。 */
+static int mp3_frame_len_from_hdr(const unsigned char *p)
+{
+    if (!p || p[0] != 0xFF || (p[1] & 0xE0) != 0xE0) return -1;
+    int version = (p[1] >> 3) & 0x03;
+    int layer   = (p[1] >> 1) & 0x03;
+    if (version == 0x01 || layer != 0x01) return -1;   /* reserved 或非 Layer III */
+    int bitrate_idx = (p[2] >> 4) & 0x0F;
+    if (bitrate_idx == 0x00 || bitrate_idx == 0x0F) return -1;  /* 0=free,15=bad */
+    int sr_idx = (p[2] >> 2) & 0x03;
+    if (sr_idx == 0x03) return -1;
+    int padding = (p[2] >> 1) & 0x01;
+
+    static const int br_v1[16] = {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0};
+    static const int br_v2[16] = {0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0};
+    static const int sr_v1[4]  = {44100,48000,32000,0};
+    static const int sr_v2[4]  = {22050,24000,16000,0};
+    static const int sr_v25[4] = {11025,12000,8000,0};
+
+    int bitrate, samplerate;
+    if (version == 3)      { bitrate = br_v1[bitrate_idx] * 1000; samplerate = sr_v1[sr_idx]; }
+    else if (version == 2) { bitrate = br_v2[bitrate_idx] * 1000; samplerate = sr_v2[sr_idx]; }
+    else                   { bitrate = br_v2[bitrate_idx] * 1000; samplerate = sr_v25[sr_idx]; }
+    if (bitrate == 0 || samplerate == 0) return -1;
+    int flen = ((version == 3) ? 144 : 72) * bitrate / samplerate + padding;
+    return (flen > 0) ? flen : -1;
+}
 
 static short      s_pcm[HELIX_PCM_SAMPLES];
 static unsigned char s_in[HELIX_IN_BUF];
@@ -113,19 +145,47 @@ static esp_err_t _mp3_helix_close(audio_element_handle_t self)
     return ESP_OK;
 }
 
-/* R094: seek/跳曲前重置解码器输入缓冲与坏帧计数。
-   根因：s_in/s_in_len 为模块级 static，跨 pause/resume/seek 保留。
-   播放中 seek 后 reader 在新位置重开文件，但 decoder 元素不会被 close/reopen，
-   s_in 仍残留旧位置的半截数据；resume 后新数据追加到旧数据尾部形成非法 MP3
-   流 → Helix 解不出帧 → err_cnt 累积>50 → 误返 AEL_IO_DONE → 误判曲终跳下一首
-   （FF/REW 偶发跳曲的真正的根因）。seek 前清空 s_in 并从新位置重新同步帧边界即可根治，
-   同时清零 err_cnt 避免旧错误计数叠加。 */
+/* R094: seek/跳曲前重置解码器。根因（经 mp3_dbg 实测确认）：
+   s_in/s_in_len 为模块级 static，跨 pause/resume/seek 保留；更关键的是 Helix 解码器
+   内部状态 c->decoder(MP3DecInfo，含位保留/哈夫曼等上下文) 在多次 seek 后与新位置
+   的流严重失配——实测第三跳时数据落点为合法帧头(ff fd)却连续 51 帧 Helix 解帧失败
+   (err_cnt 累加至 51 误返 AEL_IO_DONE 跳曲)。仅清 s_in/err_cnt 不够，必须重新初始化
+   Helix 解码器，与切歌新建 decoder 效果一致：从新位置干净重新同步帧边界。
+   注：首帧因位保留引用了"上一帧主数据"(已跳跃丢失)可能产出 1 帧轻微杂音或单帧错误，
+   但次帧起主数据连续即可正常解码(err_cnt 在成功帧清零)，不会累积误判。 */
 void mp3_decoder_libhelix_reset(audio_element_handle_t el)
 {
-    s_in_len = 0;
     if (el) {
         helix_ctx_t *c = (helix_ctx_t *)audio_element_getdata(el);
-        if (c) c->err_cnt = 0;
+        if (c) {
+            c->err_cnt = 0;
+            /* R098: 重建 Helix 解码器以重置内部位保留/哈夫曼状态，否则 seek 到合法帧边界后
+               仍会连续解坏帧(err_cnt>50)误判曲终跳曲(R094 根因)。
+               崩溃根因已确认是 frame_align 伪同步字(R095)导致垃圾 nSlots(R097 已修)，
+               与重建本身无关。此处直接重建安全：调用时机为 pause_seek_resume(主任务、
+               解码任务已暂停)，无并发。R095: 先分配新 decoder，成功才释放旧，避免 OOM 变 NULL。 */
+            void *new_dec = MP3InitDecoder();
+            if (new_dec) {
+                MP3FreeDecoder(c->decoder);
+                c->decoder = new_dec;
+            } else {
+                ESP_LOGE("mp3_dbg", "R098 MP3InitDecoder OOM, keep old decoder (seek may glitch)");
+            }
+        }
+    }
+    s_in_len = 0;
+    g_seek_dbg_first = true;
+}
+
+/* R098: FF/REW secure: clear err_cnt only, no decoder free/realloc
+   (avoids free-while-decoding tlsf double-free). */
+void mp3_decoder_libhelix_clear_errors(audio_element_handle_t el)
+{
+    if (el) {
+        helix_ctx_t *c = (helix_ctx_t *)audio_element_getdata(el);
+        if (c) {
+            c->err_cnt = 0;
+        }
     }
 }
 
@@ -147,7 +207,30 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
         s_in_len += (size_t)r;
     }
 
+    if (g_seek_dbg_first && s_in_len > 0) {
+        ESP_LOGW("mp3_dbg", "R095 seek-data first %d bytes: %02x%02x%02x%02x %02x%02x%02x%02x (eos=%d)",
+                 (int)s_in_len, s_in[0],s_in[1],s_in[2],s_in[3],s_in[4],s_in[5],s_in[6],s_in[7], eos);
+        g_seek_dbg_first = false;
+    }
+
+    /* R098: 自对齐——丢弃 s_in 开头的非合法 Layer III 帧边界前导字节，确保 MP3Decode
+       始终从合法帧边界起解。seek/暂停恢复后文件位置可能落在中帧，垃圾头会产生异常
+       nSlots -> mp3dec.c:380 超大 memcpy 越界崩 Cache error。正常播放 s_in 已对齐(offset 0)，
+       扫描零开销；仅错位时才前移。 */
+    if (s_in_len >= 4) {
+        size_t j = 0;
+        while (j + 4 <= s_in_len && mp3_frame_len_from_hdr(s_in + j) <= 0) {
+            j++;
+        }
+        if (j > 0 && j < s_in_len) {
+            memmove(s_in, s_in + j, s_in_len - j);
+            s_in_len -= (size_t)j;
+            ESP_LOGW("mp3_dbg", "R098 self-align discarded %d bytes", (int)j);
+        }
+    }
+
     if (eos && s_in_len == 0) {
+        ESP_LOGW("mp3_dbg", "R095 DONE(input eos, s_in_len=0)");
         return AEL_IO_DONE;
     }
 
@@ -206,12 +289,28 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
             if (s_in_len >= HELIX_IN_BUF) {
                 c->err_cnt++;
                 if (c->err_cnt > 50) {
+                    ESP_LOGW("mp3_dbg", "R095 DONE(UNDERFLOW) err=%d s_in=%02x%02x%02x%02x", c->err_cnt, s_in[0],s_in[1],s_in[2],s_in[3]);
                     return AEL_IO_DONE;
                 }
-                s_in_len = 0;
+                /* R098: 满缓冲仍解不出一整帧(seek 后 MAINDATA 位保留缺失)。原地重读相同数据
+                   会死循环，须按帧长/下一同步字前移，直至位保留落回缓冲恢复。 */
+                int off = -1;
+                if (have_hdr) {
+                    int flen = mp3_frame_len_from_hdr(hdr);
+                    if (flen > 0 && flen <= (int)s_in_len) off = flen;
+                }
+                if (off <= 0) { off = MP3FindSyncWord(s_in + 1, (int)s_in_len - 1); if (off >= 0) off += 1; }
+                if (off <= 0) off = 1;
+                memmove(s_in, s_in + off, s_in_len - (size_t)off);
+                s_in_len -= (size_t)off;
+                if (s_in_len == 0) {
+                    break;
+                }
+                continue;   /* 前移后继续尝试解码下一帧 */
             }
             if (eos) {
                 /* 上游已结束且残片不足一帧，直接结束（跳曲保护） */
+                ESP_LOGW("mp3_dbg", "R095 DONE(UNDERFLOW eos)");
                 return AEL_IO_DONE;
             }
             break;
@@ -219,15 +318,26 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
             /* 坏帧：定位下一个同步字跳过，连续坏帧过多则结束（跳曲） */
             c->err_cnt++;
             if (c->err_cnt > 50) {
+                ESP_LOGW("mp3_dbg", "R095 DONE(BADFRAME) err=%d s_in=%02x%02x%02x%02x", c->err_cnt, s_in[0],s_in[1],s_in[2],s_in[3]);
                 return AEL_IO_DONE;
             }
-            int off = MP3FindSyncWord(s_in, (int)s_in_len);
-            if (off < 0) {
-                s_in_len = 0;
-            } else {
-                memmove(s_in, s_in + off, s_in_len - (size_t)off);
-                s_in_len -= (size_t)off;
+            /* R098: 用帧长跳过当前坏帧。seek/中途开始首帧因位保留(reservoir)缺失解坏，
+               跳到下一帧边界后 1-2 帧内位保留数据落回缓冲即恢复。避免旧逻辑
+               MP3FindSyncWord(s_in,len) 停在当前帧头(offset 0)原地死循环累计 51 坏帧误跳曲。 */
+            int off = -1;
+            if (have_hdr) {
+                int flen = mp3_frame_len_from_hdr(hdr);
+                if (flen > 0 && flen <= (int)s_in_len) {
+                    off = flen;
+                }
             }
+            if (off <= 0) {
+                off = MP3FindSyncWord(s_in + 1, (int)s_in_len - 1);
+                if (off >= 0) off += 1;
+            }
+            if (off <= 0) off = 1;   /* 兜底：保证前移，避免死循环 */
+            memmove(s_in, s_in + off, s_in_len - (size_t)off);
+            s_in_len -= (size_t)off;
             if (s_in_len == 0) {
                 if (eos) {
                     return AEL_IO_DONE;

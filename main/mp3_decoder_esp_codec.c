@@ -65,7 +65,7 @@ static esp_err_t _mp3_esp_codec_open(audio_element_handle_t self)
         .dec_type      = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3,
         .dec_cfg       = NULL,
         .cfg_size      = 0,
-        .use_frame_dec = true,   // R078: 启用 frame decoder 逐帧切分, 增强损坏帧容错
+        .use_frame_dec = false,  // R076 验证能出声的取值; R078 曾改 true 致全部 MP3 无声, 回退
     };
     esp_audio_err_t ret = esp_audio_simple_dec_open(&cfg, &dec->dec_handle);
     if (ret != ESP_AUDIO_ERR_OK || !dec->dec_handle) {

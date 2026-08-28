@@ -63,6 +63,7 @@ void mp3_decoder_set_volume(int level);
  * @param[in]  el  解码器 audio_element handle（用于清零其实例级 err_cnt；可传 NULL）
  */
 void mp3_decoder_libhelix_reset(audio_element_handle_t el);
+void mp3_decoder_libhelix_clear_errors(audio_element_handle_t el);
 
 #ifdef __cplusplus
 }
