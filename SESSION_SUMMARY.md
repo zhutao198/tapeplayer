@@ -1,6 +1,6 @@
 # SESSION_SUMMARY.md — TapeBook 关键决策与经验
 
-> **最后更新**：2026-08-26（R094 — 修复 FF/REW 偶发跳曲（seek 前调 mp3_decoder_libhelix_reset 清 decoder 残留输入缓冲 s_in/err_cnt，根因：s_in 模块级 static 残留旧位置数据拼接成非法 MP3 致 err_cnt>50 误判曲终）+ SD 误报移除（健康检查读扇区 0 偶发 CRC 误判，改 3 次重试+连续 2 次失败阈值）+ R093 音量线性增益 gain=level/14（用户满意）+ R091 decoder 软件 PCM 缩放（弃 i2s ALC：IDF5.x BREAK 崩溃）+ R090 屏蔽自动 light-sleep（屏幕常亮）+ R087 pause/resume 跳曲 AEL_IO_OK→TIMEOUT。待办：SD 热拔插 main 卡死、FF/REW 仍可能偶发（已根治，待实测））
+> **最后更新**：2026-08-31（R097 **里程碑** — 拔卡死机根治（display_set_sd_present 改标志位由 lvgl_task 消费，main_task 完全不碰 LVGL）+ 单声道 MP3 语速 2x 修复（Helix decoder mono→stereo 上混，I2S 保持 2 声道）+ 嗅探加固按帧长验证下一帧拒绝假同步字 + 短按步长 5s→2s（SEEK_STEP_SEC 常量，FF/REW 短按与长按初始基准同步）。已更新 3 类文件）
 
 ---
 
@@ -45,6 +45,7 @@
 | 2026-08-21 | R061 IDF freertos patch（ADF MP3 decoder 可编入）；R062 播放无限重启修复；R063 LVGL 死锁修复 + 无声诊断；R065 **首次开机无声根因（I2S 引脚 -1 覆盖）修复**；R066 暂停切歌野指针；R067 应用层 ID3v2 skip；R068 terminate + i2s 重建 | ✅ commit `59e746f` `3ee8208`（fix-r053-audio 分支）|
 | 2026-08-22 | R069–R075 崩溃攻坚：定位 ESP-ADF 静态库 MP3 decoder 内崩（项目代码无法修）；R072 清理无效修复保留 R067+R068+R071；R073 splash UX；R075 **double-free 根因**（stop 二次 deinit）定位 | ✅ commit `dd3e93e` |
 | 2026-08-22~24 | R076 **MP3 解码器崩溃根除**：coredump 反解确认 PV-MP3 闭源库崩 → 切换开源 esp_audio_codec（esp_mp3_dec / simple_dec，mpeg_parser 切帧）；同时引入蓝牙音箱(A2DP Sink) + 中文 TTF 字体分区(freetype) + 统一菜单 | 🚧 commit `c53662e`（R076-CODEC-* 系列）；待烧录验证 |
+| 2026-08-31 | **R097 里程碑**：拔卡死机（display_set_sd_present 标志位化）+ 单声道语速 2x（decoder 上混）+ 短按 5s→2s + 嗅探按帧长加固 | | ⏳（commit R097 + tag 待提交） |
 
 ---
 
@@ -516,3 +517,14 @@ f17d6b5 R030: 批量修复合并评审 15 项（S1+S2+S3+C08）
   索引须显式映射，勿用 layer-1（Layer III 会错查 L1 表造成码率读大 2-3 倍 -> 时长偏小）。
 - FATFS set_byte_pos 越过文件尾会立即 AEL_IO_DONE；断点/seek 必须钳制在曲长内，
   越界恢复点回退曲首 0。
+
+### R097 会话要点（2026-08-31）
+- 跨任务 LVGL 死锁不能靠 lv_lock() 修：曾试加锁仍卡 lv_inv_area（lvgl_task 持内部结构）。
+  正确做法是 main_task **完全不碰 LVGL**，全用标志位由 lvgl_task 消费
+  （参考 display_show_no_card / s_vol_pending 模式）。显示状态机收敛到单一拥有者。
+- 单声道 MP3 2x 快：嗅探得 44100/128k 正确，Helix decoder 上报 ch=1 暴露真相。
+  I2S 硬编码 2 声道会把 mono PCM 当 stereo 消耗 -> 每帧取 2 个 mono 样本 -> 2x 速度。
+  修复选 decoder 原地反向 mono→stereo 上混（I2S 配置不动，MAX98357A 双声道均有信号）；
+  比改 I2S 单声道更稳，避免驱动 slot 不重配风险。
+- 嗅探加固：按帧长验证下一帧拒绝假同步字（ID3 巨大如 228KB 时偶有假 44100 同步字）。
+- 短按步长统一为 SEEK_STEP_SEC 常量，长按初始基准同步同值，保持原"长按初始=短按"一致设计避免断层。

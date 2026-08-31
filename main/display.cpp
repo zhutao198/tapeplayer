@@ -177,6 +177,11 @@ static volatile uint32_t s_main_tick_call_count = 0;  /* 诊断：调用次数 *
    避免 main 直接调 ui_show_msg(裸 LVGL API) 与 lvgl_task 死锁→TWDT(R062 死锁回退)。 */
 static volatile bool s_msg_pending = false;
 static char          s_msg_text[96] = {0};
+/* R100: SD 图标/插拔提示/清消息返回播放器——全部由 lvgl 任务消费,
+   main_task 只设标志,彻底避免 main 调 LVGL 与 lvgl_task 死锁(拔卡死机根因)。 */
+static volatile bool s_sd_icon_pending  = false;   /* SD 图标+插拔提示待更新 */
+static volatile bool s_sd_icon_present   = false;   /* 期望的卡在位状态 */
+static volatile bool s_clear_msg_pending = false;   /* 清全屏消息返回播放器 */
 
 void display_register_main_tick(display_main_tick_fn_t fn)
 {
@@ -243,6 +248,9 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 
 /* R063-fix: 不持锁版消息渲染,供 lvgl_task 在已持锁区间内调用(前向声明,定义见 ui_show_msg 处) */
 static void ui_show_msg_nolock(const char *txt);
+/* R100: 前向声明,供 lvgl_task 消费标志时调用(定义在后面) */
+static void ui_show_player(void);
+static void sd_icon_update(bool present);
 
 /* LVGL 心跳 + 定时器处理任务 */
 static void lvgl_task(void *arg)
@@ -286,6 +294,18 @@ static void lvgl_task(void *arg)
         if (s_msg_pending) {
             s_msg_pending = false;
             ui_show_msg_nolock(s_msg_text);
+        }
+        /* R100: 消费 SD 图标/插拔提示更新(避免 main 调 LVGL 死锁) */
+        if (s_sd_icon_pending) {
+            s_sd_icon_pending = false;
+            bool present = s_sd_icon_present;
+            sd_icon_update(present);
+            lv_label_set_text(lbl_sd_toast, present ? "TF card inserted" : "TF card ejected");
+        }
+        /* R100: 消费"清消息返回播放器"标志 */
+        if (s_clear_msg_pending) {
+            s_clear_msg_pending = false;
+            ui_show_player();
         }
         lv_timer_handler();
         lv_unlock();
@@ -1103,6 +1123,13 @@ void display_show_no_card(void)
     s_msg_pending = true;
 }
 
+/* R100: 清除全屏消息(如"SD card not detected")并返回播放器界面，插卡成功/正常播放时调用 */
+void display_clear_msg(void)
+{
+    if (!g_display_initialized) return;
+    s_clear_msg_pending = true;   /* 由 lvgl 任务消费调 ui_show_player */
+}
+
 static void sd_icon_update(bool present)
 {
     if (!g_display_initialized) return;
@@ -1114,15 +1141,18 @@ static void sd_icon_update(bool present)
 /* 仅初始化图标状态, 不弹提示 (用于开机, 避免误报插拔) */
 void display_set_sd_present_init(bool present)
 {
-    sd_icon_update(present);
+    /* R100: 仅设标志,由 lvgl 任务消费(避免 main 调 LVGL 死锁) */
+    s_sd_icon_present = present;
+    s_sd_icon_pending  = true;
 }
 
 /* 设置 TF 卡在位状态: 更新图标 + 弹插拔瞬时提示 */
 void display_set_sd_present(bool present)
 {
-    sd_icon_update(present);
-    lv_label_set_text(lbl_sd_toast, present ? "TF card inserted" : "TF card ejected");
-    g_sd_toast_until = esp_timer_get_time() + 1500 * 1000;  // 显示 1.5s
+    /* R100: 仅设标志,由 lvgl 任务消费(避免 main 调 LVGL 死锁——拔卡死机根因) */
+    s_sd_icon_present = present;
+    s_sd_icon_pending  = true;
+    g_sd_toast_until   = esp_timer_get_time() + 1500 * 1000;  // 显示 1.5s
 }
 
 /* 插拔瞬时提示显隐控制 (独立于 display_update 的脏区判定, 保证提示及时出现/消失) */

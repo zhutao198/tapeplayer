@@ -264,6 +264,8 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
             if (true_ch   < 0)  true_ch   = fi.nChans;
             if (true_rate != c->last_rate || true_ch != c->last_ch ||
                 fi.bitsPerSample != c->last_bits) {
+                ESP_LOGI("Helix", "R100 diag: true_rate=%d ch=%d bits=%d (fi.samprate=%d nChans=%d)",
+                         true_rate, true_ch, fi.bitsPerSample, fi.samprate, fi.nChans);
                 audio_element_set_music_info(self, true_rate, true_ch, fi.bitsPerSample);
                 c->last_rate  = true_rate;
                 c->last_ch    = true_ch;
@@ -278,6 +280,19 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
                     if (v < -32768) v = -32768;
                     s_pcm[i] = (short)v;
                 }
+            }
+            /* R100: 单声道文件上混为立体声(每样本复制到 L+R)。
+               I2S 固定 2 声道, 不混则单声道 PCM 被当立体声消耗 → 2x 快。
+               原地反向交错避免覆盖(2i+1 > i 恒成立); 缓冲 2304 够容 1152→2304。 */
+            if (fi.nChans == 1 && fi.outputSamps > 0 &&
+                (int)fi.outputSamps * 2 <= HELIX_PCM_SAMPLES) {
+                int n = (int)fi.outputSamps;
+                for (int i = n - 1; i >= 0; i--) {
+                    s_pcm[2*i + 1] = s_pcm[i];
+                    s_pcm[2*i]     = s_pcm[i];
+                }
+                fi.outputSamps = n * 2;
+                outlen = (size_t)fi.outputSamps * sizeof(short);
             }
             audio_element_err_t w = audio_element_output(self, (char *)s_pcm, (int)outlen);
             if (w < 0) {

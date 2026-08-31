@@ -246,3 +246,11 @@ git clean -fdx
 - 修复恢复点越界导致"播放即结束"（seek/保存断点钳制到曲长）。
 - 修复进度条时长不准（MP3 bitrate 嗅探 layer 索引反了，128kbps 读成 352kbps）。
 - 进度条/恢复点/FF/REW/音量/模式切换均经实测验证正常。
+
+## R097 里程碑（2026-08-31）
+- **拔卡死机修复**：display_set_sd_present/init 改用标志位由 lvgl_task 消费，main_task 完全不碰 LVGL（lv_lock 也无法解决的深层并发冲突）。
+- **插卡返回播放界面**：display_clear_msg 同样标志位化，插卡成功后自动清提示。
+- **单声道语速 2x 修复**：Helix decoder 输出前原地反向 mono→stereo 上混（I2S 保持 2 声道）。
+- **嗅探加固**：mp3_sniff_sample_rate 按帧长验证下一帧，拒绝假同步字；增加 channels 检测。
+- **短按步长**：SEEK_STEP_SEC=2（FF/REW 短按 + 长按初始基准同步），原"长按初始=短按"一致设计保持。
+- 全功能验证：暂停拔卡/插卡/单声道/立体声/短按 2s/长按变速/切歌/音量均正常。

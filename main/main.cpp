@@ -241,6 +241,14 @@ static void jump_to_track_start(void)
 
 static void play_current_track(void)
 {
+    /* R100: no SD card -> do not start playback (file-open fails => UI 'playing'
+       but silent; leftover error pipeline can hang SD re-mount -> freeze) */
+    if (!g_sd_inserted || g_sd_card == NULL) {
+        display_show_no_card();
+        g_app_state = APP_STATE_IDLE;
+        ESP_LOGW(TAG, "Play requested but no SD mounted");
+        return;
+    }
     char filepath[FILENAME_MAX_LEN * 4];  // R032-001: 鎵╁埌 *4 涓?playlist 璺緞缂撳啿涓€鑷达紝閬垮厤鎺ユ敹鏃舵埅鏂?
     if (playlist_get_path(g_current_track, filepath, sizeof(filepath))) {
         if (audio_player_play(filepath)) {
@@ -732,14 +740,14 @@ static void handle_button_events(void)
         /* --- 蹇繘 --- */
         case BTN_ID_FAST_FORWARD:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
-                skip_seconds(5);            // R045锛氱煭鎸夎烦 5 绉?
+                skip_seconds(SEEK_STEP_SEC);            // R045锛氱煭鎸夎烦 5 绉?
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
                 // 杩涘叆鍙橀€熸€侊細浠呭湪闀挎寜棣栨瑙﹀彂涓€娆★紙閬垮厤涓?HOLD 閲嶅璋冪敤 press锛?
                 if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
                     if (g_app_state == APP_STATE_PAUSED) {
                         audio_player_resume();
                     }
-                    skip_seconds(5);            // R046锛氬厛缁ф壙鐭寜鍩哄噯璺宠繘 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
+                    skip_seconds(SEEK_STEP_SEC);            // R046锛氬厛缁ф壙鐭寜鍩哄噯璺宠繘 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
                     tape_control_ff_press();
                     audio_player_set_speed(tape_control_get_speed());
                     audio_player_scrub_enter();   /* R098: 暂停播放仅跳帧，decoder 停止后重置才安全 */
@@ -774,7 +782,7 @@ static void handle_button_events(void)
                     g_combo_stop_us = 0;
                 } else {
                     g_combo_rew_us = now;    // 璁板綍鍗曠嫭 REW锛岀瓑寰呭彲鑳界殑 STOP 缁勫悎
-                    skip_seconds(-5);        // R045锛氱煭鎸夊悗閫€ 5 绉?
+                    skip_seconds(-SEEK_STEP_SEC);        // R045锛氱煭鎸夊悗閫€ 5 绉?
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
                 // 杩涘叆鍙橀€熸€侊細浠呭湪闀挎寜棣栨瑙﹀彂涓€娆★紙閬垮厤涓?HOLD 閲嶅璋冪敤 press锛?
@@ -782,7 +790,7 @@ static void handle_button_events(void)
                     if (g_app_state == APP_STATE_PAUSED) {
                         audio_player_resume();
                     }
-                    skip_seconds(-5);           // R046锛氬厛缁ф壙鐭寜鍩哄噯鍚庨€€ 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
+                    skip_seconds(-SEEK_STEP_SEC);           // R046锛氬厛缁ф壙鐭寜鍩哄噯鍚庨€€ 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
                     tape_control_rewind_press();
                     audio_player_set_speed(tape_control_get_speed());
                     audio_player_scrub_enter();   /* R098: 暂停播放仅跳帧，decoder 停止后重置才安全 */
@@ -1448,6 +1456,7 @@ extern "C" void app_main(void)
                             g_current_track = 0;
                             playlist_set_index(0);
                             g_app_state = APP_STATE_STOPPED;
+                            display_clear_msg();   /* R100: 清除"SD card not detected"并返回播放器 */
                         } else {
                             display_show_no_files();
                             g_app_state = APP_STATE_IDLE;

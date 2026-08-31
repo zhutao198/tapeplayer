@@ -66,6 +66,11 @@ void display_show_no_files(void);
 void display_show_no_card(void);
 
 /**
+ * @brief 清除全屏消息并返回播放器界面（插卡成功/正常播放时调用）
+ */
+void display_clear_msg(void);
+
+/**
  * @brief 设置 TF 卡在位状态 (状态栏 SD 图标 + 插拔瞬时提示)
  * @param present true=已插入, false=已弹出
  */

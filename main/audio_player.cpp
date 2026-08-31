@@ -129,9 +129,10 @@ static int id3v2_total_size(const char *path)
 // 采样率用于把 I2S 时钟设成文件实际速率（否则被 R076-CODEC 锁死 48000Hz 放快）；
 // 码率用于按真实比特率估算 duration（替代固定 128kbps 估算，修复进度条到不了一端）。
 // 返回采样率(Hz)，失败返回 0；*bitrate_kbps 输出码率(kbps)，失败置 0。需跳过 ID3v2(id3_sz)。
-static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps)
+static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps, int *channels)
 {
     if (bitrate_kbps) *bitrate_kbps = 0;
+    if (channels)     *channels     = 2;   /* 默认立体声 */
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
     if (fseek(fp, id3_sz, SEEK_SET) != 0) { fclose(fp); return 0; }
@@ -168,8 +169,34 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps
             int rate = rates[ver][sri];
             if (rate > 0 && layer >= 1 && bi >= 1 && bi <= 14) {
                 int li = (layer == 3) ? 0 : (layer == 2) ? 1 : 2;   /* L1,L2,L3 表索引 */
-                if (bitrate_kbps) *bitrate_kbps = br[ver][li][bi - 1];
-                return rate;
+                int br_kbps = br[ver][li][bi - 1];
+                /* R100: 验证下一帧——按本帧头算出帧长，看偏移处是否又一个合法同步。
+                   拒绝 ID3 二进制残余里的假同步字(常被误判 44100 → 拔快)。 */
+                int padding = (b2 & 0x02) ? 1 : 0;
+                int flen = ((ver == 2) ? 144 : 72) * (br_kbps * 1000) / rate + padding;
+                size_t next = i + (size_t)flen;
+                bool verified = false;
+                if (next + 4 <= n) {
+                    uint8_t n0 = buf[next], n1 = buf[next + 1], n2 = buf[next + 2];
+                    if (n0 == 0xFF && (n1 & 0xE0) == 0xE0 && (n1 & 0x06) != 0 &&
+                        (n2 & 0xF0) != 0xF0 && (n2 & 0x0C) != 0x0C) {
+                        verified = true;
+                    }
+                } else {
+                    verified = true;  /* 缓冲不够看下一帧,信任本帧(回退原行为) */
+                }
+                if (verified) {
+                    if (bitrate_kbps) *bitrate_kbps = br_kbps;
+                    /* R100: channel mode 在第 4 字节高 2 位: 00 stereo/01 joint/10 dual/11 mono */
+                    if (channels) {
+                        uint8_t b3 = buf[i + 3];
+                        int ch_mode = (b3 >> 6) & 3;
+                        *channels = (ch_mode == 3) ? 1 : 2;
+                    }
+                    ESP_LOGI(TAG, "R100 diag: sniff hdr@+%zu bytes=%02X %02X %02X %02X ver=MPEG%d layer=%d sr=%d br=%d ch=%d flen=%d",
+                             i, b0, b1, b2, buf[i+3], (ver==2?1:(ver==1?2:0)), layer, rate, br_kbps, channels?*channels:2, flen);
+                    return rate;
+                }
             }
         }
     }
@@ -424,17 +451,20 @@ bool audio_player_play(const char *filepath)
             ESP_LOGI(TAG, "R079: ID3v2 detected (%d bytes), skipping manually", id3_sz);
         }
         // R083: 嗅探首个音频帧真实采样率，让 I2S 时钟匹配文件（避免被锁 48000 放快）
-        int sn = mp3_sniff_sample_rate(real_path, g_id3_skip_bytes, &bitrate_kbps);
+        int sniff_ch = 2;
+        int sn = mp3_sniff_sample_rate(real_path, g_id3_skip_bytes, &bitrate_kbps, &sniff_ch);
         if (sn > 0) {
             file_rate = sn;
-            ESP_LOGI(TAG, "R083: sniffed MP3 sample rate = %d Hz", sn);
+            ESP_LOGI(TAG, "R083: sniffed MP3 sample rate = %d Hz, channels = %d", sn, sniff_ch);
         } else {
             ESP_LOGW(TAG, "R083: sniff MP3 sample rate failed, fallback %d Hz", file_rate);
         }
+        /* R100: 单声道文件由 Helix decoder 上混为立体声, I2S 保持 2 声道 */
     }
 
     // 7. 设置 I2S 时钟 — R083: 改用文件真实速率(mp3 嗅探)替代固定的 AUDIO_SAMPLE_RATE(48000)，
     //    否则低采样率文件(如 24000Hz 的躲避的爱)会被 48000 时钟放快变尖。
+    //    R100: 单声道文件由 Helix decoder 上混为立体声输出，I2S 保持 2 声道。
     g_base_sample_rate   = file_rate;
     g_current_sample_rate = file_rate;
     i2s_stream_set_clk(g_i2s_writer, file_rate, 16, 2);
@@ -895,8 +925,13 @@ void audio_player_tick(void)
 
     // 检查管道状态（通过 I2S writer 元素状态判断）
     audio_element_state_t el_state = audio_element_get_state(g_i2s_writer);
-    if (el_state == AEL_STATE_FINISHED || el_state == AEL_STATE_STOPPED) {
-        ESP_LOGI(TAG, "Track finished");
+    // R100: 文件打开/解码失败(如文件名编码 FATS 打不开)会进 AEL_STATE_ERROR，
+    // 若不加处理会一直停在"播放中但无声"。此处等同曲终 -> 回调 on_track_finished -> 自动跳下一首。
+    audio_element_state_t file_state = g_fatfs_reader ? audio_element_get_state(g_fatfs_reader) : AEL_STATE_NONE;
+    audio_element_state_t dec_state  = g_decoder  ? audio_element_get_state(g_decoder)  : AEL_STATE_NONE;
+    if (el_state == AEL_STATE_FINISHED || el_state == AEL_STATE_STOPPED ||
+        file_state == AEL_STATE_ERROR || dec_state == AEL_STATE_ERROR) {
+        ESP_LOGI(TAG, "Track finished (state el=%d file=%d dec=%d)", el_state, file_state, dec_state);
         g_is_playing = false;
         if (g_status_cb) {
             g_status_cb(0, g_user_data); // 0 = finished
