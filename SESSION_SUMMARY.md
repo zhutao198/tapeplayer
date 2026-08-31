@@ -509,3 +509,10 @@ f17d6b5 R030: 批量修复合并评审 15 项（S1+S2+S3+C08）
 - 教训：decoder 重建（free/realloc）绝不能在解码任务运行时调用（tlsf 双释放）；ADF pause/resume 每 tick 高频调用会爆 event 队列。
 - 方案：FF/REW 用"静音 + 仅 seek(命中 g_scrub_active 不计播放流逝) + 释放时一次暂停式 seek"，进度锁定=seek 目标，线性准确且无队列压力。
 - 经验：ADF fatfs_stream 的 set_byte_pos 仅在元素重开(open)时生效，运行中 set_byte_pos 不物理 seek。
+
+
+### R096 会话要点（2026-08-28）
+- MP3 帧头 layer 字段取值 01=Layer III、10=II、11=I；bitrate 表按 L1/L2/L3 排布，
+  索引须显式映射，勿用 layer-1（Layer III 会错查 L1 表造成码率读大 2-3 倍 -> 时长偏小）。
+- FATFS set_byte_pos 越过文件尾会立即 AEL_IO_DONE；断点/seek 必须钳制在曲长内，
+  越界恢复点回退曲首 0。

@@ -162,12 +162,13 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps
             (b1 & 0x06) != 0 && (b2 & 0xF0) != 0xF0 && (b2 & 0x0C) != 0x0C) {
             int vbits = (b1 >> 3) & 3;
             int ver = (vbits == 3) ? 2 : (vbits == 2) ? 1 : 0;  // 3=MPEG1,2=MPEG2,0=MPEG2.5
-            int layer = (b1 >> 1) & 3;                           // 1=L1,2=L2,3=L3
+            int layer = (b1 >> 1) & 3;                           // MPEG 帧头层字段: 1=III,2=II,3=I
             int bi = (b2 >> 4) & 0x0F;                           // bitrate index 1..14
             int sri = (b2 >> 2) & 3;
             int rate = rates[ver][sri];
             if (rate > 0 && layer >= 1 && bi >= 1 && bi <= 14) {
-                if (bitrate_kbps) *bitrate_kbps = br[ver][layer - 1][bi - 1];
+                int li = (layer == 3) ? 0 : (layer == 2) ? 1 : 2;   /* L1,L2,L3 表索引 */
+                if (bitrate_kbps) *bitrate_kbps = br[ver][li][bi - 1];
                 return rate;
             }
         }
@@ -698,6 +699,12 @@ static void audio_player_seek_ms_internal(int ms)
 {
     if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
 
+    // R100: 钳制 seek 目标在曲目时长内；超时长(损坏/越界恢复点)回退曲首 0，
+    // 防止 seek 到文件尾之外 -> FATFS 立即 AEL_IO_DONE -> "播放即结束/不自动播下一首"。
+    if (g_total_duration_ms > 0 && ms > g_total_duration_ms) {
+        ms = 0;
+    }
+
     // R067：g_total_file_bytes 已经是音频字节数（去掉 ID3v2）；
     // seek 目标 = id3_skip + ms * audio_bytes / duration。
     int64_t byte_pos = 0;
@@ -709,6 +716,8 @@ static void audio_player_seek_ms_internal(int ms)
     // R032-002 复审修订：ADF audio_element_set_byte_pos 入参为 int（32-bit），钳位避免窄化截断。
     if (byte_pos > INT32_MAX) byte_pos = INT32_MAX;
     if (byte_pos < 0) byte_pos = 0;
+    int64_t max_byte = g_id3_skip_bytes + g_total_file_bytes;
+    if (byte_pos > max_byte) byte_pos = max_byte;   /* R100: 兜底，不越过音频文件尾 */
     // R085: MP3 帧对齐，减少解码器坏帧（叠加 err_cnt 误判曲终）
     if (strcasecmp(get_file_ext(g_seek_path), ".mp3") == 0) {
         byte_pos = mp3_frame_align(g_seek_path, (int)byte_pos);

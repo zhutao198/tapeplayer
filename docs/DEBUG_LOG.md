@@ -527,3 +527,11 @@ g_next_loop_deadline += BTN_SCAN_INTERVAL * 1000;   // BUG：无条件累加 200
 - FF/REW：scrub_enter 静音 / scrub_seek 仅 seek / scrub_exit 暂停式 seek 到最终位；删掉逐 tick pause_seek_resume（event 队列爆满）。
 - 音量：settings_save_volume 立即 nvs_commit。
 - 待办：曲终不自动播下一首（需曲终前后串口日志确认链路）。
+
+
+---
+
+## 10. R096 会话记录（2026-08-28）
+- 修复：恢复点越界"播放即结束"（seek_ms_internal ms-钳制+byte_pos-钳制、save_current_position 钳断点）。
+- 修复：进度条时长不准（mp3_sniff_sample_rate layer 索引映射错误，128kbps 读成 352kbps）。
+- 验证：进度条/恢复点/FF/REW/音量/模式切换均正常。

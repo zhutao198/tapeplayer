@@ -240,3 +240,9 @@ git clean -fdx
 - FF/REW 全面重构：严格帧头校验 + decoder 自对齐；FF/REW 静音、进度不计播放流逝（g_scrub_active），skip=速度x实际流逝时间（线性自校正）；释放时一次暂停式 seek 物理跳转。
 - 音量持久化：settings_save_volume 立即 nvs_commit + 每次调整即存。
 - 待办：一曲播完自动播下一首异常（见开发日志 R095 待办）。
+
+
+## R096 里程碑（2026-08-28）
+- 修复恢复点越界导致"播放即结束"（seek/保存断点钳制到曲长）。
+- 修复进度条时长不准（MP3 bitrate 嗅探 layer 索引反了，128kbps 读成 352kbps）。
+- 进度条/恢复点/FF/REW/音量/模式切换均经实测验证正常。

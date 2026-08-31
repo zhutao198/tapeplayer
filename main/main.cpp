@@ -187,7 +187,10 @@ static void save_current_position(void)
         g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
         char name[FILENAME_MAX_LEN] = "";
         playlist_get_name(g_current_track, name, sizeof(name));
-        settings_save_position(g_current_track, audio_player_get_position(), name);
+        int pos = audio_player_get_position();
+        int dur = audio_player_get_duration();
+        if (dur > 0 && pos > dur) pos = dur;   /* R100: 钳制断点数<=曲长，防恢复点越文件尾"播放即结束" */
+        settings_save_position(g_current_track, pos, name);
         // S8锛歴eek/鍒囨瓕鍚庣珛鍗?flush锛岄伩鍏嶆柇鐢典涪澶辨渶杩戜竴娆℃柇鐐?
         flush_nvs_if_safe();
     }
