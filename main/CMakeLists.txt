@@ -35,13 +35,16 @@ idf_component_register(
         "settings.cpp"
         "bookmark.cpp"
         "power_mgmt.cpp"
-        # R098h-hotfix: ui_font_12/14/16.c 是 LVGL v8 格式（lv_font_conv 无 --lvgl9 参数生成），
-        # 在当前 LVGL v9.5 下链接即乱码（get_glyph_dsc_fmt_txt / fmt_txt_dsc_t 字段布局已变）。
-        # 临时从编译源移除，恢复纯英文 UI（montserrat_14）。中文子集字体需用 v9 兼容
-        # 工具（lv_font_conv --lvgl9 / lvgl_font_conv v2 等）重新生成后再恢复。
-        # "ui_font_12.c"
-        # "ui_font_14.c"
-        # "ui_font_16.c"
+        # R101: 中文字体已修复并重新生成。之前乱码与"LVGL v8 字体不兼容 v9"无关
+        # （已核对 v9 的 lv_font_t / cmap / glyph_dsc 与 v8 完全一致），真正根因是
+        # gen_font.py 的两个 bug：
+        #   1) lv_font_conv 对离散字符集生成错误 cmap(min->max 巨型区间)，脚本据此
+        #      反推 unicode，导致 1689 字符里 1433 个错位；
+        #   2) 缺 v9 新增的 stride 字段，且 base_line 写死 0。
+        # 详见 tools/gen_font.py，无需升级 lv_font_conv。
+        "ui_font_12.c"
+        "ui_font_14.c"
+        "ui_font_16.c"
         "bt_speaker.cpp"
     INCLUDE_DIRS
         "."

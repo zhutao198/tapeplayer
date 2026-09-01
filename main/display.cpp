@@ -45,17 +45,18 @@ LV_FONT_DECLARE(lv_font_montserrat_14);
    （覆盖 UI 固定中文词），并在 font_partition_init() 中将其 fallback 指向
    运行时 freetype TTF（覆盖 SD 卡任意中文文件名）。旧行为（仅 montserrat
    纯 ASCII 字体）会导致所有中文显示方框/空白，此处统一切换为子集 C 字体。 */
-/* R098h-hotfix: ui_font_*.c 是 LVGL v8 格式，当前 LVGL v9.5 下渲染会全屏乱码
- * （fmt_txt 字形/位图函数已重命名、结构体字段布局也不同）。临时切换到 montserrat_14
- * (LVGL v9 内置) 恢复英文 UI 显示。中文字体需用 --lvgl9 兼容工具重新生成。 */
-// LV_FONT_DECLARE(lv_font_chinese_12);
-// LV_FONT_DECLARE(lv_font_chinese_14);
-// LV_FONT_DECLARE(lv_font_chinese_16);
-/* R098h-final5: ui_font_*.c 已用 gen_font.py (lv_font_conv --no-compress) 重新生成为
- * LVGL v9 兼容的 PLAIN 格式 (bitmap_format=0, bpp=4)，v9 原生可解码（无需
- * LV_USE_FONT_COMPRESSED）。UI 主字体切回中文子集字体，覆盖常用中文 + ASCII。 */
-// #define UI_FONT (&lv_font_chinese_16)
-#define UI_FONT (&lv_font_montserrat_14)
+/* R101: 中文字体已修复。此前判断"LVGL v8 字体不兼容 v9"有误——核对 v9 源码后确认
+   lv_font_t / lv_font_fmt_txt_cmap_t / glyph_dsc 与 v8 完全一致，v9 仅多一个 stride
+   字段且仍保留 lv_font_get_glyph_dsc_fmt_txt()。真正根因在 gen_font.py：
+     1) lv_font_conv 对离散字符集生成错误 cmap（min->max 巨型区间，却只输出真实字符
+        的字形），脚本据此反推 unicode，导致 1689 字符中 1433 个错位；
+     2) 缺 v9 新增的 .stride 字段，base_line 又写死 0。
+   现已修正并重新生成（stride=0、度量取自生成器、用传入字符顺序映射 gid），
+   离线按 v9 解码逻辑验证 ASCII 与中文均正确，故恢复使用中文子集字体。 */
+LV_FONT_DECLARE(lv_font_chinese_12);
+LV_FONT_DECLARE(lv_font_chinese_14);
+LV_FONT_DECLARE(lv_font_chinese_16);
+#define UI_FONT (&lv_font_chinese_16)
 
 static const char *TAG = "display";
 

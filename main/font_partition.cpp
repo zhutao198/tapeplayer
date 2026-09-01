@@ -7,12 +7,12 @@ static const char * TAG = "font_part";
 
 /* LVGL 内置拉丁字体，作英文/数字兜底（子集未覆盖的字符自动回退到此） */
 LV_FONT_DECLARE(lv_font_montserrat_14);
-/* R098h-hotfix: ui_font_*.c 是 LVGL v8 格式，当前 v9.5 下不可用，extern 暂时注释。
- * 中文字体改由 v9 兼容工具 (lv_font_conv --lvgl9) 重新生成后再启用。
- */
-// extern lv_font_t lv_font_chinese_12;
-// extern lv_font_t lv_font_chinese_14;
-// extern lv_font_t lv_font_chinese_16;
+/* R101: 之前判断"v8 字体不兼容 v9"有误——核对 v9 源码确认 lv_font_t/cmap/glyph_dsc
+ * 与 v8 完全一致，仅多一个 stride 字段。真正根因是 gen_font.py 的 cmap/stride/度量
+ * bug，现已修正并重新生成。 */
+extern lv_font_t lv_font_chinese_12;
+extern lv_font_t lv_font_chinese_14;
+extern lv_font_t lv_font_chinese_16;
 
 static bool s_font_ready = false;  /* 子集字体是否就绪（此处恒为 false: freetype 不可用） */
 

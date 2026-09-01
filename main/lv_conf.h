@@ -62,11 +62,12 @@
 #define LV_FONT_MONTSERRAT_14   1
 #define LV_FONT_MONTSERRAT_16   1
 /* R098h-hotfix: ui_font_*.c 是 LVGL v8 格式，与 v9.5 fmt_txt 渲染管线不兼容，
- * 引用即乱码。LV_FONT_CUSTOM_DECLARE 留空，中文字体改由 v9 兼容工具重新生成。 */
-#define LV_FONT_CUSTOM_DECLARE
-/*     LV_FONT_DECLARE(lv_font_chinese_12) \
+ * R101: 已修复并重新生成（根因为 gen_font.py 的 cmap/stride/度量 bug，非格式不兼容），
+ * 恢复声明。 */
+#define LV_FONT_CUSTOM_DECLARE \
+    LV_FONT_DECLARE(lv_font_chinese_12) \
     LV_FONT_DECLARE(lv_font_chinese_14) \
-    LV_FONT_DECLARE(lv_font_chinese_16) */
+    LV_FONT_DECLARE(lv_font_chinese_16)
 #define LV_FONT_DEFAULT         &lv_font_montserrat_14
 
 /* 允许挂载用户数据 */

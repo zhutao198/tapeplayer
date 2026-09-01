@@ -78,10 +78,20 @@ def to_ranges(chars):
     return ranges
 
 
-def _parse_tmp(font_c):
+def _parse_tmp(font_c, expected=None):
     """解析 lv_font_conv 生成的单个 .c，返回 (glyphs, bitmap_bytes)。
     glyphs: list of (unicode, bitmap_index, adv_w, box_w, box_h, ofs_x, ofs_y)
-    其中 unicode 来自 cmaps，bitmap_index 为批内偏移。"""
+    其中 bitmap_index 为批内偏移。
+
+    R101: expected = 本次调用传给 lv_font_conv 的字符 codepoint 列表(按 -r range
+    展开顺序)。【必须传】——lv_font_conv 1.5.3 对离散字符集会生成错误的 cmap：
+    它输出 (min_cp, max_cp-min_cp+1, 1) 的巨大连续区间，却只为真实存在的字符生成
+    字形(实测 --symbols "A中播" -> cmap (65,25709,1) 但只有 3 个字形)。
+    用该 cmap 反推 unicode 会把区间空洞当成字符(中文被映射成 0xB8-0xF7 等
+    Latin-1，最终字体 1689 个字符里 1433 个错位)。
+    已验证字形顺序与传入字符顺序严格一致(gid i == expected[i-1])，
+    故这里直接用 expected 映射，不信任生成器输出的 cmap。
+    """
     import re
     # 提取 glyph_dsc 条目
     dsc_re = re.compile(
@@ -92,15 +102,18 @@ def _parse_tmp(font_c):
     dscs = dsc_re.findall(dsc_block)
     # glyph_id 0 是保留(reserved)，从 1 开始有效
     # 提取 cmaps 得到 unicode -> glyph_id
-    cmap_block = re.search(r"cmaps\[\]\s*=\s*\{(.*?)\};", font_c, re.S).group(1)
-    cmap_re = re.compile(
-        r"\.range_start\s*=\s*(\d+),\s*\.range_length\s*=\s*(\d+),\s*"
-        r"\.glyph_id_start\s*=\s*(\d+)")
     unicode_to_gid = {}
-    for rs, rl, gs in cmap_re.findall(cmap_block):
-        rs, rl, gs = int(rs), int(rl), int(gs)
-        for i in range(rl):
-            unicode_to_gid[rs + i] = gs + i
+    # R101: expected 模式下不解析生成器 cmap —— 它声明的 range_length 可能是上万
+    # (离散字符集)，展开既慢又全错。
+    if expected is None:
+        cmap_block = re.search(r"cmaps\[\]\s*=\s*\{(.*?)\};", font_c, re.S).group(1)
+        cmap_re = re.compile(
+            r"\.range_start\s*=\s*(\d+),\s*\.range_length\s*=\s*(\d+),\s*"
+            r"\.glyph_id_start\s*=\s*(\d+)")
+        for rs, rl, gs in cmap_re.findall(cmap_block):
+            rs, rl, gs = int(rs), int(rl), int(gs)
+            for i in range(rl):
+                unicode_to_gid[rs + i] = gs + i
     # 提取 bitmap 字节
     bmp_block = re.search(r"glyph_bitmap\[\]\s*=\s*\{(.*?)\};", font_c, re.S).group(1)
     bytes_hex = re.findall(r"0x([0-9A-Fa-f]{2})", bmp_block)
@@ -110,15 +123,44 @@ def _parse_tmp(font_c):
     for gid, (bi, aw, bw, bh, ox, oy) in enumerate(dscs):
         if gid == 0:
             continue
-        uni = None
-        for u, g in unicode_to_gid.items():
-            if g == gid:
-                uni = u
+        if expected is not None:
+            # R101: 字形顺序 == 传入字符顺序，直接用 expected 映射
+            idx = gid - 1
+            if idx >= len(expected):
                 break
-        if uni is None:
-            continue
+            uni = expected[idx]
+        else:
+            uni = None
+            for u, g in unicode_to_gid.items():
+                if g == gid:
+                    uni = u
+                    break
+            if uni is None:
+                continue
         glyphs.append((uni, int(bi), int(aw), int(bw), int(bh), int(ox), int(oy)))
     return glyphs, bitmap
+
+
+def _parse_font_meta(font_c):
+    """从 lv_font_conv 生成的 .c 提取字体级垂直度量。
+
+    R101: 这些值直接决定字形垂直定位，不能自行估算。实测 lv_font_conv(size16)
+    给出 line_height=18 / base_line=2 / underline_position=-1 / underline_thickness=1，
+    而旧脚本写 base_line=0 且 line_height=size*1.1，会导致字形整体上移、下伸部分
+    (g/y/p)被裁掉。这里直接从生成器输出提取权威值。
+    """
+    import re
+
+    def _one(key, default=0):
+        m = re.search(r"\.\s*" + key + r"\s*=\s*(-?\d+)", font_c)
+        return int(m.group(1)) if m else default
+
+    return {
+        "line_height": _one("line_height"),
+        "base_line": _one("base_line"),
+        "underline_position": _one("underline_position"),
+        "underline_thickness": _one("underline_thickness"),
+    }
 
 
 def build_subset_fonts():
@@ -145,6 +187,7 @@ def _build_one_size(size, name, all_cps):
     BATCH = 160
     n = len(all_cps)
     tmp_files = []
+    expected_per_batch = []   # R101: 每批传入的字符顺序，用于正确映射 gid
     try:
         batch_idx = 0
         for i in range(0, n, BATCH):
@@ -158,6 +201,11 @@ def _build_one_size(size, name, all_cps):
                     ranges_arg.append((s, p))
                     s = p = c
             ranges_arg.append((s, p))
+            # R101: 按 range 展开顺序 == lv_font_conv 生成字形的顺序，
+            # 记录下来供 _parse_tmp 正确映射 unicode（不能信它输出的 cmap）。
+            expected = []
+            for lo, hi in ranges_arg:
+                expected.extend(range(lo, hi + 1))
             extra = []
             for lo, hi in ranges_arg:
                 if lo == hi:
@@ -171,14 +219,18 @@ def _build_one_size(size, name, all_cps):
                    "--no-compress", "-o", tmp] + extra
             subprocess.run(cmd, check=True, shell=True)
             tmp_files.append(tmp)
+            expected_per_batch.append(expected)
             batch_idx += 1
 
         merged = {}
         full_bitmap = bytearray()
-        for tmp in tmp_files:
+        font_meta = None
+        for bi_, tmp in enumerate(tmp_files):
             with open(tmp, "r", encoding="utf-8") as f:
                 data = f.read()
-            glyphs, bitmap = _parse_tmp(data)
+            if font_meta is None:
+                font_meta = _parse_font_meta(data)   # R101: 取垂直度量权威值
+            glyphs, bitmap = _parse_tmp(data, expected_per_batch[bi_])
             for (uni, bi, aw, bw, bh, ox, oy) in glyphs:
                 nbytes = (bw * bh * 4 + 7) // 8
                 glyph_bmp = bitmap[bi:bi + nbytes]
@@ -246,10 +298,12 @@ def _build_one_size(size, name, all_cps):
         lines.append("    .bpp = 4,")
         lines.append("    .kern_classes = 0,")
         lines.append("    .bitmap_format = 0,")
-        # R098h: LVGL v9 的 lv_font_fmt_txt_dsc_t 比 v8 多一个 `uint8_t stride;`
-        # 字段，控制位图每行字节对齐。lv_font_conv 默认 stride=1（bpp=4 时每行
-        # 对齐到 1 字节），必须显式写出，否则默认 0 导致行错位、屏幕乱码。
-        lines.append("    .stride = 1,")
+        # R101: LVGL v9 的 lv_font_fmt_txt_dsc_t 比 v8 多一个 `uint8_t stride;`。
+        # lv_font_conv(1.5.3，v8 生成器)产出的位图是【无行对齐】布局——实测逐字形
+        # 核算 94 个 glyph：无对齐公式 0 处不匹配、1 字节行对齐 18 处不匹配。
+        # 故 stride 必须为 0(=无对齐)。填 1 会让 v9 按 1 字节对齐去读无对齐数据，
+        # 每行偏移 -> 全屏乱码。
+        lines.append("    .stride = 0,")
         lines.append("};")
         lines.append("")
         lines.append("#if LVGL_VERSION_MAJOR >= 8")
@@ -259,12 +313,13 @@ def _build_one_size(size, name, all_cps):
         lines.append("#endif")
         lines.append("    .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,")
         lines.append("    .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,")
-        # line_height / base_line 近似：line_height 略大于字号，base_line 约等于 0
-        lines.append("    .line_height = %d," % int(size * 1.1))
-        lines.append("    .base_line = 0,")
+        # R101: 垂直度量取自 lv_font_conv 输出(权威值)，不再自行估算 ——
+        # 旧逻辑 base_line=0 会让字形整体上移、下伸部分被裁。
+        lines.append("    .line_height = %d," % font_meta["line_height"])
+        lines.append("    .base_line = %d," % font_meta["base_line"])
         lines.append("    .subpx = LV_FONT_SUBPX_NONE,")
-        lines.append("    .underline_thickness = 0,")
-        lines.append("    .underline_position = 0,")
+        lines.append("    .underline_thickness = %d," % font_meta["underline_thickness"])
+        lines.append("    .underline_position = %d," % font_meta["underline_position"])
         lines.append("    .dsc = &font_dsc,")
         lines.append("    .fallback = NULL,")
         lines.append("    .user_data = NULL,")
