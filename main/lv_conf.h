@@ -30,7 +30,12 @@
 #define LV_USE_STDLIB_MALLOC   1   /* LV_STDLIB_CLIB */
 #define LV_MEM_SIZE            (256 * 1024)   /* 仅 BUILTIN 模式生效，此处保留 */
 
-/* 中文 TTF 运行时渲染（字库位于独立 flash 分区 /font/cjk.ttf） */
+/* 中文渲染：本硬件上 LVGL 的 freetype 引擎在 lv_init() 阶段初始化会触发
+ * Cache error 死机 (Guru Meditation @ 0x3c14xxxx, 已实测多次)。无论本项目是否
+ * 调用 lv_freetype_init，只要 LV_USE_FREETYPE=1，lv_init 内部就会自动初始化
+ * freetype 并死机。故彻底禁用 freetype 引擎，中文改用预生成的子集位图字体
+ * lv_font_chinese_*（覆盖 UI 常用中文 + ASCII），由 montserrat_14 兜底英文/数字。
+ * 生僻字(子集未覆盖)留空，但系统稳定不死机。 */
 #define LV_USE_FREETYPE                 0
 #define LV_FREETYPE_USE_LVGL_PORT       0   /* 走标准 stdio，配合 FAT 分区挂载路径 */
 #define LV_FREETYPE_CACHE_FT_GLYPH_CNT  1024
@@ -56,10 +61,12 @@
 #define LV_FONT_MONTSERRAT_12   1
 #define LV_FONT_MONTSERRAT_14   1
 #define LV_FONT_MONTSERRAT_16   1
-#define LV_FONT_CUSTOM_DECLARE \
-    LV_FONT_DECLARE(lv_font_chinese_12) \
+/* R098h-hotfix: ui_font_*.c 是 LVGL v8 格式，与 v9.5 fmt_txt 渲染管线不兼容，
+ * 引用即乱码。LV_FONT_CUSTOM_DECLARE 留空，中文字体改由 v9 兼容工具重新生成。 */
+#define LV_FONT_CUSTOM_DECLARE
+/*     LV_FONT_DECLARE(lv_font_chinese_12) \
     LV_FONT_DECLARE(lv_font_chinese_14) \
-    LV_FONT_DECLARE(lv_font_chinese_16)
+    LV_FONT_DECLARE(lv_font_chinese_16) */
 #define LV_FONT_DEFAULT         &lv_font_montserrat_14
 
 /* 允许挂载用户数据 */

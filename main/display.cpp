@@ -41,8 +41,33 @@
 
 /* 自定义中文字体（ui_font_*.c 生成）：显式声明供本编译单元使用 */
 LV_FONT_DECLARE(lv_font_montserrat_14);
+/* R098: 启用语义化中文 UI 字体。lv_font_chinese_* 由 gen_font.py 预生成
+   （覆盖 UI 固定中文词），并在 font_partition_init() 中将其 fallback 指向
+   运行时 freetype TTF（覆盖 SD 卡任意中文文件名）。旧行为（仅 montserrat
+   纯 ASCII 字体）会导致所有中文显示方框/空白，此处统一切换为子集 C 字体。 */
+/* R098h-hotfix: ui_font_*.c 是 LVGL v8 格式，当前 LVGL v9.5 下渲染会全屏乱码
+ * （fmt_txt 字形/位图函数已重命名、结构体字段布局也不同）。临时切换到 montserrat_14
+ * (LVGL v9 内置) 恢复英文 UI 显示。中文字体需用 --lvgl9 兼容工具重新生成。 */
+// LV_FONT_DECLARE(lv_font_chinese_12);
+// LV_FONT_DECLARE(lv_font_chinese_14);
+// LV_FONT_DECLARE(lv_font_chinese_16);
+/* R098h-final5: ui_font_*.c 已用 gen_font.py (lv_font_conv --no-compress) 重新生成为
+ * LVGL v9 兼容的 PLAIN 格式 (bitmap_format=0, bpp=4)，v9 原生可解码（无需
+ * LV_USE_FONT_COMPRESSED）。UI 主字体切回中文子集字体，覆盖常用中文 + ASCII。 */
+// #define UI_FONT (&lv_font_chinese_16)
+#define UI_FONT (&lv_font_montserrat_14)
 
 static const char *TAG = "display";
+
+/* R098f: display_init 提前到本文件靠前位置, 其依赖的下列函数定义在文件后段,
+   此处补前向声明以满足编译 (均为本编译单元内函数)。 */
+static esp_err_t        lcd_hw_init(void);
+static void             lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px);
+static void             ui_create(void);
+static void             reel_anim_cb(lv_timer_t *t);
+static void             sd_toast_timer_cb(lv_timer_t *t);
+static void             vol_hide_timer_cb(lv_timer_t *t);
+static void             ui_show_msg(const char *msg);
 
 static bool g_display_initialized = false;
 static bool g_display_sleep       = false;
@@ -189,6 +214,68 @@ void display_register_main_tick(display_main_tick_fn_t fn)
     ESP_LOGI(TAG, "DBG: display_register_main_tick fn=%p", (void *)fn);
 }
 
+/* R098f: 在 display_init 末尾启动 LVGL 渲染任务。
+ * 之前版本 display_start_lvgl_task() 未被任何地方调用，导致 lvgl_task 任务从未创建，
+ * 屏幕只停在上电残留帧（花屏），UI 不刷新。这里统一在 init 末尾拉起渲染任务。 */
+void display_init(void)
+{
+    lcd_backlight_init();
+    display_set_brightness(100);
+
+    if (lcd_hw_init() != ESP_OK) {
+        ESP_LOGE(TAG, "LCD hw init failed, display disabled");
+        return;
+    }
+
+    lv_init();
+
+    /* 挂载独立字库分区并初始化中文回退字体（菜单白字 + 任意中文文件名） */
+    font_partition_init();
+
+    /* 部分刷新缓冲: 每行块 <= SPI 事务上限, 避免整屏一次性 draw_bitmap 导致花屏
+       ESP32-S3 SPI 单次事务上限约 32KB, 这里用 40 行(竖屏 240*40*2=19200 字节)留有余量 */
+    const size_t buf_lines = 40;
+    const size_t buf_px = DISPLAY_WIDTH * buf_lines;
+    s_lv_buf = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
+                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_lv_buf) {
+        ESP_LOGW(TAG, "PSRAM unavailable, fallback LVGL buffer to DRAM");
+        s_lv_buf = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
+                                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (!s_lv_buf) {
+        ESP_LOGE(TAG, "LVGL buffer alloc failed, display disabled");
+        return;
+    }
+
+    lv_display_t *disp = lv_display_create(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    lv_display_set_flush_cb(disp, lvgl_flush_cb);
+    lv_display_set_buffers(disp, s_lv_buf, NULL,
+                           buf_px * sizeof(lv_color_t),
+                           LV_DISP_RENDER_MODE_PARTIAL);
+
+    ui_create();
+    lv_timer_create(reel_anim_cb, 50, NULL);   // 磁带卷轴旋转动画 (50ms/帧)
+    lv_timer_create(sd_toast_timer_cb, 100, NULL);  // 插拔提示显隐控制 (100ms)
+    lv_timer_create(vol_hide_timer_cb, 200, NULL);  // 音量条停止调节 3s 后自动隐藏
+    display_mem_report();                            // 启动即打印一次内存水位
+    ESP_LOGI(TAG, "DBG: mem report done");
+
+    /* freetype 可能未就绪（FT_Init_FreeType 失败），此时渲染中文会误入 freetype
+     * 路径死循环 + task_wdt；故首屏消息也用 ASCII 兜底，与 splash 保持一致 */
+    ESP_LOGI(TAG, "DBG: show msg ascii");
+    ui_show_msg("Initializing...");
+    ESP_LOGI(TAG, "DBG: ui_show_msg done");
+
+    g_display_initialized = true;
+    ESP_LOGI(TAG, "ST7789 + LVGL display initialized (%dx%d)",
+             DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    ESP_LOGI(TAG, ">>> SYSTEM DISPLAY READY <<<");
+
+    display_register_main_tick(NULL);
+    display_start_lvgl_task();   /* 关键：拉起渲染任务，否则屏幕不刷新 */
+}
+
 void display_request_main_tick(void)
 {
     s_main_tick_pending = true;
@@ -310,6 +397,9 @@ static void lvgl_task(void *arg)
         lv_timer_handler();
         lv_unlock();
         vTaskDelay(pdMS_TO_TICKS(5));
+        /* R098g: 调试期临时 flush 计数诊断日志已移除(每 ~1s 刷屏, 干扰正常日志)。
+           如需复测刷新, 临时取消下一行注释即可。 */
+        // if ((++diag_loop % 200) == 0) ESP_LOGW(TAG, "DIAG lvgl loop=%u flush_cnt=%u", diag_loop, s_flush_cnt);
     }
 }
 
@@ -510,7 +600,7 @@ static void ui_create(void)
     lv_obj_set_width(lbl_status, W - 2 * M - 136);
     lv_label_set_long_mode(lbl_status, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_status, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_14, 0);  /* TEST: ascii 字体测试 */
+    lv_obj_set_style_text_font(lbl_status, UI_FONT, 0);
 
     /* 图形电量图标 (外框 + 填充 + 充电标记) */
     batt_frame = lv_obj_create(g_player);
@@ -614,14 +704,14 @@ static void ui_create(void)
     lv_label_set_text(sd_icon_lbl, "");   // 默认弹出: 空
     lv_obj_center(sd_icon_lbl);
     lv_obj_set_style_text_color(sd_icon_lbl, lv_color_hex(0x0a0e17), 0);
-    lv_obj_set_style_text_font(sd_icon_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(sd_icon_lbl, UI_FONT, 0);
     lv_obj_clear_flag(sd_icon_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     /* 插拔瞬时提示 (居中, 状态栏下方; 由 LVGL 定时器控制显隐) */
     lbl_sd_toast = lv_label_create(g_player);
     lv_obj_align(lbl_sd_toast, LV_ALIGN_TOP_MID, 0, 26);
     lv_obj_set_style_text_color(lbl_sd_toast, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_text_font(lbl_sd_toast, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_sd_toast, UI_FONT, 0);
     lv_obj_add_flag(lbl_sd_toast, LV_OBJ_FLAG_HIDDEN);
 
     /* 正在播放 小标题 */
@@ -629,7 +719,7 @@ static void ui_create(void)
     lv_obj_set_pos(lbl_title, M, 34);
     lv_label_set_text(lbl_title, "Now Playing");
     lv_obj_set_style_text_color(lbl_title, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_title, UI_FONT, 0);
 
     /* 文件名 (大号, 循环滚动) */
     lbl_track = lv_label_create(g_player);
@@ -637,24 +727,24 @@ static void ui_create(void)
     lv_obj_set_width(lbl_track, W - 2 * M);
     lv_label_set_long_mode(lbl_track, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_track, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl_track, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_track, UI_FONT, 0);
 
     /* 时间行: 当前(左) / 档位(中) / 总时长(右) */
     lbl_cur = lv_label_create(g_player);
     lv_obj_set_pos(lbl_cur, M, 130);
     lv_obj_set_style_text_color(lbl_cur, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(lbl_cur, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_cur, UI_FONT, 0);
 
     lbl_gear = lv_label_create(g_player);
     lv_obj_set_pos(lbl_gear, W / 2 - 22, 130);
     lv_obj_set_style_text_color(lbl_gear, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_text_font(lbl_gear, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_gear, UI_FONT, 0);
 
     lbl_dur = lv_label_create(g_player);
     lv_obj_set_pos(lbl_dur, W - M, 130);
     lv_obj_set_style_text_align(lbl_dur, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_dur, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(lbl_dur, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_dur, UI_FONT, 0);
 
     /* 进度条 + 百分比 */
     bar_prog = lv_bar_create(g_player);
@@ -670,7 +760,7 @@ static void ui_create(void)
     lv_obj_set_pos(lbl_percent, W - M, 168);
     lv_obj_set_style_text_align(lbl_percent, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_percent, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl_percent, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_percent, UI_FONT, 0);
 
     /* 快进/快退 读秒提示（居中醒目，仅快进退时显示） */
     lbl_seek = lv_label_create(g_player);
@@ -678,14 +768,14 @@ static void ui_create(void)
     lv_obj_set_width(lbl_seek, W - 2 * M);
     lv_obj_set_style_text_align(lbl_seek, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(lbl_seek, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_text_font(lbl_seek, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_seek, UI_FONT, 0);
     lv_obj_add_flag(lbl_seek, LV_OBJ_FLAG_HIDDEN);
 
     /* 底部按键提示 */
     lbl_hint = lv_label_create(g_player);
     lv_obj_set_pos(lbl_hint, M, H - 20);
     lv_obj_set_style_text_color(lbl_hint, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(lbl_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_hint, UI_FONT, 0);
 
     /* A-B 复读：进度条上的 A/B 点标记（细竖线）+ 底部灰栏信息 */
     ab_mark_a = lv_obj_create(g_player);
@@ -713,7 +803,7 @@ static void ui_create(void)
     lv_obj_set_width(lbl_ab, W - 2 * M);
     lv_obj_set_style_text_align(lbl_ab, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(lbl_ab, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(lbl_ab, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_ab, UI_FONT, 0);
     lv_obj_add_flag(lbl_ab, LV_OBJ_FLAG_HIDDEN);
 
     /* 居中消息 (splash/提示/浏览) */
@@ -725,7 +815,7 @@ static void ui_create(void)
     /* R052: splash ASCII 兜底时用蒙文字体（不依赖 freetype 也不会因 lv_font_chinese_16
      * 子集不含 ASCII 字符而 fallback 到失败的 freetype 路径导致渲染死循环）。
      * 背景改为透明：黑底框已按需求移除；背景本就是深色屏, 抗锯齿灰阶边沿与深色混合无明显彩边。*/
-    lv_obj_set_style_text_font(g_msg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(g_msg, UI_FONT, 0);
     lv_obj_set_style_bg_opa(g_msg, LV_OPA_TRANSP, 0);
     lv_obj_align(g_msg, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
@@ -742,14 +832,14 @@ static void ui_create(void)
     ota_title = lv_label_create(g_ota);
     lv_obj_set_pos(ota_title, M, 12);
     lv_obj_set_style_text_color(ota_title, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_text_font(ota_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(ota_title, UI_FONT, 0);
 
     ota_body = lv_label_create(g_ota);
     lv_obj_set_pos(ota_body, M, 54);
     lv_obj_set_width(ota_body, W - 2 * M);
     lv_label_set_long_mode(ota_body, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(ota_body, lv_color_white(), 0);
-    lv_obj_set_style_text_font(ota_body, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(ota_body, UI_FONT, 0);
 
     ota_bar = lv_bar_create(g_ota);
     lv_obj_set_size(ota_bar, W - 2 * M, 16);
@@ -765,13 +855,13 @@ static void ui_create(void)
     lv_obj_set_pos(ota_pct, W - M, 150);
     lv_obj_set_style_text_align(ota_pct, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(ota_pct, lv_color_white(), 0);
-    lv_obj_set_style_text_font(ota_pct, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(ota_pct, UI_FONT, 0);
     lv_obj_add_flag(ota_pct, LV_OBJ_FLAG_HIDDEN);
 
     ota_hint = lv_label_create(g_ota);
     lv_obj_set_pos(ota_hint, M, H - 20);
     lv_obj_set_style_text_color(ota_hint, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(ota_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(ota_hint, UI_FONT, 0);
 
     /* ---- R051：A-B 复读状态屏（迷你进度条 + 状态 + 动作列表） ---- */
     g_ab_menu = lv_obj_create(scr);
@@ -785,7 +875,7 @@ static void ui_create(void)
     abm_title = lv_label_create(g_ab_menu);
     lv_obj_set_pos(abm_title, M, 12);
     lv_obj_set_style_text_color(abm_title, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_text_font(abm_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(abm_title, UI_FONT, 0);
 
     abm_bar = lv_bar_create(g_ab_menu);
     lv_obj_set_size(abm_bar, W - 2 * M, 12);
@@ -820,20 +910,20 @@ static void ui_create(void)
     lv_obj_set_pos(abm_stat, M, 60);
     lv_obj_set_width(abm_stat, W - 2 * M);
     lv_obj_set_style_text_color(abm_stat, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(abm_stat, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(abm_stat, UI_FONT, 0);
 
     for (int i = 0; i < 4; i++) {
         abm_lines[i] = lv_label_create(g_ab_menu);
         lv_obj_set_pos(abm_lines[i], M, 92 + i * 22);
         lv_obj_set_width(abm_lines[i], W - 2 * M);
         lv_obj_set_style_text_color(abm_lines[i], lv_color_hex(0x8a93a6), 0);
-        lv_obj_set_style_text_font(abm_lines[i], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(abm_lines[i], UI_FONT, 0);
     }
 
     abm_hint = lv_label_create(g_ab_menu);
     lv_obj_set_pos(abm_hint, M, H - 20);
     lv_obj_set_style_text_color(abm_hint, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(abm_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(abm_hint, UI_FONT, 0);
 }
 
 static void ui_show_player(void)
@@ -992,80 +1082,6 @@ void display_diag_run(void)
  * ============================================================ */
 static void sd_toast_timer_cb(lv_timer_t *t);  // 前向声明 (display_init 中注册)
 static void vol_hide_timer_cb(lv_timer_t *t);   // 音量条自动隐藏定时器
-void display_init(void)
-{
-    lcd_backlight_init();
-    display_set_brightness(100);
-
-    if (lcd_hw_init() != ESP_OK) {
-        ESP_LOGE(TAG, "LCD hw init failed, display disabled");
-        return;
-    }
-
-    lv_init();
-
-    /* 挂载独立字库分区并初始化中文回退字体（菜单白字 + 任意中文文件名） */
-    font_partition_init();
-
-    /* 部分刷新缓冲: 每行块 <= SPI 事务上限, 避免整屏一次性 draw_bitmap 导致花屏
-       ESP32-S3 SPI 单次事务上限约 32KB, 这里用 40 行(竖屏 240*40*2=19200 字节)留有余量 */
-    const size_t buf_lines = 40;
-    const size_t buf_px = DISPLAY_WIDTH * buf_lines;
-    s_lv_buf = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
-                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_lv_buf) {
-        ESP_LOGW(TAG, "PSRAM unavailable, fallback LVGL buffer to DRAM");
-        s_lv_buf = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
-                                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
-    if (!s_lv_buf) {
-        ESP_LOGE(TAG, "LVGL buffer alloc failed, display disabled");
-        return;
-    }
-
-    lv_display_t *disp = lv_display_create(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-    lv_display_set_flush_cb(disp, lvgl_flush_cb);
-    lv_display_set_buffers(disp, s_lv_buf, NULL,
-                           buf_px * sizeof(lv_color_t),
-                           LV_DISP_RENDER_MODE_PARTIAL);
-
-    ui_create();
-    lv_timer_create(reel_anim_cb, 50, NULL);   // 磁带卷轴旋转动画 (50ms/帧)
-    lv_timer_create(sd_toast_timer_cb, 100, NULL);  // 插拔提示显隐控制 (100ms)
-    lv_timer_create(vol_hide_timer_cb, 200, NULL);  // 音量条停止调节 3s 后自动隐藏
-    display_mem_report();                            // 启动即打印一次内存水位
-    ESP_LOGI(TAG, "DBG: mem report done");
-    /* freetype 可能未就绪（FT_Init_FreeType 失败），此时渲染中文会误入 freetype
-     * 路径死循环 + task_wdt；故首屏消息也用 ASCII 兜底，与 splash 保持一致 */
-    if (font_partition_ready()) {
-        ESP_LOGI(TAG, "DBG: show msg zh");
-        ui_show_msg("Initializing...");
-    } else {
-        ESP_LOGI(TAG, "DBG: show msg ascii");
-        ui_show_msg("Initializing...");
-    }
-    ESP_LOGI(TAG, "DBG: ui_show_msg done");
-
-    /* 任务栈显式留 DRAM：ALWAYSINTERNAL=0 下默认 malloc 会把栈推到 PSRAM，
-       此处用 WithCaps 强制 MALLOC_CAP_INTERNAL，避免栈走 PSRAM（性能/确定性更优）。 */
-    g_display_initialized = true;
-    ESP_LOGI(TAG, "ST7789 + LVGL display initialized (%dx%d)",
-             DISPLAY_WIDTH, DISPLAY_HEIGHT);
-    ESP_LOGI(TAG, ">>> SYSTEM DISPLAY READY <<<");
-
-#ifdef DISPLAY_DIAG
-    /* 纯色+大小端诊断: 必须在 lvgl_task 创建之前运行!
-     * 否则 LVGL 的 partial flush 会与 diag 的整屏裸写 (esp_lcd_panel_draw_bitmap)
-     * 并发抢占同一 SPI 总线, 导致事务错乱、屏幕卡在最后一帧 LVGL 画面。
-     * diag 期间 lvgl_task 尚未启动, 不会有并发写屏。 */
-    vTaskDelay(pdMS_TO_TICKS(300));
-    display_diag_run();
-    ESP_LOGW(TAG, ">>> DISPLAY_DIAG FINISHED, now booting UI <<<");
-#endif
-
-    /* lvgl_task 延迟到 display_start_lvgl_task() 创建 (main.cpp 初始化全部完成后),
-     * 避免 main_task 初始化阶段与 lvgl_task 并发访问 LVGL 对象树导致死锁。 */
-}
 
 /* ---- 内存诊断：PSRAM/DRAM 堆水位 + 当前屏 LVGL 对象数 ---- */
 void display_mem_report(void)

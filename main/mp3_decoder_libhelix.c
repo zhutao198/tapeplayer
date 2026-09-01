@@ -86,9 +86,23 @@ static int mp3_frame_len_from_hdr(const unsigned char *p)
     return (flen > 0) ? flen : -1;
 }
 
+/* R101: 取任意 MPEG 音频帧头的 layer 原始值(1=LayerIII/MP3, 2=LayerII/MP2, 3=LayerI)，
+   仅用于诊断日志。Helix 只解 Layer III：SD 卡中混入的 MP2(扩展名却是 .mp3)会被
+   mp3_frame_len_from_hdr 一律判非法，导致永久扫不到帧头。 */
+static int mp3_hdr_layer(const unsigned char *p)
+{
+    if (!p || p[0] != 0xFF || (p[1] & 0xE0) != 0xE0) return -1;
+    return (p[1] >> 1) & 0x03;
+}
+
 static short      s_pcm[HELIX_PCM_SAMPLES];
 static unsigned char s_in[HELIX_IN_BUF];
 static size_t     s_in_len = 0;   /* s_in 中尚未喂给 Helix 的字节数 */
+
+/* R101: 连续"整个输入缓冲都扫不到合法 Layer III 帧头"的次数。
+   达阈值即判定本文件非 Helix 可解码格式(MP2/损坏/非音频)，快速放弃。 */
+static int        s_no_valid_hdr_runs = 0;
+#define HELIX_NO_HDR_MAX_RUNS   3
 
 /* R091: 软件音量。Q15 固定点增益(32768=1.0 统一)，由 mp3_decoder_set_volume 设置，
    _mp3_helix_process 输出前缩放 PCM。替代 ADF 脆弱的 i2s ALC（IDF5.x 会 BREAK 崩溃）。 */
@@ -127,6 +141,11 @@ static esp_err_t _mp3_helix_open(audio_element_handle_t self)
         audio_free(c);
         return ESP_ERR_NO_MEM;
     }
+    /* R101: 每首新曲目重置模块级流式状态。s_in/s_in_len 与无帧头计数都跨 element
+       生命周期保留，若上一首遗留(尤其"扫到无帧头但未放弃"时切歌)会污染新曲目的
+       首帧判定，导致新曲目被误判不可解码而跳过。 */
+    s_in_len = 0;
+    s_no_valid_hdr_runs = 0;
     audio_element_setdata(self, c);
     return ESP_OK;
 }
@@ -174,6 +193,7 @@ void mp3_decoder_libhelix_reset(audio_element_handle_t el)
         }
     }
     s_in_len = 0;
+    s_no_valid_hdr_runs = 0;   /* R101: 新曲目/新位置重新计数，避免上一首的放弃状态残留 */
     g_seek_dbg_first = true;
 }
 
@@ -221,6 +241,26 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
         size_t j = 0;
         while (j + 4 <= s_in_len && mp3_frame_len_from_hdr(s_in + j) <= 0) {
             j++;
+        }
+        /* R101: 扫完整个缓冲仍无合法 Layer III 帧头 -> 该文件不是 Helix 可解的 MP3。
+           典型场景：实为 MP2(Layer II) 却以 .mp3 结尾、或文件损坏/非音频数据。
+           旧逻辑每次只留 3 字节尾部、整块反复丢弃(实测连续 17 次 discarded 2045，
+           静音约 1.3s)才靠 err_cnt>50 放弃；期间 decoder 忙循环不消费下游 ringbuf，
+           上游 file 元素阻塞在写 ringbuf -> 切歌时 file task destroy 超时约 9s。
+           这里连续 HELIX_NO_HDR_MAX_RUNS 次仍无帧头即直接放弃，快速跳曲。 */
+        if (j + 4 > s_in_len) {
+            s_no_valid_hdr_runs++;
+            int sync_off = MP3FindSyncWord(s_in, (int)s_in_len);
+            int lyr = (sync_off >= 0) ? mp3_hdr_layer(s_in + sync_off) : -1;
+            ESP_LOGW("mp3_dbg", "R101 no LayerIII hdr in %dB (run=%d/%d, sync=%d layer=%d)",
+                     (int)s_in_len, s_no_valid_hdr_runs, HELIX_NO_HDR_MAX_RUNS, sync_off, lyr);
+            if (s_no_valid_hdr_runs >= HELIX_NO_HDR_MAX_RUNS) {
+                ESP_LOGE("mp3_dbg", "R101 undecodable: layer=%d (need 1=LayerIII). skip.", lyr);
+                s_no_valid_hdr_runs = 0;
+                return AEL_IO_DONE;
+            }
+        } else {
+            s_no_valid_hdr_runs = 0;
         }
         if (j > 0 && j < s_in_len) {
             memmove(s_in, s_in + j, s_in_len - j);

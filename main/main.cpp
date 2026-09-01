@@ -239,6 +239,11 @@ static void jump_to_track_start(void)
     ESP_LOGI(TAG, "Combo REW+STOP: jump to track start");
 }
 
+/* R101: 最近一次切歌方向：+1=下一首, -1=上一首, 0=自然播放/直接播放。
+   曲目不可播(如 MPEG Layer II 名为 .mp3)时按此方向继续找，避免被固定的
+   "跳下一首"弹回原处——否则按上一首切到坏文件永远越不过去。 */
+static int g_switch_dir = 0;
+
 static void play_current_track(void)
 {
     /* R100: no SD card -> do not start playback (file-open fails => UI 'playing'
@@ -249,6 +254,13 @@ static void play_current_track(void)
         ESP_LOGW(TAG, "Play requested but no SD mounted");
         return;
     }
+    /* R101: 沿切换方向寻找第一首可播曲目。audio_player_play() 对不支持的格式
+       (如 MPEG Layer II 却以 .mp3 命名)会在建流前直接返回 false。若此时停在原地，
+       按上一首切到坏文件后会被固定的"跳下一首"弹回原处，永远越不过去。
+       故失败即按 g_switch_dir 继续找；最多遍历整表，全不可播则停机防死循环。 */
+    int r101_total = playlist_count();
+    if (r101_total <= 0) r101_total = 1;
+    for (int r101_try = 0; r101_try < r101_total; r101_try++) {
     char filepath[FILENAME_MAX_LEN * 4];  // R032-001: 鎵╁埌 *4 涓?playlist 璺緞缂撳啿涓€鑷达紝閬垮厤鎺ユ敹鏃舵埅鏂?
     if (playlist_get_path(g_current_track, filepath, sizeof(filepath))) {
         if (audio_player_play(filepath)) {
@@ -269,8 +281,19 @@ static void play_current_track(void)
             }
             g_last_auto_save_us = esp_timer_get_time();
             ESP_LOGI(TAG, "Now playing: %s", filepath);
+            return;   /* R101: 播放成功，结束查找 */
         }
     }
+    /* R101: 本首不可播(取路径失败或 audio_player_play 拒绝)——沿用户原本的切换
+       方向继续找。固定跳下一首会让"上一首"被坏文件弹回，永远越不过去。 */
+    int r101_t = (g_switch_dir < 0) ? playlist_prev() : playlist_next();
+    if (r101_t < 0) break;
+    ESP_LOGW(TAG, "R101 track not playable, skip (dir=%d, idx=%d)", g_switch_dir, g_current_track);
+    g_current_track = r101_t;
+    playlist_set_index(r101_t);
+    }
+    ESP_LOGE(TAG, "R101 no playable track in playlist");
+    g_app_state = APP_STATE_STOPPED;
 }
 
 /* 鍒囨崲鎾斁妯″紡 */
@@ -304,6 +327,9 @@ static void skip_seconds(int seconds)
 static void on_track_finished(int state, void *user_data)
 {
     ESP_LOGI(TAG, "Track finished naturally");
+    /* R101: 自然连播方向恒为向下。重置用户切歌方向，避免自然连播遇到坏文件时
+       沿用上一次手动切歌的方向(可能是"上一首")而向上跳。 */
+    g_switch_dir = +1;
 
     // 寮傛锛氫粎璁颁笅闇€瑕佷繚瀛樼殑浣嶇疆鍜屼笅涓€鏇诧紝涓诲惊鐜腑鎵ц
     g_pending_save_track = g_current_track;
@@ -649,6 +675,7 @@ static void handle_button_events(void)
                 if (g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND)
                     break;   // 鎸変綇蹇繘/蹇€€鏈熼棿蹇界暐鍒囨瓕锛堢甯︽満浜掗攣锛?
                 save_current_position();  // 鍒囨崲鍓嶄繚瀛樻棫浣嶇疆
+                g_switch_dir = -1;   /* R101: 记录方向，坏文件按此方向续跳 */
                 int prev = playlist_prev();  // R032-107: 绌哄垪琛ㄨ繑鍥?-1锛岄伩鍏嶆薄鏌?g_current_track
                 if (prev >= 0) {
                     g_current_track = prev;
@@ -669,6 +696,7 @@ static void handle_button_events(void)
                 if (g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND)
                     break;   // 鎸変綇蹇繘/蹇€€鏈熼棿蹇界暐鍒囨瓕锛堢甯︽満浜掗攣锛?
                 save_current_position();
+                g_switch_dir = +1;   /* R101: 记录方向，坏文件按此方向续跳 */
                 int next = playlist_next();  // R032-107: 绌哄垪琛ㄨ繑鍥?-1锛岄伩鍏嶆薄鏌?g_current_track
                 if (next >= 0) {
                     g_current_track = next;
@@ -1230,13 +1258,8 @@ extern "C" void app_main(void)
 
     g_next_loop_deadline = esp_timer_get_time();
 
-    /* 鎵€鏈夊垵濮嬪寲鏈?LVGL 鍐?(display_init / display_show_splash / init_storage 鎻愮ず)
-     * 宸插畬鎴愶紝姝ゅ埢鎵嶅惎鍔?lvgl_task锛岄伩鍏嶄笌 main_task 骞跺彂璁块棶 LVGL 瀵硅薄鏍戞閿併€?
-     * 涓诲惊鐜唴鐨?display_update 宸茬敤 lv_lock/lv_unlock 淇濇姢銆?*/
-    display_start_lvgl_task();
-
-    /* 娉ㄥ唽涓诲惊鐜?tick 鍥炶皟: lvgl_task 鍦ㄨ嚜宸辩殑寰幆閲屾寔閿佽皟鐢?update_display,
-     * 娑堥櫎 main_task 鐩存帴璋?LVGL API 瀵艰嚧鐨勬閿?鐪嬮棬鐙楄秴鏃躲€?*/
+    /* LVGL task already started earlier (before audio init) so UI comes up even if audio init blocks.
+       Here we only register the main-loop tick callback and the splash-hide fallback. */
     display_register_main_tick(update_display);
 
     // R073-fix: 强制 1.5s 后调一次 display_request_main_tick 触发 player 渲染

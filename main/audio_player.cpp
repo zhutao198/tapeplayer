@@ -129,10 +129,14 @@ static int id3v2_total_size(const char *path)
 // 采样率用于把 I2S 时钟设成文件实际速率（否则被 R076-CODEC 锁死 48000Hz 放快）；
 // 码率用于按真实比特率估算 duration（替代固定 128kbps 估算，修复进度条到不了一端）。
 // 返回采样率(Hz)，失败返回 0；*bitrate_kbps 输出码率(kbps)，失败置 0。需跳过 ID3v2(id3_sz)。
-static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps, int *channels)
+/* layer_out: 输出 MPEG 帧头层字段(1=LayerIII/MP3, 2=LayerII/MP2, 3=LayerI)。
+   R101: 供上层在建流前拒绝 Helix 不支持的格式——Helix 只解 Layer III，遇到扩展名
+   是 .mp3 实为 MP2 的文件会一直扫不到帧头、最终误判曲终。 */
+static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps, int *channels, int *layer_out)
 {
     if (bitrate_kbps) *bitrate_kbps = 0;
     if (channels)     *channels     = 2;   /* 默认立体声 */
+    if (layer_out)    *layer_out    = 0;
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
     if (fseek(fp, id3_sz, SEEK_SET) != 0) { fclose(fp); return 0; }
@@ -187,6 +191,7 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps
                 }
                 if (verified) {
                     if (bitrate_kbps) *bitrate_kbps = br_kbps;
+                    if (layer_out)    *layer_out    = layer;
                     /* R100: channel mode 在第 4 字节高 2 位: 00 stereo/01 joint/10 dual/11 mono */
                     if (channels) {
                         uint8_t b3 = buf[i + 3];
@@ -452,10 +457,33 @@ bool audio_player_play(const char *filepath)
         }
         // R083: 嗅探首个音频帧真实采样率，让 I2S 时钟匹配文件（避免被锁 48000 放快）
         int sniff_ch = 2;
-        int sn = mp3_sniff_sample_rate(real_path, g_id3_skip_bytes, &bitrate_kbps, &sniff_ch);
+        int sniff_layer = 0;
+        int sn = mp3_sniff_sample_rate(real_path, g_id3_skip_bytes, &bitrate_kbps, &sniff_ch, &sniff_layer);
         if (sn > 0) {
             file_rate = sn;
             ESP_LOGI(TAG, "R083: sniffed MP3 sample rate = %d Hz, channels = %d", sn, sniff_ch);
+            /* R101: Helix 只解 Layer III(层字段==1)。层字段 2=LayerII(MP2)、3=LayerI 的
+               文件即使扩展名是 .mp3 也解不出来——解码器会在输入缓冲里永远扫不到合法
+               Layer III 帧头，最终误判曲终跳曲(实测 139轻~1.MP3 为 MPEG1 LayerII)。
+               建流之前就拒绝：既省掉建/销毁整条 pipeline 的开销，也让上层能立刻沿
+               原方向继续跳，而不是被固定的"跳下一首"弹回去（否则按上一首切到坏文件
+               会被弹回原处，永远越不过去）。 */
+            if (sniff_layer != 0 && sniff_layer != 1) {
+                ESP_LOGE(TAG, "R101 unsupported MPEG layer=%d (need 1=LayerIII), reject: %s",
+                         sniff_layer, filepath);
+                audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+                audio_pipeline_unregister(g_pipeline, g_decoder);
+                audio_pipeline_unregister(g_pipeline, g_i2s_writer);
+                audio_element_deinit(g_fatfs_reader);
+                audio_element_deinit(g_decoder);
+                audio_element_deinit(g_i2s_writer);
+                g_fatfs_reader = NULL;
+                g_decoder = NULL;
+                g_i2s_writer = NULL;
+                audio_pipeline_deinit(g_pipeline);
+                g_pipeline = NULL;
+                return false;
+            }
         } else {
             ESP_LOGW(TAG, "R083: sniff MP3 sample rate failed, fallback %d Hz", file_rate);
         }
@@ -604,6 +632,11 @@ void audio_player_stop(void)
     }
 
     if (g_pipeline) {
+        /* R101: 先清播放标志。audio_player_tick() 以 g_is_playing 判定曲终并回调
+           on_track_finished 自动切下一首；下面 abort ringbuf 会让 element 立即脱离
+           阻塞、状态可能跳变，若不提前清标志，tick 会在 stop() 期间误判曲终触发
+           自动切歌，与本次 stop()（用户停止/切歌）语义冲突。 */
+        g_is_playing = false;
         // R075-fix：不再手动 deinit 各 element！
         // 旧逻辑先 audio_element_deinit(fatfs/decoder/i2s) 释放内存，再调
         // audio_pipeline_deinit()，而后者内部会遍历 el_list 对【同一个已释放的
@@ -615,16 +648,37 @@ void audio_player_stop(void)
         // el_list 中所有 element（含 i2s_writer 的 destroy→i2s_driver_uninstall），
         // 完全满足 R068 "i2s_writer 每次重建" 的意图，且杜绝 double-free。
         //
-        // R076-CODEC-9：先 audio_pipeline_stop() 让各 element 任务走完输入循环
-        // 并【自然关闭 fatfs 文件描述符】再 terminate/deinit。否则直接 terminate
-        // 会等 2s 超时强制删 file 任务 → fd 泄漏累积 → 连播数首后
-        // "Too many open files" 无法再开文件（实测第 5 首起 vfs_fat 报错）。
-        ESP_LOGI(TAG, "R068: stop pipeline (let elements close fds gracefully)");
-        audio_pipeline_stop(g_pipeline);
-        // 短暂等待 element 任务退出（file 任务关闭 fd），避免 terminate 超时强删
+        // R098g：先 audio_pipeline_stop() 会让 main_task 永久阻塞——当 i2s element 因
+        //   事件队列满(AUDIO_EVT: no space in external queue)卡死、不响应 STOP 命令时，
+        //   audio_pipeline_stop 内部用 portMAX_DELAY 等待 element 进入 stopped，永远等不到
+        //   → main_task 假死(task_wdt 触发)、音频也停不下来(用户感知"停止不了")。
+        //   改用 audio_pipeline_terminate_with_ticks()：它内部同样先发 STOP 并等待 element
+        //   优雅退出(关闭 fatfs fd)，但带 ticks 超时(3s)一定返回；仅真卡死才超时强删
+        //   (偶发 fd 泄漏，远比永久假死可接受)。这样 main_task 最多阻塞 3s 即恢复。
+        /* R101: 终止前先"掐断"可能阻塞 element task 的 ringbuf，让 task 能响应 STOP
+           并走完 close 回调【正常 fclose 关闭 fatfs 文件描述符】。
+           背景：R098g 为规避 main_task 永久假死，改为直接 terminate_with_ticks()，
+           其注释已注明"偶发 fd 泄漏"。实测该"偶发"实为必然——下游 decoder 停止消费时
+           上游 file task 永久阻塞在写 output ringbuf，收不到 QUIT 命令，terminate
+           超时(日志 Element task destroy timeout[300]/[200])后强删任务，close 回调
+           得不到执行 → fd 泄漏。累积数首后 vfs_fat 报 "no free file descriptors"，
+           表现为连播/切歌若干次后快进快退 fopen 失败、播放无声（R076-CODEC-9 原本
+           就是为防此问题而先 stop 再 terminate，被 R098g 删掉）。 */
+        if (g_fatfs_reader) {
+            audio_element_abort_output_ringbuf(g_fatfs_reader);  /* 解除 file 的写阻塞 */
+        }
+        if (g_decoder) {
+            audio_element_abort_input_ringbuf(g_decoder);        /* 解除 decoder 的读阻塞 */
+            audio_element_abort_output_ringbuf(g_decoder);       /* 解除 decoder 的写阻塞 */
+        }
+        if (g_i2s_writer) {
+            audio_element_abort_input_ringbuf(g_i2s_writer);     /* 解除 i2s 的读阻塞 */
+        }
+        /* 给 element task 时间从阻塞中返回并执行 close 关闭 fd */
         vTaskDelay(pdMS_TO_TICKS(100));
-        ESP_LOGI(TAG, "R068: terminate pipeline (force-stop all elements, 2s timeout)");
-        audio_pipeline_terminate_with_ticks(g_pipeline, pdMS_TO_TICKS(2000));
+
+        ESP_LOGI(TAG, "R101: terminating pipeline (fds closed gracefully, 3s timeout)...");
+        audio_pipeline_terminate_with_ticks(g_pipeline, pdMS_TO_TICKS(3000));
 
         // 销毁管道 + 内部所有 element（仅此一次 deinit）
         audio_pipeline_deinit(g_pipeline);
