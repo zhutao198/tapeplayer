@@ -550,6 +550,12 @@ static void handle_button_events(void)
                     playlist_set_index(g_current_track);
                     g_seek_on_play_position = 0;
                     g_app_state = g_state_before_browse;
+                    /* R106-fix: 退出 browse 必须通知 display 清独占态。
+                       原代码只切 g_app_state, 未清 s_menu_visible, 导致
+                       display_update 仍走 menu_apply_nolock() 画 browse 点阵
+                       canvas, 盖住刚恢复的 player 屏 —— 表现为"选曲后停在
+                       浏览界面不返回"。 */
+                    display_clear_msg();
                     play_current_track();
                 }
                 break;
@@ -581,6 +587,9 @@ static void handle_button_events(void)
             case BTN_ID_STOP:
                 if (e->event == BTN_EVENT_SHORT_PRESS) {
                     g_app_state = g_state_before_browse;
+                    /* R106-fix: 同 PLAY 退出 browse, 必须清显示独占态,
+                       否则 browse 点阵 canvas 会盖住返回的 player 屏。 */
+                    display_clear_msg();
                 } else if (e->event == BTN_EVENT_LONG_PRESS) {
                     int bm = bookmark_add(g_browse_index, 0);
                     if (bm >= 0) ESP_LOGI(TAG, "Bookmark added at track %d (slot %d)", g_browse_index, bm);

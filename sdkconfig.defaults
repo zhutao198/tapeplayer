@@ -35,6 +35,13 @@ CONFIG_PARTITION_TABLE_OFFSET=0x8000
 CONFIG_FATFS_LFN_STACK=y
 CONFIG_FATFS_MAX_LFN=255
 CONFIG_FATFS_CODEPAGE=437
+# R106: 文件名 API 改用 UTF-8 编码。
+# 原为 ANSI_OEM(CP437), f_readdir 返回的文件名字节不是 UTF-8, 点阵层按 UTF-8
+# 解码得到错误 unicode -> 查不到字形 -> 中文曲名/文件名全部显示为空心方框。
+# 改 UTF-8 后 FATFS 直接将磁盘 LFN(UTF-16) 转成 UTF-8 返回, 点阵可正确解码。
+# 注意: 只改 API 编码, CODEPAGE 仍保留 437 —— UTF-8 模式不走 OEM 转换,
+# 避免引入 cc936 转换表(约 180KB) 撑爆 2MB app 分区。
+CONFIG_FATFS_API_ENCODING_UTF_8=y
 
 # Bus config
 CONFIG_SPI_MASTER_IN_IRAM=y

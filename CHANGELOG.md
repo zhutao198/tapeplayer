@@ -106,3 +106,27 @@
     canvas, 否则 canvas 会一直盖住 player 屏。
 - 状态: 已编译通过, 待烧录实测
 - 待办: A-B 复读 / OTA / info 弹窗等其余中文 label 点阵化
+
+---
+
+## R106 [2026-09-04] R105 实测两修复: 汉字方框(FATFS编码) + browse退出卡住
+
+- 文件: `main/main.cpp`(browse 退出补 `display_clear_msg()`), `sdkconfig.defaults`, `sdkconfig`(FATFS 编码)
+- **问题1 — 曲名/文件名中文方框**: R105 烧录后菜单中文正常(源码 UTF-8), 但
+  **SD 卡中文文件名/曲名显示方框**。根因: FATFS 原 `FATFS_API_ENCODING_ANSI_OEM`
+  (CP437), `f_gets`/`scandir` 返回的文件名**不是 UTF-8**, 点阵按 UTF-8 解码得
+  错误 unicode → 字库缺字 → 画空心方框。菜单文本是编译期 UTF-8 常量故不受影响,
+  差异正源于此。
+- **修复1**: `sdkconfig.defaults` 与 `sdkconfig` 改
+  `CONFIG_FATFS_API_ENCODING_UTF_8=y`(CODEPAGE 保留 437, **不引入 180KB cc936
+  简体中文表**, 避免撑爆 2MB app 分区)。改 FATFS 编码**必须重编**才能生效。
+- **问题2 — browse 选曲后停在浏览界面不返回**: `BTN_ID_PLAY_PAUSE` 退出 browse 时
+  只切 `g_app_state`, 没清 `s_menu_visible`, 导致 `display_update` 继续走
+  `menu_apply_nolock()` 画 browse canvas 盖住 player 屏(日志 `ui_show_player #1/#2`
+  被调用却看不见即此因)。
+- **修复2**: `main.cpp:558` 退出 browse 处补 `display_clear_msg()`。
+- **遗漏补丁**: 同路径 `BTN_ID_STOP` 退 browse 也只切状态、漏清独占态 → 一并补
+  `display_clear_msg()`(main.cpp:589)。
+- 实测(烧录后真机): ✅ 曲名/文件名中文不再方框; ✅ browse 选曲按 PLAY 返回播放界面;
+  ✅ browse 按 STOP 退出也返回。三项全部通过。
+- 固件 1,796,304 B(≈1.71MB) < 2MB app slot 上限, 空间充足。
