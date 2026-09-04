@@ -42,22 +42,17 @@
 
 /* 自定义中文字体（ui_font_*.c 生成）：显式声明供本编译单元使用 */
 LV_FONT_DECLARE(lv_font_montserrat_14);
-/* R098: 启用语义化中文 UI 字体。lv_font_chinese_* 由 gen_font.py 预生成
-   （覆盖 UI 固定中文词），并在 font_partition_init() 中将其 fallback 指向
-   运行时 freetype TTF（覆盖 SD 卡任意中文文件名）。旧行为（仅 montserrat
-   纯 ASCII 字体）会导致所有中文显示方框/空白，此处统一切换为子集 C 字体。 */
-/* R101: 中文字体已修复。此前判断"LVGL v8 字体不兼容 v9"有误——核对 v9 源码后确认
-   lv_font_t / lv_font_fmt_txt_cmap_t / glyph_dsc 与 v8 完全一致，v9 仅多一个 stride
-   字段且仍保留 lv_font_get_glyph_dsc_fmt_txt()。真正根因在 gen_font.py：
-     1) lv_font_conv 对离散字符集生成错误 cmap（min->max 巨型区间，却只输出真实字符
-        的字形），脚本据此反推 unicode，导致 1689 字符中 1433 个错位；
-     2) 缺 v9 新增的 .stride 字段，base_line 又写死 0。
-   现已修正并重新生成（stride=0、度量取自生成器、用传入字符顺序映射 gid），
-   离线按 v9 解码逻辑验证 ASCII 与中文均正确，故恢复使用中文子集字体。 */
+/* R102-R106 结论: 在 ESP32-S3 该硬件上, LVGL 中文子集字体 (lv_font_chinese_*) 即使
+   仅渲染 ASCII 字符, 实际表现为"二维码"乱码/崩溃 (R102 教训: 其 fallback 指向
+   freetype TTF, 在 PSRAM + Cache 约束下不稳定)。
+   因此: 播放界面所有纯 ASCII 文案 (状态/时间/进度/档位/提示/SD toast/消息)
+   一律改用 lv_font_montserrat_14 (纯 ASCII, 无 freetype fallback, 渲染稳定)。
+   真正的中文显示走方案 C: 点阵 (cjk_font.h) -> lv_canvas -> LVGL flush,
+   由 display_show_menu / s_track_canvas 负责, 不经本 UI_FONT 路径。 */
 LV_FONT_DECLARE(lv_font_chinese_12);
 LV_FONT_DECLARE(lv_font_chinese_14);
 LV_FONT_DECLARE(lv_font_chinese_16);
-#define UI_FONT (&lv_font_chinese_16)
+#define UI_FONT (&lv_font_montserrat_14)
 
 static const char *TAG = "display";
 

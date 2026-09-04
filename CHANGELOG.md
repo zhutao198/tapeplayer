@@ -130,3 +130,24 @@
 - 实测(烧录后真机): ✅ 曲名/文件名中文不再方框; ✅ browse 选曲按 PLAY 返回播放界面;
   ✅ browse 按 STOP 退出也返回。三项全部通过。
 - 固件 1,796,304 B(≈1.71MB) < 2MB app slot 上限, 空间充足。
+
+---
+
+## R107 [2026-09-04] 播放界面除曲名外全二维码: 改 ASCII 字体
+
+- 文件: `main/display.cpp`(仅 `UI_FONT` 宏定义)
+- **问题**: R106 后菜单/曲名/文件名中文正常, 但**播放界面除曲名外全显示成二维码乱码**
+  (状态栏/时间/进度/档位/提示/SD toast/消息等)。
+- **根因**: 这些 lv_label 全部用 `UI_FONT = &lv_font_chinese_16`(LVGL 中文子集字体)。
+  该字体在 ESP32-S3 本硬件上, 即使仅渲染 ASCII 字符, 其 **fallback 指向 freetype TTF**
+  (见 font_partition_init), 在 PSRAM + Cache 约束下渲染不稳定 → 表现为二维码乱码
+  (R102 教训重演)。曲名正常是因为它实际由**方案 C 点阵** `s_track_canvas` 覆盖显示,
+  与 `lbl_track` 这个 lv_label 本身无关。
+- **排查关键**: 播放界面所有文案均为**纯 ASCII/数字/符号**(STOPPED / PLAYING /
+  `00:00` / `45%` / `REW PLAY FF STOP | PREV NEXT` / Browse / A-B Repeat 等),
+  **不含任何中文** → 不需要中文子集字体, 只需稳定 ASCII 字体即可。
+- **修复**: `UI_FONT` 由 `&lv_font_chinese_16` 改为 `&lv_font_montserrat_14`
+  (纯 ASCII, 无 freetype fallback, 渲染稳定)。菜单/browse 仍走方案 C 点阵(中文正常),
+  不受本改动影响。同步更新注释为 R102-R106 结论, 避免后续误回 LVGL 中文路径。
+- 实测(烧录后真机): ✅ 状态栏/时间/进度/档位/提示/SD toast 全部正常英文显示, 不再二维码;
+  ✅ 曲名正常; ✅ 菜单/browse 中文正常。全部通过。
