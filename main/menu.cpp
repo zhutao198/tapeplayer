@@ -167,6 +167,7 @@ void menu_init(void)
 
 void menu_open(void)
 {
+    ESP_LOGW("MENU", "DBG menu_open ENTER");
     s_open = true;
     s_depth = 1;
     s_edit = false;
@@ -177,6 +178,7 @@ void menu_open(void)
     s_stack[0].sel   = 0;
     s_stack[0].title = "菜单";
     menu_render();
+    ESP_LOGW("MENU", "DBG menu_open EXIT");
 }
 
 void menu_close(void)

@@ -45,6 +45,7 @@ idf_component_register(
         "ui_font_12.c"
         "ui_font_14.c"
         "ui_font_16.c"
+        "cjk_font.c"   # 点阵字库(simsun 16x16, 替代 LVGL 中文路径; 硬件上 LVGL lv_font_chinese_* 渲染不稳)
         "bt_speaker.cpp"
     INCLUDE_DIRS
         "."

@@ -38,6 +38,7 @@
 #include "esp_lcd_panel_ops.h"
 
 #include "lvgl.h"
+#include "cjk_font.h"   // 点阵字库 (simsun 16x16, 绕开 LVGL 中文字体路径)
 
 /* 自定义中文字体（ui_font_*.c 生成）：显式声明供本编译单元使用 */
 LV_FONT_DECLARE(lv_font_montserrat_14);
@@ -60,6 +61,14 @@ LV_FONT_DECLARE(lv_font_chinese_16);
 
 static const char *TAG = "display";
 
+/* R102: 菜单点阵绘制缓存 (绕开 LVGL 中文路径, 最小验证) */
+static bool   s_menu_visible = false;
+static char   s_menu_title[64];
+static char   s_menu_lines[BROWSE_VISIBLE_LINES][24];
+static int    s_menu_count = 0;
+static int    s_menu_sel = 0;
+static char   s_menu_hint[64];
+
 /* R098f: display_init 提前到本文件靠前位置, 其依赖的下列函数定义在文件后段,
    此处补前向声明以满足编译 (均为本编译单元内函数)。 */
 static esp_err_t        lcd_hw_init(void);
@@ -68,6 +77,8 @@ static void             ui_create(void);
 static void             reel_anim_cb(lv_timer_t *t);
 static void             sd_toast_timer_cb(lv_timer_t *t);
 static void             vol_hide_timer_cb(lv_timer_t *t);
+/* R102-fix: 菜单真正的 LVGL 绘制(仅供 lvgl_task 持锁区内调用, 前向声明见 menu_apply_nolock) */
+static void             menu_apply_nolock(void);
 static void             ui_show_msg(const char *msg);
 
 static bool g_display_initialized = false;
@@ -79,6 +90,10 @@ static esp_lcd_panel_handle_t    s_panel_handle = NULL;
 
 /* LVGL 刷新缓冲 (优先 PSRAM) */
 static lv_color_t *s_lv_buf = NULL;
+
+/* R102: 点阵 shadow 帧缓冲 + 覆盖掩码 (PSRAM), 避免访问 LVGL draw_buf 内部 + 避免 SPI 重入崩溃 */
+static uint16_t *s_cjk_fb   = NULL;   // RGB565, 全屏 [H][W]
+static uint8_t  *s_cjk_mask = NULL;   // 1=该像素有点阵需覆盖
 
 /* LVGL UI 对象 */
 static lv_obj_t *g_player = NULL;   // 播放界面容器
@@ -208,6 +223,16 @@ static char          s_msg_text[96] = {0};
 static volatile bool s_sd_icon_pending  = false;   /* SD 图标+插拔提示待更新 */
 static volatile bool s_sd_icon_present   = false;   /* 期望的卡在位状态 */
 static volatile bool s_clear_msg_pending = false;   /* 清全屏消息返回播放器 */
+/* R102-fix: 菜单绘制标志位化。
+   原因: display_show_menu 有两条调用路径——
+     (a) display_update()  : main 任务, 但已持 lv_lock -> 安全
+     (b) handle_button_events -> menu_open -> menu_render : main 任务, **不持锁**
+   路径 (b) 直接调 lv_obj_add_flag/invalidate 会与 CPU1 的 lvgl_task 并发竞争,
+   损坏 LVGL 内部结构 -> lv_refr/lv_obj_pos 遍历死循环 -> main 卡 30s -> task_wdt。
+   这与 R063/R097/R100 的"main_task 完全不碰 LVGL"是同一类问题, 故沿用同一范式:
+   main 只设标志, 真正的 LVGL 操作由 lvgl_task 在持锁区内执行。 */
+static volatile bool s_menu_pending       = false;  /* 菜单内容待绘制 */
+static volatile bool s_menu_close_pending = false;  /* 菜单关闭待处理(恢复 player) */
 
 void display_register_main_tick(display_main_tick_fn_t fn)
 {
@@ -249,6 +274,18 @@ void display_init(void)
         return;
     }
 
+    /* R102: 点阵 shadow 帧缓冲 + 掩码 (全屏, PSRAM) */
+    s_cjk_fb = (uint16_t *)heap_caps_malloc((size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT * 2,
+                                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_cjk_fb) s_cjk_fb = (uint16_t *)heap_caps_malloc((size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT * 2,
+                                                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    s_cjk_mask = (uint8_t *)heap_caps_malloc((size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT,
+                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_cjk_mask) s_cjk_mask = (uint8_t *)heap_caps_malloc((size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT,
+                                                              MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (s_cjk_fb) memset(s_cjk_fb, 0, (size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT * 2);
+    if (s_cjk_mask) memset(s_cjk_mask, 0, (size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT);
+
     lv_display_t *disp = lv_display_create(DISPLAY_WIDTH, DISPLAY_HEIGHT);
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
     lv_display_set_buffers(disp, s_lv_buf, NULL,
@@ -285,6 +322,8 @@ void display_request_main_tick(void)
 /* ============================================================
  * LVGL flush 回调：把像素图写到 ST7789 帧
  * ============================================================ */
+/* R102: 点阵 overlay (写进 shadow 帧缓冲, 由 flush 按脏区覆盖刷出), 前向声明 */
+static void cjk_flush_overlay(void);
 static int s_flush_cnt = 0;
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
@@ -303,7 +342,8 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
     const int w = area->x2 - area->x1 + 1;
     const int h = area->y2 - area->y1 + 1;
     const int n = w * h;
-    /* R051: 移除 R050 flush 探针 (area DBG)，保留 rows_per_chunk clamp 防御性代码 */
+    /* R102-revert: 临时移除点阵 shadow 覆盖, 验证反复重启是否由点阵帧缓冲机制引起
+       (崩溃类型 rst:0x8 TG1WDT 指向 flush 内 SPI 传输死锁/越界)。先恢复纯净 flush。 */
     for (int i = 0; i < n; i++) {
         uint16_t v = color[i];
         color[i] = (uint16_t)((v << 8) | (v >> 8));   /* SWAP16: 补偿 little-endian GRAM */
@@ -311,8 +351,7 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 
     /* P0-2: esp_lcd_panel_io_spi 不会按 max_transfer_sz 自动分片, 需手动切。
        ESP32-S3 SPI DMA 单次事务安全上限约 32752 字节, 每块按此上限横向切。 */
-    const int max_bytes = 32752;
-    const int bytes_per_row = w * (int)sizeof(lv_color_t);
+    const int max_bytes = 32752;    const int bytes_per_row = w * (int)sizeof(lv_color_t);
     int rows_per_chunk = max_bytes / bytes_per_row;   // 每块行数
     if (rows_per_chunk < 1) {
         /* R050: 防御 rows_per_chunk=0 死循环 (w 过大时整行超 DMA 上限)。
@@ -331,7 +370,111 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
         y = y_end + 1;
     }
     /* 方向 A：恢复真实写屏（之前 #if 0 诊断开关已移除，见 DEBUG-0820 / R049）*/
+    /* R102: 点阵已写进 LVGL 全屏帧缓冲(b->data), 随本帧 flush 正常刷出, 零 SPI 重入 */
     lv_display_flush_ready(disp);
+}
+
+/* ============================================================
+ * 点阵中文文本绘制层 (R102: 绕开 LVGL 中文字体)
+ *   - 绝不在 LVGL flush 之外直接调 esp_lcd_panel_draw_bitmap (会抢 SPI 总线导致
+ *     BREAK/Cache-error 崩溃). 改为: 调用方用 cjk_request_text() 把待绘文本入队,
+ *     由 lvgl_flush_cb 在本帧写屏完成后统一绘制 (此时 LVGL 持有 SPI 总线, 安全).
+ *   - 屏幕 GRAM 为 little-endian, 与 flush_cb 一致需 SWAP16
+ * ============================================================ */
+#define CJK_Q_MAX 8
+#define CJK_Q_STR 64
+typedef struct { int x, y; uint16_t fg, bg; char s[CJK_Q_STR]; } cjk_req_t;
+static cjk_req_t s_cjk_q[CJK_Q_MAX];
+static int       s_cjk_qnum = 0;
+
+/* 入队: 由 display_update / display_show_menu 调用 (均在 lvgl_task 持锁上下文) */
+static void cjk_request_text(int x, int y, const char *utf8, uint16_t fg, uint16_t bg)
+{
+    if (!utf8 || !utf8[0]) return;
+    if (s_cjk_qnum >= CJK_Q_MAX) return;   /* 队列满, 丢弃最旧避免溢出 */
+    cjk_req_t *r = &s_cjk_q[s_cjk_qnum++];
+    r->x = x; r->y = y; r->fg = fg; r->bg = bg;
+    strncpy(r->s, utf8, CJK_Q_STR - 1);
+    r->s[CJK_Q_STR - 1] = '\0';
+}
+
+/* 把字串直接写进 LVGL 全屏帧缓冲 (不走 esp_lcd, 避免重入/抢 SPI 崩溃).
+ * 由 lvgl_flush_cb 在本帧 SWAP16 之前调用, LVGL 的 flush 会把含点阵的脏区正常刷出. */
+/* 把字串写进点阵 shadow 帧缓冲 + 设掩码 (供 flush_cb 按脏区覆盖进 px_map).
+ * 不访问 LVGL draw_buf 内部, 不调 SPI -> 无重入崩溃. */
+static void cjk_write_lvgl_buf(int x, int y, const char *utf8, uint16_t fg, uint16_t bg)
+{
+    if (!s_cjk_fb || !s_cjk_mask || !utf8) return;
+    const int GW = cjk_font_w;   // 16
+    const int GH = cjk_font_h;   // 16
+    int pen = x;
+    const char *p = utf8;
+    while (*p) {
+        uint32_t u = 0;
+        int n = 0;
+        /* UTF-8 解码 */
+        if ((*p & 0x80) == 0)      { u = (uint8_t)*p;       n = 1; }
+        else if ((*p & 0xE0) == 0xC0) { u = ((uint32_t)(*p & 0x1F) << 6)  | (*(p+1) & 0x3F); n = 2; }
+        else if ((*p & 0xF0) == 0xE0) { u = ((uint32_t)(*p & 0x0F) << 12) | ((*(p+1) & 0x3F) << 6) | (*(p+2) & 0x3F); n = 3; }
+        else { p++; continue; } /* 非法 lead, 跳过 */
+        p += n;
+
+        int idx = cjk_unicode_to_glyph_idx(u);
+        uint16_t buf[16 * 16];
+        if (idx < 0) {
+            /* 缺字: 画空心方框占位 */
+            for (int i = 0; i < GH; i++)
+                for (int j = 0; j < GW; j++)
+                    buf[i * GW + j] = ((i == 0 || i == GH-1 || j == 0 || j == GW-1) ? fg : bg);
+        } else {
+            uint8_t g[16 * 16 / 8];
+            const uint8_t *src = cjk_font_raw + (size_t)idx * cjk_font_glyph_bytes;
+            for (int i = 0; i < GH; i++) {
+                uint8_t b0 = src[i * 2], b1 = src[i * 2 + 1];
+                for (int j = 0; j < 8; j++)
+                    g[i * 16 + j]      = (b0 & (0x80 >> j)) ? 1 : 0;
+                for (int j = 0; j < 8; j++)
+                    g[i * 16 + 8 + j]  = (b1 & (0x80 >> j)) ? 1 : 0;
+            }
+            for (int i = 0; i < GH; i++)
+                for (int j = 0; j < GW; j++)
+                    buf[i * GW + j] = g[i * 16 + j] ? fg : bg;
+        }
+        /* SWAP16: 与 flush_cb 一致 */
+        for (int i = 0; i < GW * GH; i++) {
+            uint16_t v = buf[i];
+            buf[i] = (uint16_t)((v << 8) | (v >> 8));
+        }
+        /* 写入 shadow 帧缓冲 + 设掩码 */
+        for (int i = 0; i < GH; i++) {
+            int py = y + i;
+            if (py < 0 || py >= DISPLAY_HEIGHT) continue;
+            for (int j = 0; j < GW; j++) {
+                int px = pen + j;
+                if (px < 0 || px >= DISPLAY_WIDTH) continue;
+                s_cjk_fb[py * DISPLAY_WIDTH + px]   = buf[i * GW + j];
+                s_cjk_mask[py * DISPLAY_WIDTH + px] = 1;
+            }
+        }
+        pen += GW;
+        if (pen > DISPLAY_WIDTH) break;
+    }
+}
+
+/* 清整个点阵掩码 (界面切换时调用, 避免旧点阵残留) */
+static void cjk_clear_all(void)
+{
+    if (s_cjk_mask) memset(s_cjk_mask, 0, (size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT);
+}
+
+/* flush_cb 在本帧写屏前调用: 把点阵队列写进 shadow 帧缓冲 + 掩码 */
+static void cjk_flush_overlay(void)
+{
+    for (int i = 0; i < s_cjk_qnum; i++) {
+        cjk_write_lvgl_buf(s_cjk_q[i].x, s_cjk_q[i].y, s_cjk_q[i].s,
+                           s_cjk_q[i].fg, s_cjk_q[i].bg);
+    }
+    s_cjk_qnum = 0;
 }
 
 /* R063-fix: 不持锁版消息渲染,供 lvgl_task 在已持锁区间内调用(前向声明,定义见 ui_show_msg 处) */
@@ -394,6 +537,16 @@ static void lvgl_task(void *arg)
         if (s_clear_msg_pending) {
             s_clear_msg_pending = false;
             ui_show_player();
+        }
+        /* R102-fix: 消费菜单绘制/关闭标志(已在 lv_lock 内, 直接调 LVGL 安全)。
+           main 侧只置标志, 杜绝 main 与 lvgl_task 并发碰 LVGL 导致的死循环。 */
+        if (s_menu_pending) {
+            s_menu_pending = false;
+            menu_apply_nolock();
+        }
+        if (s_menu_close_pending) {
+            s_menu_close_pending = false;
+            lv_obj_invalidate(lv_screen_active());  /* 触发一帧 flush 用 player 覆盖菜单区 */
         }
         lv_timer_handler();
         lv_unlock();
@@ -1268,7 +1421,15 @@ void display_update(player_state_t state,
         g_display_sleep = false;
     }
 
-    ui_show_player();
+    ui_show_player();  /* 默认渲染 player 屏 */
+
+    /* R102: MENU 态不跑 ui_show_player(否则会恢复 player 盖掉点阵), 改为持续重绘菜单点阵。
+       R102-fix: 此处已持 lv_lock(函数开头 lv_lock), 直接调 nolock 版本;
+       不要调 display_show_menu(那是无锁入口, 只会置标志导致延迟一帧)。 */
+    if (s_menu_visible) {
+        menu_apply_nolock();
+    }
+
 
     /* 时间字符串先算好（时间行与读秒共用） */
     char cur[16], tot[16];
@@ -1299,8 +1460,12 @@ void display_update(player_state_t state,
     int vol_clamped = volume < 0 ? 0 : (volume > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : volume);
     lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
 
-    /* 文件名 (超长省略号截断, 静态不滚动) */
-    lv_label_set_text(lbl_track, track_name ? track_name : "");
+    /* 文件名: 绕开 LVGL 中文路径, 用点阵入队 (R102, 由 flush_cb 统一绘制) */
+    lv_obj_add_flag(lbl_track, LV_OBJ_FLAG_HIDDEN);
+    cjk_request_text(8, 52, (track_name && track_name[0]) ? track_name : " ",
+                  (uint16_t)lv_color_to_u16(lv_color_white()), (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17)));
+    /* 点阵靠 flush_cb 绘制, 主动触发一帧 flush 确保点阵被消费 (即便 LVGL 无脏区) */
+    lv_obj_invalidate(lv_screen_active());
 
     /* 时间(左) / 档位(中) / 总时长(右) */
     lv_label_set_text(lbl_cur, cur);
@@ -1417,31 +1582,76 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
     ui_show_msg(buf);
 }
 
+/* R102-fix: 菜单绘制 —— main 侧只缓存数据 + 置标志, 绝不触碰 LVGL。
+   (原实现直接调 lv_obj_add_flag/invalidate; 在 handle_button_events→menu_open→
+    menu_render 路径下 main 并未持 lv_lock, 与 CPU1 的 lvgl_task 并发竞争,
+    损坏 LVGL 内部结构 → lv_refr/lv_obj_pos 遍历死循环 → main 卡 30s → task_wdt。
+    这与 R063/R097/R100 "main_task 完全不碰 LVGL" 是同一类问题, 沿用同一范式。) */
 void display_show_menu(const char *title, char lines[][24], int count, int sel, const char *hint)
 {
     (void)sel;
     if (!g_display_initialized || count <= 0) return;
 
-    static char buf[256];
-    int len = 0;
-    len += snprintf(buf + len, sizeof(buf) - len, "%s\n",
-                    (title && title[0]) ? title : "Menu");
-
+    /* 仅缓存菜单内容到全局(纯内存写, 不触碰 LVGL) */
+    s_menu_count = count;
+    s_menu_sel   = sel;
+    snprintf(s_menu_title, sizeof(s_menu_title), "%s",
+             (title && title[0]) ? title : "Menu");
     int shown = count;
     if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
-    for (int i = 0; i < shown; i++) {
-        len += snprintf(buf + len, sizeof(buf) - len, "%s\n", lines[i]);
-    }
-    if (hint) {
-        len += snprintf(buf + len, sizeof(buf) - len, "\n%s", hint);
-    }
+    for (int i = 0; i < shown; i++)
+        snprintf(s_menu_lines[i], sizeof(s_menu_lines[i]), "%s", lines[i]);
+    if (hint) snprintf(s_menu_hint, sizeof(s_menu_hint), "%s", hint);
+    else      s_menu_hint[0] = '\0';
+    s_menu_visible = true;
 
-    /* 菜单为活跃界面, 唤醒背光 */
+    /* 唤醒背光 (非 LVGL 操作, 可在此执行) */
     if (g_display_sleep) {
         display_set_brightness(s_last_brightness);
         g_display_sleep = false;
     }
-    ui_show_msg(buf);
+
+    s_menu_pending = true;   /* 由 lvgl_task 持锁区消费 menu_apply_nolock() */
+}
+
+/* R102-fix: 菜单真正的 LVGL 绘制 —— 必须在 lv_lock() 内调用。
+   调用点: (a) lvgl_task 消费 s_menu_pending  (b) display_update 持锁区。 */
+static void menu_apply_nolock(void)
+{
+    if (!g_display_initialized || !s_menu_visible) return;
+
+    /* 隐藏 LVGL 各屏, 让点阵菜单独占显示 */
+    lv_obj_add_flag(g_msg,    LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ota,    LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ab_menu,LV_OBJ_FLAG_HIDDEN);
+
+    const uint16_t fg = (uint16_t)lv_color_to_u16(lv_color_white());
+    const uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+    int shown = s_menu_count;
+    if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
+    int y = 24;
+    cjk_request_text(8, y, s_menu_title, fg, bg);   /* 标题 */
+    y += 22;
+    for (int i = 0; i < shown; i++) {               /* 菜单行 */
+        cjk_request_text(8, y, s_menu_lines[i], fg, bg);
+        y += 20;
+    }
+    if (s_menu_hint[0]) {                           /* 底部提示 */
+        cjk_request_text(8, DISPLAY_HEIGHT - 20, s_menu_hint,
+                         (uint16_t)lv_color_to_u16(lv_color_hex(0x8a93a6)), bg);
+    }
+    lv_obj_invalidate(lv_screen_active());
+}
+
+/* R102: 菜单关闭时由宿主(app_menu_exit)通知 display 清缓存, 恢复 player 渲染 */
+void display_menu_closed(void)
+{
+    s_menu_visible = false;
+    cjk_clear_all();                 /* 清点阵掩码(纯 memset), 避免旧菜单点阵残留 */
+    /* R102-fix: 原在此直接调 lv_obj_invalidate; 本函数由 app_menu_exit(main 任务, 无锁)
+       调用, 同样违反"main 不碰 LVGL"。改为置标志, 由 lvgl_task 持锁区执行。 */
+    s_menu_close_pending = true;
 }
 
 /* R051：A-B 复读状态屏 —— 迷你进度条(白A/橙B) + 实时状态 + 动作列表 */

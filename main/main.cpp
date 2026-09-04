@@ -366,6 +366,7 @@ static void on_track_finished(int state, void *user_data)
 void app_menu_exit(void)
 {
     menu_close();
+    display_menu_closed();   /* R102: 清点阵菜单缓存, 恢复 player 渲染 */
     g_app_state = g_state_before_menu;
 }
 

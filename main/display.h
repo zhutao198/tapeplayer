@@ -129,6 +129,12 @@ void display_show_browse(int selected, int total, char lines[][24], int count);
 void display_show_menu(const char *title, char lines[][24], int count, int sel, const char *hint);
 
 /**
+ * @brief 菜单关闭通知 (R102): 清点阵菜单缓存, 恢复 player 渲染
+ *        须在退出菜单时(如 app_menu_exit)调用
+ */
+void display_menu_closed(void);
+
+/**
  * @brief A-B 复读状态屏 (R051)：迷你进度条(白A/橙B) + 实时状态 + 动作列表
  * @param title     标题（如 "A-B 复读"）
  * @param lines     动作行（含标记前缀，如 "> 标记 A 点"），每行 ≤23 字节
