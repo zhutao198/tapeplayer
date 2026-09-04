@@ -80,3 +80,29 @@
 - 实测: ✅ 主菜单中文正确显示; ✅ 无反复重启/无卡死; 退出黑屏修复待烧录验证
 - 待办: 铺开到曲名 `lbl_track` / browse 文件名 / A-B 复读 / OTA 等其余中文 label
   (browse 目前仍走 LVGL 字体路径 -> 中文渲染为"二维码"乱码)
+
+---
+
+## R105 [2026-09-04] 铺开方案C: 修复曲名回归 + browse 中文点阵化
+- 文件: `main/display.cpp`
+- **修复曲名回归 bug(重要)**: R102 把曲名 `lbl_track` 改走"点阵入队 +
+  flush_cb 消费", 但该队列机制因导致 TG1WDT 反复重启已**被禁用**
+  → 队列无人消费 → **曲名完全不显示**(日志 `track_vis=0` 可印证)。
+  现改为曲名专用小 canvas, 修复回归。
+- **browse 中文点阵化**: 原 `display_show_browse()` 把文件列表拼成大串交给
+  `ui_show_msg()`(LVGL 字体) → 中文文件名渲染成"二维码"乱码。
+  改为转调 `display_show_menu()` 复用点阵 canvas 路径(标题/行/提示结构一致)。
+- 实现要点:
+  - 新增**曲名专用小 canvas** `s_track_canvas` (304x18 @ 8,52),
+    只覆盖曲名区域, 避免遮挡 player 屏的其它 LVGL 元素(状态栏/进度条/时间)。
+    全屏 canvas 仅用于菜单/browse 独占态。
+  - **层级关键**: LVGL 中后创建的对象在上层, 故 `cjk_canvas_init()` 中
+    **先创建曲名 canvas, 后创建全屏 canvas**, 菜单态全屏 canvas 才能盖住曲名。
+  - 重构点阵绘制为通用 `cjk_blit_text(fb, w, h, x, y, utf8, fg, bg)`,
+    全屏 canvas 与曲名 canvas 共用。
+  - `cjk_canvas_clear()` / `cjk_track_clear()` 改为**填充背景色 0x0a0e17**
+    (原 memset 纯黑, 会与 player 背景形成色块)。
+  - browse 退出: 消费 `s_clear_msg_pending` 时清 `s_menu_visible` + 隐藏全屏
+    canvas, 否则 canvas 会一直盖住 player 屏。
+- 状态: 已编译通过, 待烧录实测
+- 待办: A-B 复读 / OTA / info 弹窗等其余中文 label 点阵化

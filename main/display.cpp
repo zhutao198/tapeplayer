@@ -110,6 +110,16 @@ static uint16_t *s_cjk_canvas_buf = NULL;
 #define CJK_CANVAS_W  (DISPLAY_WIDTH)
 #define CJK_CANVAS_H  (DISPLAY_HEIGHT)
 
+/* R105: 曲名专用小 canvas —— 只覆盖曲名那一条区域, 避免遮挡 player 屏的
+   其它 LVGL 元素(状态栏/进度条/时间等)。全屏 canvas 仅用于菜单/browse 独占态。
+   坐标与 lbl_track 保持一致 (ui_create 中 lbl_track 位于 M=8, y=52)。 */
+static lv_obj_t *s_track_canvas     = NULL;
+static uint16_t *s_track_canvas_buf = NULL;
+#define TRACK_CANVAS_X  (8)
+#define TRACK_CANVAS_Y  (52)
+#define TRACK_CANVAS_W  (DISPLAY_WIDTH - 2 * 8)   /* 304 */
+#define TRACK_CANVAS_H  (18)
+
 /* LVGL UI 对象 */
 static lv_obj_t *g_player = NULL;   // 播放界面容器
 static lv_obj_t *g_msg    = NULL;   // 居中消息标签 (splash/提示)
@@ -488,6 +498,27 @@ static void cjk_clear_all(void)
  * ============================================================ */
 static void cjk_canvas_init(void)
 {
+    /* R105: 先创建曲名小 canvas。
+       LVGL 中后创建的对象位于上层, 因此全屏 canvas 必须在其后创建,
+       这样菜单/browse 独占态的全屏 canvas 才能正确盖住曲名。 */
+    size_t tbytes = (size_t)TRACK_CANVAS_W * TRACK_CANVAS_H * 2;
+    s_track_canvas_buf = (uint16_t *)heap_caps_malloc(tbytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_track_canvas_buf)
+        s_track_canvas_buf = (uint16_t *)heap_caps_malloc(tbytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (s_track_canvas_buf) {
+        memset(s_track_canvas_buf, 0, tbytes);
+        s_track_canvas = lv_canvas_create(lv_screen_active());
+        lv_canvas_set_buffer(s_track_canvas, s_track_canvas_buf,
+                             TRACK_CANVAS_W, TRACK_CANVAS_H, LV_COLOR_FORMAT_RGB565);
+        lv_obj_set_pos(s_track_canvas, TRACK_CANVAS_X, TRACK_CANVAS_Y);
+        lv_obj_clear_flag(s_track_canvas, LV_OBJ_FLAG_HIDDEN);
+        ESP_LOGI(TAG, "track canvas ready %dx%d@(%d,%d) (%u bytes)",
+                 TRACK_CANVAS_W, TRACK_CANVAS_H, TRACK_CANVAS_X, TRACK_CANVAS_Y,
+                 (unsigned)tbytes);
+    } else {
+        ESP_LOGE(TAG, "track canvas buffer alloc failed (%u bytes)", (unsigned)tbytes);
+    }
+
     size_t bytes = (size_t)CJK_CANVAS_W * CJK_CANVAS_H * 2;
     s_cjk_canvas_buf = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_cjk_canvas_buf)
@@ -501,7 +532,7 @@ static void cjk_canvas_init(void)
     lv_canvas_set_buffer(s_cjk_canvas, s_cjk_canvas_buf,
                          CJK_CANVAS_W, CJK_CANVAS_H, LV_COLOR_FORMAT_RGB565);
     lv_obj_set_pos(s_cjk_canvas, 0, 0);
-    lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);   /* 默认隐藏, 菜单态才显示 */
+    lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);   /* 默认隐藏, 菜单/browse 态才显示 */
     ESP_LOGI(TAG, "cjk canvas ready %dx%d (%u bytes)",
              CJK_CANVAS_W, CJK_CANVAS_H, (unsigned)bytes);
 }
@@ -509,14 +540,18 @@ static void cjk_canvas_init(void)
 static void cjk_canvas_clear(void)
 {
     if (!s_cjk_canvas_buf) return;
-    memset(s_cjk_canvas_buf, 0, (size_t)CJK_CANVAS_W * CJK_CANVAS_H * 2);
+    /* 填背景色而非纯黑: 与 LVGL player 屏背景 (0x0a0e17) 一致, 避免出现色块 */
+    uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+    size_t n = (size_t)CJK_CANVAS_W * CJK_CANVAS_H;
+    for (size_t i = 0; i < n; i++) s_cjk_canvas_buf[i] = bg;
 }
 
-/* 在 canvas 上画一行点阵文本。颜色为 LVGL 原生 RGB565 (flush_cb 统一 SWAP16)。
-   缺字时画空心方框占位。 */
-static void cjk_canvas_text(int x, int y, const char *utf8, uint16_t fg, uint16_t bg)
+/* 通用: 把一行点阵文本画进任意 RGB565 帧缓冲。
+   颜色为 LVGL 原生 RGB565 (flush_cb 会对整帧统一 SWAP16)。缺字时画空心方框。 */
+static void cjk_blit_text(uint16_t *fb, int fb_w, int fb_h,
+                          int x, int y, const char *utf8, uint16_t fg, uint16_t bg)
 {
-    if (!s_cjk_canvas_buf || !utf8) return;
+    if (!fb || !utf8) return;
     const int GW = cjk_font_w;
     const int GH = cjk_font_h;
     int pen = x;
@@ -532,7 +567,7 @@ static void cjk_canvas_text(int x, int y, const char *utf8, uint16_t fg, uint16_
         int idx = cjk_unicode_to_glyph_idx(u);
         for (int i = 0; i < GH; i++) {
             int py = y + i;
-            if (py < 0 || py >= CJK_CANVAS_H) continue;
+            if (py < 0 || py >= fb_h) continue;
             uint8_t b0, b1;
             if (idx >= 0) {
                 const uint8_t *src = cjk_font_raw + (size_t)idx * cjk_font_glyph_bytes;
@@ -546,18 +581,40 @@ static void cjk_canvas_text(int x, int y, const char *utf8, uint16_t fg, uint16_
             }
             for (int j = 0; j < 8; j++) {
                 int px = pen + j;
-                if (px >= 0 && px < CJK_CANVAS_W)
-                    s_cjk_canvas_buf[py * CJK_CANVAS_W + px] = (b0 & (0x80 >> j)) ? fg : bg;
+                if (px >= 0 && px < fb_w) fb[py * fb_w + px] = (b0 & (0x80 >> j)) ? fg : bg;
             }
             for (int j = 0; j < 8; j++) {
                 int px = pen + 8 + j;
-                if (px >= 0 && px < CJK_CANVAS_W)
-                    s_cjk_canvas_buf[py * CJK_CANVAS_W + px] = (b1 & (0x80 >> j)) ? fg : bg;
+                if (px >= 0 && px < fb_w) fb[py * fb_w + px] = (b1 & (0x80 >> j)) ? fg : bg;
             }
         }
         pen += GW;
-        if (pen > CJK_CANVAS_W) break;
+        if (pen > fb_w) break;
     }
+}
+
+/* 全屏 canvas (菜单/browse 独占态) */
+static void cjk_canvas_text(int x, int y, const char *utf8, uint16_t fg, uint16_t bg)
+{
+    cjk_blit_text(s_cjk_canvas_buf, CJK_CANVAS_W, CJK_CANVAS_H, x, y, utf8, fg, bg);
+}
+
+/* R105: 曲名小 canvas */
+static void cjk_track_clear(void)
+{
+    if (!s_track_canvas_buf) return;
+    /* 填背景色(同 cjk_canvas_clear), 与 player 屏背景一致, 避免色块 */
+    uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+    size_t n = (size_t)TRACK_CANVAS_W * TRACK_CANVAS_H;
+    for (size_t i = 0; i < n; i++) s_track_canvas_buf[i] = bg;
+}
+
+static void cjk_track_text(const char *utf8)
+{
+    if (!s_track_canvas_buf) return;
+    const uint16_t fg = (uint16_t)lv_color_to_u16(lv_color_white());
+    const uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+    cjk_blit_text(s_track_canvas_buf, TRACK_CANVAS_W, TRACK_CANVAS_H, 0, 0, utf8, fg, bg);
 }
 
 /* flush_cb 在本帧写屏前调用: 把点阵队列写进 shadow 帧缓冲 + 掩码 */
@@ -629,6 +686,10 @@ static void lvgl_task(void *arg)
         /* R100: 消费"清消息返回播放器"标志 */
         if (s_clear_msg_pending) {
             s_clear_msg_pending = false;
+            /* R105: browse 现走点阵 canvas(独占态), 退出时必须清 s_menu_visible
+               并隐藏全屏 canvas, 否则 canvas 会一直盖住 player 屏。 */
+            s_menu_visible = false;
+            if (s_cjk_canvas) lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
             ui_show_player();
         }
         /* R102-fix: 消费菜单绘制/关闭标志(已在 lv_lock 内, 直接调 LVGL 安全)。
@@ -1565,10 +1626,19 @@ void display_update(player_state_t state,
     int vol_clamped = volume < 0 ? 0 : (volume > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : volume);
     lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
 
-    /* 文件名: 绕开 LVGL 中文路径, 用点阵入队 (R102, 由 flush_cb 统一绘制) */
-    lv_obj_add_flag(lbl_track, LV_OBJ_FLAG_HIDDEN);
-    cjk_request_text(8, 52, (track_name && track_name[0]) ? track_name : " ",
-                  (uint16_t)lv_color_to_u16(lv_color_white()), (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17)));
+    /* 文件名: R105 改走曲名 canvas 点阵。
+       R102 原用 cjk_request_text() 入队 + flush_cb 消费, 但该队列机制因导致
+       TG1WDT 反复重启已被禁用 -> 队列无人消费 -> **曲名完全不显示**(回归 bug)。
+       此处改用专用小 canvas, 修复回归。 */
+    lv_obj_add_flag(lbl_track, LV_OBJ_FLAG_HIDDEN);   /* LVGL label 让位给点阵 */
+    if (s_track_canvas && !s_menu_visible) {
+        cjk_track_clear();
+        cjk_track_text((track_name && track_name[0]) ? track_name : " ");
+        lv_obj_clear_flag(s_track_canvas, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(s_track_canvas);
+    } else if (s_track_canvas) {
+        lv_obj_add_flag(s_track_canvas, LV_OBJ_FLAG_HIDDEN);  /* 菜单/browse 独占态隐藏 */
+    }
     /* 点阵靠 flush_cb 绘制, 主动触发一帧 flush 确保点阵被消费 (即便 LVGL 无脏区) */
     lv_obj_invalidate(lv_screen_active());
 
@@ -1673,18 +1743,14 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
 {
     if (!g_display_initialized || count <= 0) return;
 
-    static char buf[256];
-    int len = 0;
-    len += snprintf(buf + len, sizeof(buf) - len, "Browse %d/%d\n",
-                    selected + 1, total);
-    int shown = count;
-    if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
-    for (int i = 0; i < shown; i++) {
-        len += snprintf(buf + len, sizeof(buf) - len, "%s\n", lines[i]);
-    }
-    len += snprintf(buf + len, sizeof(buf) - len,
-                    "\nUP/DN: scroll page   PREV/NEXT: move   PLAY: confirm   STOP: exit");
-    ui_show_msg(buf);
+    /* R105: 原实现把所有行拼成一个大串交给 ui_show_msg()(LVGL 字体路径),
+       -> 中文文件名被渲染成"二维码"乱码。
+       改为复用菜单的点阵 canvas 路径: "标题/行/提示" 结构与菜单完全一致,
+       直接转调 display_show_menu(安全入口: 只缓存数据+置标志, 由 lvgl_task 持锁绘制)。 */
+    char title[32];
+    snprintf(title, sizeof(title), "Browse %d/%d", selected + 1, total);
+    display_show_menu(title, lines, count, -1,
+                      "UP/DN scroll   PREV/NEXT move   PLAY confirm   STOP exit");
 }
 
 /* R102-fix: 菜单绘制 —— main 侧只缓存数据 + 置标志, 绝不触碰 LVGL。
