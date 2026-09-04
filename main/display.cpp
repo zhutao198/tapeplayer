@@ -107,11 +107,11 @@ static uint16_t *s_cjk_canvas_buf = NULL;
 
 /* R105: 曲名专用小 canvas —— 只覆盖曲名那一条区域, 避免遮挡 player 屏的
    其它 LVGL 元素(状态栏/进度条/时间等)。全屏 canvas 仅用于菜单/browse 独占态。
-   坐标与 lbl_track 保持一致 (ui_create 中 lbl_track 位于 M=8, y=52)。 */
+   坐标与 lbl_track 保持一致 (ui_create 中 lbl_track 位于 M=8, y=56; R108 下移以容纳格式行)。 */
 static lv_obj_t *s_track_canvas     = NULL;
 static uint16_t *s_track_canvas_buf = NULL;
 #define TRACK_CANVAS_X  (8)
-#define TRACK_CANVAS_Y  (52)
+#define TRACK_CANVAS_Y  (56)
 #define TRACK_CANVAS_W  (DISPLAY_WIDTH - 2 * 8)   /* 304 */
 #define TRACK_CANVAS_H  (18)
 
@@ -140,6 +140,7 @@ static lv_obj_t *ota_hint  = NULL;  // 底部操作提示
 static lv_obj_t *lbl_status  = NULL; // 状态栏: 播放态/曲目/模式/电池/音量
 static lv_obj_t *lbl_title   = NULL; // "正在播放" 小标题
 static lv_obj_t *lbl_track   = NULL; // 当前曲目名 (大号, 滚动)
+static lv_obj_t *lbl_fmt     = NULL; // R108: 格式/品牌行 (FLAC|44KHZ|16bit|0918kbps SQ)
 static lv_obj_t *lbl_cur     = NULL; // 当前时间 (左)
 static lv_obj_t *lbl_gear    = NULL; // 加速档位 (中部, 加速时显示)
 static lv_obj_t *lbl_dur     = NULL; // 总时长 (右)
@@ -1035,11 +1036,19 @@ static void ui_create(void)
 
     /* 文件名 (大号, 循环滚动) */
     lbl_track = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_track, M, 52);
+    lv_obj_set_pos(lbl_track, M, 56);
     lv_obj_set_width(lbl_track, W - 2 * M);
     lv_label_set_long_mode(lbl_track, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_track, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl_track, UI_FONT, 0);
+
+    /* R108: 格式/品牌行 (文件名下方): FLAC|44KHZ|16bit|0918kbps + SQ */
+    lbl_fmt = lv_label_create(g_player);
+    lv_obj_set_pos(lbl_fmt, M, 80);
+    lv_obj_set_width(lbl_fmt, W - 2 * M);
+    lv_label_set_long_mode(lbl_fmt, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(lbl_fmt, lv_color_hex(0x8a93a6), 0);
+    lv_obj_set_style_text_font(lbl_fmt, UI_FONT, 0);
 
     /* 时间行: 当前(左) / 档位(中) / 总时长(右) */
     lbl_cur = lv_label_create(g_player);
@@ -1065,7 +1074,7 @@ static void ui_create(void)
     lv_bar_set_range(bar_prog, 0, 1000);
     lv_bar_set_value(bar_prog, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar_prog, lv_color_hex(0x16203a), 0);
-    lv_obj_set_style_bg_color(bar_prog, lv_color_hex(0x2dd4bf), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar_prog, lv_color_hex(0x22c55e), LV_PART_INDICATOR); /* R108: 设计稿绿色填充 */
     lv_obj_set_style_radius(bar_prog, 4, 0);
 
     lbl_percent = lv_label_create(g_player);
@@ -1597,12 +1606,16 @@ void display_update(player_state_t state,
     format_time(current_sec, cur, sizeof(cur));
     format_time(total_sec, tot, sizeof(tot));
 
-    /* 状态栏: 状态 · 曲目 x/y · [模式]（电量/音量已改为图形） */
-    const char *mode_s = (s_play_mode == 1) ? "LIST_LOOP" : (s_play_mode == 2) ? "SINGLE_LOOP" : "SEQUENTIAL";
+    /* 状态栏: 状态 · 曲目 x/y · [模式] · NOR（电量/音量已改为图形）
+       R108: 模式词映射设计稿风格缩写 (SEQ=顺序/LST=列表循环/SGL=单曲), 尾加 NOR 标 */
+    const char *mode_s = (s_play_mode == 1) ? "LST" : (s_play_mode == 2) ? "SGL" : "SEQ";
     char line0[64];
-    snprintf(line0, sizeof(line0), "%s %03d/%03d %s",
+    snprintf(line0, sizeof(line0), "%s %03d/%03d %s NOR",
              state_word(state), track_idx, total, mode_s);
     lv_label_set_text(lbl_status, line0);
+
+    /* R108: 格式/品牌行 (静态占位, 真实采样率/码率/编码接入留待后续) */
+    lv_label_set_text(lbl_fmt, "MP3|44KHZ|16bit|0320kbps SQ");
 
     /* 图形电量: 外框填充宽度 + 低电量变红 + 充电标记 */
     int bp = power_mgmt_get_battery_percent();
