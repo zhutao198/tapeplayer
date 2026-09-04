@@ -79,6 +79,8 @@ static void             sd_toast_timer_cb(lv_timer_t *t);
 static void             vol_hide_timer_cb(lv_timer_t *t);
 /* R102-fix: 菜单真正的 LVGL 绘制(仅供 lvgl_task 持锁区内调用, 前向声明见 menu_apply_nolock) */
 static void             menu_apply_nolock(void);
+/* R103: 点阵 canvas (LVGL 原生位图路径), 在 display_init 中 ui_create 之后调用 */
+static void             cjk_canvas_init(void);
 static void             ui_show_msg(const char *msg);
 
 static bool g_display_initialized = false;
@@ -94,6 +96,19 @@ static lv_color_t *s_lv_buf = NULL;
 /* R102: 点阵 shadow 帧缓冲 + 覆盖掩码 (PSRAM), 避免访问 LVGL draw_buf 内部 + 避免 SPI 重入崩溃 */
 static uint16_t *s_cjk_fb   = NULL;   // RGB565, 全屏 [H][W]
 static uint8_t  *s_cjk_mask = NULL;   // 1=该像素有点阵需覆盖
+
+/* R103: 点阵 canvas —— LVGL 原生位图路径 (方案 C)
+ * 前两个落点均已被证伪:
+ *   (a) flush 外直接 esp_lcd_panel_draw_bitmap  -> BREAK 崩溃 (抢 SPI 总线)
+ *   (b) flush 内覆盖 px_map (shadow 帧缓冲+掩码) -> TG1WDT 反复重启
+ * 方案 C: 把点阵画进 lv_canvas 的 buffer (纯内存写), 由 LVGL 当作普通图像
+ *   对象 flush 出去 —— 不碰 SPI / 不碰 draw_buf 内部 / 不额外调 draw_bitmap。
+ * 字节序: canvas buffer 存 LVGL **原生** RGB565 (不做 SWAP16);
+ *         flush_cb 会对整帧统一 SWAP16, 与 LVGL 其它内容保持一致。 */
+static lv_obj_t *s_cjk_canvas     = NULL;
+static uint16_t *s_cjk_canvas_buf = NULL;
+#define CJK_CANVAS_W  (DISPLAY_WIDTH)
+#define CJK_CANVAS_H  (DISPLAY_HEIGHT)
 
 /* LVGL UI 对象 */
 static lv_obj_t *g_player = NULL;   // 播放界面容器
@@ -293,6 +308,7 @@ void display_init(void)
                            LV_DISP_RENDER_MODE_PARTIAL);
 
     ui_create();
+    cjk_canvas_init();   /* R103: 在 ui_create 之后创建, 保证 canvas 位于最顶层可覆盖其它屏 */
     lv_timer_create(reel_anim_cb, 50, NULL);   // 磁带卷轴旋转动画 (50ms/帧)
     lv_timer_create(sd_toast_timer_cb, 100, NULL);  // 插拔提示显隐控制 (100ms)
     lv_timer_create(vol_hide_timer_cb, 200, NULL);  // 音量条停止调节 3s 后自动隐藏
@@ -467,6 +483,83 @@ static void cjk_clear_all(void)
     if (s_cjk_mask) memset(s_cjk_mask, 0, (size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT);
 }
 
+/* ============================================================
+ * R103: 点阵 canvas —— LVGL 原生位图路径 (方案 C)
+ * ============================================================ */
+static void cjk_canvas_init(void)
+{
+    size_t bytes = (size_t)CJK_CANVAS_W * CJK_CANVAS_H * 2;
+    s_cjk_canvas_buf = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_cjk_canvas_buf)
+        s_cjk_canvas_buf = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_cjk_canvas_buf) {
+        ESP_LOGE(TAG, "cjk canvas buffer alloc failed (%u bytes)", (unsigned)bytes);
+        return;
+    }
+    memset(s_cjk_canvas_buf, 0, bytes);
+    s_cjk_canvas = lv_canvas_create(lv_screen_active());
+    lv_canvas_set_buffer(s_cjk_canvas, s_cjk_canvas_buf,
+                         CJK_CANVAS_W, CJK_CANVAS_H, LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(s_cjk_canvas, 0, 0);
+    lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);   /* 默认隐藏, 菜单态才显示 */
+    ESP_LOGI(TAG, "cjk canvas ready %dx%d (%u bytes)",
+             CJK_CANVAS_W, CJK_CANVAS_H, (unsigned)bytes);
+}
+
+static void cjk_canvas_clear(void)
+{
+    if (!s_cjk_canvas_buf) return;
+    memset(s_cjk_canvas_buf, 0, (size_t)CJK_CANVAS_W * CJK_CANVAS_H * 2);
+}
+
+/* 在 canvas 上画一行点阵文本。颜色为 LVGL 原生 RGB565 (flush_cb 统一 SWAP16)。
+   缺字时画空心方框占位。 */
+static void cjk_canvas_text(int x, int y, const char *utf8, uint16_t fg, uint16_t bg)
+{
+    if (!s_cjk_canvas_buf || !utf8) return;
+    const int GW = cjk_font_w;
+    const int GH = cjk_font_h;
+    int pen = x;
+    const char *p = utf8;
+    while (*p) {
+        uint32_t u = 0; int n = 0;
+        if ((*p & 0x80) == 0)         { u = (uint8_t)*p; n = 1; }
+        else if ((*p & 0xE0) == 0xC0) { u = ((uint32_t)(*p & 0x1F) << 6)  | (*(p+1) & 0x3F); n = 2; }
+        else if ((*p & 0xF0) == 0xE0) { u = ((uint32_t)(*p & 0x0F) << 12) | ((*(p+1) & 0x3F) << 6) | (*(p+2) & 0x3F); n = 3; }
+        else { p++; continue; }        /* 非法 lead, 跳过 */
+        p += n;
+
+        int idx = cjk_unicode_to_glyph_idx(u);
+        for (int i = 0; i < GH; i++) {
+            int py = y + i;
+            if (py < 0 || py >= CJK_CANVAS_H) continue;
+            uint8_t b0, b1;
+            if (idx >= 0) {
+                const uint8_t *src = cjk_font_raw + (size_t)idx * cjk_font_glyph_bytes;
+                b0 = src[i * 2];
+                b1 = src[i * 2 + 1];
+            } else {
+                /* 缺字: 空心方框 (首末行全亮, 中间仅左右两列) */
+                bool edge = (i == 0 || i == GH - 1);
+                b0 = edge ? 0xFF : 0x80;
+                b1 = edge ? 0xFF : 0x01;
+            }
+            for (int j = 0; j < 8; j++) {
+                int px = pen + j;
+                if (px >= 0 && px < CJK_CANVAS_W)
+                    s_cjk_canvas_buf[py * CJK_CANVAS_W + px] = (b0 & (0x80 >> j)) ? fg : bg;
+            }
+            for (int j = 0; j < 8; j++) {
+                int px = pen + 8 + j;
+                if (px >= 0 && px < CJK_CANVAS_W)
+                    s_cjk_canvas_buf[py * CJK_CANVAS_W + px] = (b1 & (0x80 >> j)) ? fg : bg;
+            }
+        }
+        pen += GW;
+        if (pen > CJK_CANVAS_W) break;
+    }
+}
+
 /* flush_cb 在本帧写屏前调用: 把点阵队列写进 shadow 帧缓冲 + 掩码 */
 static void cjk_flush_overlay(void)
 {
@@ -546,7 +639,16 @@ static void lvgl_task(void *arg)
         }
         if (s_menu_close_pending) {
             s_menu_close_pending = false;
-            lv_obj_invalidate(lv_screen_active());  /* 触发一帧 flush 用 player 覆盖菜单区 */
+            /* R103: 隐藏点阵 canvas */
+            if (s_cjk_canvas) lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
+            /* R103-fix: 必须显式恢复 player 屏。
+               menu_apply_nolock() 曾把 g_player 设为 HIDDEN, 若此处只隐藏 canvas,
+               屏幕上就没有任何可见对象 -> 退出菜单后一片黑屏。
+               且不能依赖 display_update 里的 ui_show_player(): 它有指纹节流,
+               退出菜单时状态未变(同一首歌/同一位置/仍 STOPPED) -> 指纹相同直接 return,
+               player 会一直黑着, 直到按 PLAY 改变状态才恢复。 */
+            ui_show_player();
+            lv_obj_invalidate(lv_screen_active());
         }
         lv_timer_handler();
         lv_unlock();
@@ -1428,6 +1530,9 @@ void display_update(player_state_t state,
        不要调 display_show_menu(那是无锁入口, 只会置标志导致延迟一帧)。 */
     if (s_menu_visible) {
         menu_apply_nolock();
+    } else if (s_cjk_canvas && !lv_obj_has_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN)) {
+        /* 非菜单态: 确保点阵 canvas 已隐藏, 避免遮挡 player 屏 */
+        lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
     }
 
 
@@ -1626,22 +1731,28 @@ static void menu_apply_nolock(void)
     lv_obj_add_flag(g_ota,    LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ab_menu,LV_OBJ_FLAG_HIDDEN);
 
+    /* R103: 用 canvas 画点阵菜单 (LVGL 原生位图路径, 不碰 SPI) */
+    if (!s_cjk_canvas) return;
+
     const uint16_t fg = (uint16_t)lv_color_to_u16(lv_color_white());
     const uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
     int shown = s_menu_count;
     if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
+
+    cjk_canvas_clear();
     int y = 24;
-    cjk_request_text(8, y, s_menu_title, fg, bg);   /* 标题 */
+    cjk_canvas_text(8, y, s_menu_title, fg, bg);    /* 标题 */
     y += 22;
     for (int i = 0; i < shown; i++) {               /* 菜单行 */
-        cjk_request_text(8, y, s_menu_lines[i], fg, bg);
+        cjk_canvas_text(8, y, s_menu_lines[i], fg, bg);
         y += 20;
     }
     if (s_menu_hint[0]) {                           /* 底部提示 */
-        cjk_request_text(8, DISPLAY_HEIGHT - 20, s_menu_hint,
-                         (uint16_t)lv_color_to_u16(lv_color_hex(0x8a93a6)), bg);
+        cjk_canvas_text(8, DISPLAY_HEIGHT - 20, s_menu_hint,
+                        (uint16_t)lv_color_to_u16(lv_color_hex(0x8a93a6)), bg);
     }
-    lv_obj_invalidate(lv_screen_active());
+    lv_obj_clear_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(s_cjk_canvas);
 }
 
 /* R102: 菜单关闭时由宿主(app_menu_exit)通知 display 清缓存, 恢复 player 渲染 */

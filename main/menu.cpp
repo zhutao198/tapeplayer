@@ -202,7 +202,8 @@ static void menu_render(void)
         char lines[4][24];
         for (int i = 0; i < lv->count; i++) {
             const menu_item_t *it = &lv->items[i];
-            const char *mark = (i == lv->sel) ? (s_edit ? "»" : ">") : " ";
+            /* R103: 原用 "»" 作编辑态标记, 但点阵字库无此符号(会显示空心方框), 改用 "*" */
+            const char *mark = (i == lv->sel) ? (s_edit ? "*" : ">") : " ";
             if (it->kind == MI_TOGGLE && it->get_idx) {
                 int idx = it->get_idx();
                 const char *val = (idx >= 0 && idx < it->option_count) ? it->options[idx] : "";
@@ -214,9 +215,10 @@ static void menu_render(void)
         int total_ms = audio_player_get_duration() * 1000;
         int cur_ms   = audio_player_get_position_ms();
         const char *hint = (s_ab_scrub != AB_SCRUB_NONE)
-            ? "● 微调 A/B 点  单击 ±2s / 长按扫段  同步试听  播放/停止 确定"
-            : (s_edit ? "● 编辑中 VOL± 开/关  播放/停止 完成"
-                      : "VOL±/方向 选动作  播放 标记/进入  停止 返回");
+            /* R103: "●"/"±" 点阵字库缺失, 分别改用 ">"/"+" */
+            ? "> 微调 A/B 点  单击 +2s / 长按扫段  同步试听  播放/停止 确定"
+            : (s_edit ? "> 编辑中 VOL+ 开/关  播放/停止 完成"
+                      : "VOL+/方向 选动作  播放 标记/进入  停止 返回");
         display_show_ab_menu(lv->title, lines, lv->count, lv->sel,
                              s_edit, (int)s_ab_scrub,
                              audio_player_ab_a_ms(), audio_player_ab_b_ms(),
@@ -238,8 +240,9 @@ static void menu_render(void)
             snprintf(lines[i], sizeof(lines[i]), "%s %s", mark, it->label);
         }
     }
+    /* R103: "●"/"±" 点阵字库缺失, 分别改用 ">"/"+" */
     const char *hint = s_edit
-        ? "● 编辑中 VOL± 调值 播放/停止 完成"
+        ? "> 编辑中 VOL+ 调值 播放/停止 完成"
         : "PREV/NEXT/VOL 移动 播放 进入 停止 返回";
     display_show_menu(lv->title, lines, lv->count, lv->sel, hint);
 }

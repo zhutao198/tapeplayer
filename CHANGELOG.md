@@ -53,3 +53,30 @@
   - `display_update()` 持锁路径直接调 `menu_apply_nolock()`(不绕标志, 无延迟)
 - 实测: ✅ **卡死消失**(menu_open ENTER→EXIT 正常, 无 task_wdt), 歌曲播放正常, 菜单可进
 - 遗留: 菜单中文仍空白(点阵已禁用); browse 子菜单走 LVGL 中文路径渲染出"二维码"乱码
+
+---
+
+## R104 [2026-09-04] 主菜单中文显示成功(方案C: LVGL canvas) + 修复退出菜单黑屏
+- 文件: `main/display.cpp`, `main/menu.cpp`; 新增工具 `debug/_check_font_cover.py`
+- **中文显示落点确定(方案 C)**: 前两个落点均已被证伪——
+  (1) flush 外直接 `esp_lcd_panel_draw_bitmap` → BREAK 崩溃(抢 SPI 总线)
+  (2) flush 内覆盖 px_map(shadow 帧缓冲+掩码) → TG1WDT 反复重启
+  最终方案: **点阵画进 `lv_canvas` 的 PSRAM buffer(纯内存写), 由 LVGL 当普通
+  图像对象 flush 出去**。不碰 SPI / 不碰 draw_buf 内部 / 不额外调 draw_bitmap。
+- 实现要点:
+  - 新增 `cjk_canvas_init/clear/text()`, canvas 320x240 RGB565, 在 `ui_create()` 之后
+    创建以保证位于最顶层
+  - **字节序**: canvas buffer 存 LVGL **原生** RGB565(不做 SWAP16),
+    由 `flush_cb` 对整帧统一 SWAP, 与 LVGL 其它内容一致
+  - `menu_apply_nolock()` 改画 canvas; 非菜单态/退出菜单时隐藏 canvas
+- **字库覆盖率校验**(`debug/_check_font_cover.py`): 字库 6870 字符
+  (ASCII/符号 95 + 汉字 6775, U+0020~U+9FA0)。菜单文案 107 种字符**汉字 100% 覆盖**,
+  仅缺 4 个符号 `» ● ± ·` → 已替换为 `* > +`(否则显示空心方框)
+- **修复退出菜单黑屏**: `menu_apply_nolock()` 会把 `g_player` 设为 HIDDEN,
+  退出时若只隐藏 canvas 则屏幕无可见对象。且不能依赖 `display_update` 里的
+  `ui_show_player()`——它有**指纹节流**, 退出菜单时状态未变(同曲/同位/仍 STOPPED)
+  指纹相同直接 return, player 会一直黑到按 PLAY 改变状态为止。
+  改为在 lvgl_task 消费 `s_menu_close_pending` 时**显式调 `ui_show_player()`**。
+- 实测: ✅ 主菜单中文正确显示; ✅ 无反复重启/无卡死; 退出黑屏修复待烧录验证
+- 待办: 铺开到曲名 `lbl_track` / browse 文件名 / A-B 复读 / OTA 等其余中文 label
+  (browse 目前仍走 LVGL 字体路径 -> 中文渲染为"二维码"乱码)
