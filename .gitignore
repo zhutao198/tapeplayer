@@ -55,6 +55,10 @@ __MACOSX/
 .opencode/
 .workbuddy/
 
+# Graphify 知识图谱产物（本地生成，禁止入库）
+graphify-out/
+.codebuddy/skills/graphify/
+
 # 本地工具脚本
 poller.ps1
 
@@ -64,3 +68,49 @@ poller.ps1
 secrets/
 *.pem
 *.key
+
+# ===================================================================
+# 历史调试垃圾（R108 收尾由 AI 整理，禁止误提交）
+# 这些多为开发过程中临时验证脚本/中间产物，无长期价值
+# ===================================================================
+
+# 调试脚本/中间产物目录
+debug/
+tests/
+_play_test/
+ui_c_port/
+memory/
+
+# 根目录临时调试文件（散落的历史 _* 脚本与日志）
+_r1*.txt
+_r1*_msg.txt
+_r107_msg.txt
+build_log.txt
+flash_log.txt
+ui_preview.html              # 旧版预览(已被 ui_preview_v2.html 取代)
+ab_display_preview.html
+
+# tools/ 下的临时调试脚本（保留正式脚本，挡 _ 前缀临时件）
+tools/_*.bat
+tools/_*.py
+
+# main/ 下临时验证源
+main/_tmp_*.c
+
+# 设计稿源图/截图等衍生素材（若需保留可移出 docs 或显式 add）
+docs/_shot_*.png
+docs/ab_menu_c_sample.cpp
+docs/ab_repeat_spec.md
+docs/ui_html_to_c_map.md
+docs/SD.png
+docs/SD_mask.png
+docs/SD卡插入.webp
+docs/UI设计草图 - 最终.jpg
+docs/UI设计草图.jpg
+docs/UI设计草图细节.jpg
+docs/这是什么文档.txt
+hardware/2.4寸_ST7789_240x320/
+hardware/V1/硬件清单1.xlsx
+tools/cjk.ttf
+tools/_dbg1_err.txt
+ui_preview.html
