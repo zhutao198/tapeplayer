@@ -125,7 +125,7 @@ static uint16_t *s_cjk_canvas_buf = NULL;
 static lv_obj_t *s_track_canvas     = NULL;
 static uint16_t *s_track_canvas_buf = NULL;
 #define TRACK_CANVAS_X  (8)
-#define TRACK_CANVAS_Y  (56)
+#define TRACK_CANVAS_Y  (24)
 #define TRACK_CANVAS_W  (DISPLAY_WIDTH - 2 * 8)   /* 304 */
 #define TRACK_CANVAS_H  (18)
 
@@ -166,6 +166,9 @@ typedef struct { lv_obj_t *btn; lv_obj_t *icon; lv_obj_t *lab; } key_btn_t;
 static key_btn_t s_keys[6];
 static const char *KEY_ICONS[6] = {"<<", ">", ">>", "[]", "<|", "|>"};
 static const char *KEY_LABELS[6] = {"快退", "播放", "快进", "停止", "上首", "下首"};
+static lv_obj_t *s_st_spk = NULL;   // 状态栏喇叭图标
+static lv_obj_t *s_st_vol = NULL;   // 状态栏音量数字
+static lv_obj_t *s_nor_badge = NULL; // NOR 徽章
 static lv_obj_t *s_play_tri = NULL;
 static lv_obj_t *s_pause_l = NULL;
 static lv_obj_t *s_pause_r = NULL;
@@ -959,24 +962,24 @@ static void ui_create(void)
     /* P1-UI: 盒壳静态背景图 (渐变壳+花生跑道+磁带窗线圈), 296x96 */
     lv_obj_t *tape_bg = lv_img_create(g_player);
     lv_img_set_src(tape_bg, &cassette_bg_dsc);
-    lv_obj_set_pos(tape_bg, 12, 42);
+    lv_obj_set_pos(tape_bg, 12, 64);
     lv_obj_clear_flag(tape_bg, LV_OBJ_FLAG_CLICKABLE);
 
     /* P1-UI: 64px 卷轴, 对准盒壳背景图中的轮毂中心 (左中心 x=57, 右中心 x=263, y=90) */
     reel_l = lv_img_create(g_player);
     lv_img_set_src(reel_l, &reel_frame_dsc[0]);
-    lv_obj_set_pos(reel_l, 25, 58);   /* 57-32, 90-32 */
+    lv_obj_set_pos(reel_l, 25, 80);   /* 57-32, 112-32 */
     lv_obj_clear_flag(reel_l, LV_OBJ_FLAG_CLICKABLE);
 
     reel_r = lv_img_create(g_player);
     lv_img_set_src(reel_r, &reel_frame_dsc[0]);
-    lv_obj_set_pos(reel_r, 231, 58);  /* 263-32, 90-32 */
+    lv_obj_set_pos(reel_r, 231, 80);  /* 263-32, 112-32 */
     lv_obj_clear_flag(reel_r, LV_OBJ_FLAG_CLICKABLE);
 
-    /* 状态栏: 左=状态/曲目/模式  右=图形电量+音量 */
+    /* 状态栏: 状态/曲目/模式/NOR | SD+电池 */
     lbl_status = lv_label_create(g_player);
     lv_obj_set_pos(lbl_status, M, 6);
-    lv_obj_set_width(lbl_status, W - 2 * M - 90);  /* P1-UI: 加宽防换行 */
+    lv_obj_set_width(lbl_status, 210);
     lv_label_set_long_mode(lbl_status, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_status, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl_status, UI_FONT, 0);
@@ -1066,7 +1069,7 @@ static void ui_create(void)
     sd_icon_box = lv_obj_create(g_player);
     lv_obj_set_size(sd_icon_box, 24, 14);
     lv_obj_align_to(sd_icon_box, batt_charge, LV_ALIGN_OUT_LEFT_MID, -6, 0);
-    lv_obj_set_style_bg_color(sd_icon_box, lv_color_hex(0x33405e), 0);  // 默认弹出(灰)
+    lv_obj_set_style_bg_color(sd_icon_box, lv_color_hex(0x33405e), 0);  /* 默认弹出(灰) */
     lv_obj_set_style_border_width(sd_icon_box, 0, 0);
     lv_obj_set_style_radius(sd_icon_box, 2, 0);
     lv_obj_set_style_pad_all(sd_icon_box, 0, 0);
@@ -1080,7 +1083,7 @@ static void ui_create(void)
     lv_obj_set_style_line_rounded(sd_line, false, 0);
     lv_obj_clear_flag(sd_line, LV_OBJ_FLAG_CLICKABLE);
     sd_icon_lbl = lv_label_create(sd_icon_box);
-    lv_label_set_text(sd_icon_lbl, "");   // 默认弹出: 空
+    lv_label_set_text(sd_icon_lbl, "");   /* 默认弹出: 空 */
     lv_obj_center(sd_icon_lbl);
     lv_obj_set_style_text_color(sd_icon_lbl, lv_color_hex(0x0a0e17), 0);
     lv_obj_set_style_text_font(sd_icon_lbl, UI_FONT, 0);
@@ -1103,7 +1106,7 @@ static void ui_create(void)
 
     /* 文件名 (大号, 循环滚动) */
     lbl_track = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_track, M, 24);  /* P1-UI: 上移 */
+    lv_obj_set_pos(lbl_track, M, 24);  /* P2-UI: 移到磁带盒上方 */
     lv_obj_set_width(lbl_track, W - 2 * M);
     lv_label_set_long_mode(lbl_track, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_track, lv_color_white(), 0);
@@ -1111,7 +1114,7 @@ static void ui_create(void)
 
     /* R108: 格式/品牌行 (文件名下方): FLAC|44KHZ|16bit|0918kbps + SQ */
     lbl_fmt = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_fmt, M, 144);  /* P1-UI: 移到磁带区下方 */
+    lv_obj_set_pos(lbl_fmt, M, 44);  /* P2-UI: 曲名下方, 盒壳上方 */
     lv_obj_set_width(lbl_fmt, W - 2 * M);
     lv_label_set_long_mode(lbl_fmt, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(lbl_fmt, lv_color_hex(0x8a93a6), 0);
@@ -1119,17 +1122,17 @@ static void ui_create(void)
 
     /* 时间行: 当前(左) / 档位(中) / 总时长(右) */
     lbl_cur = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_cur, M, 164);  /* P1-UI */
+    lv_obj_set_pos(lbl_cur, M, 164);  /* P2-UI */
     lv_obj_set_style_text_color(lbl_cur, lv_color_hex(0x8a93a6), 0);
     lv_obj_set_style_text_font(lbl_cur, UI_FONT, 0);
 
     lbl_gear = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_gear, W / 2 - 22, 164);  /* P1-UI */
+    lv_obj_set_pos(lbl_gear, W / 2 - 22, 164);  /* P2-UI */
     lv_obj_set_style_text_color(lbl_gear, lv_color_hex(0xf5a623), 0);
     lv_obj_set_style_text_font(lbl_gear, UI_FONT, 0);
 
     lbl_dur = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_dur, W - M, 164);  /* P1-UI */
+    lv_obj_set_pos(lbl_dur, W - M, 164);  /* P2-UI */
     lv_obj_set_style_text_align(lbl_dur, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_dur, lv_color_hex(0x8a93a6), 0);
     lv_obj_set_style_text_font(lbl_dur, UI_FONT, 0);
@@ -1137,7 +1140,7 @@ static void ui_create(void)
     /* 进度条 + 百分比 */
     bar_prog = lv_bar_create(g_player);
     lv_obj_set_size(bar_prog, W - 2 * M, 6);   /* P1-UI: 细进度条 */
-    lv_obj_set_pos(bar_prog, M, 182);
+    lv_obj_set_pos(bar_prog, M, 186);
     lv_bar_set_range(bar_prog, 0, 1000);
     lv_bar_set_value(bar_prog, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar_prog, lv_color_hex(0x16203a), 0);
@@ -1145,7 +1148,7 @@ static void ui_create(void)
     lv_obj_set_style_radius(bar_prog, 4, 0);
 
     lbl_percent = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_percent, W - M, 168);
+    lv_obj_set_pos(lbl_percent, -100, -100);  /* P1-UI: 移到屏幕外, 设计稿无百分比 */
     lv_obj_add_flag(lbl_percent, LV_OBJ_FLAG_HIDDEN);  /* P1-UI: 设计稿无百分比 */
     lv_obj_set_style_text_align(lbl_percent, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_percent, lv_color_white(), 0);
@@ -1838,6 +1841,12 @@ static void display_update_nolock(player_state_t state,
     lv_obj_set_style_line_color(vol_cone, vol_col, 0);
     int vol_clamped = volume < 0 ? 0 : (volume > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : volume);
     lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
+    /* 状态栏音量数字 */
+    if (s_st_vol) {
+        char vbuf[8];
+        snprintf(vbuf, sizeof(vbuf), "%02d", vol_clamped);
+        lv_label_set_text(s_st_vol, vbuf);
+    }
 
     /* 文件名: R105 改走曲名 canvas 点阵。
        R102 原用 cjk_request_text() 入队 + flush_cb 消费, 但该队列机制因导致

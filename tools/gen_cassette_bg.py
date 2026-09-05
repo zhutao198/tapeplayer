@@ -7,6 +7,8 @@ from PIL import Image, ImageDraw
 import struct, os
 
 W, H = 296, 96
+SS = 2               # 2x 超采样抗锯齿
+HW, HH = W*SS, H*SS  # 高分辨率工作尺寸
 SHELL_RADIUS = 10
 
 # 颜色 (设计稿 V8)
@@ -20,19 +22,19 @@ HUB_BG      = (10, 10, 10)      # #0a0a0a
 TAPE_WIN_BG = (5, 8, 16)        # #050810
 SCREEN_BG   = (10, 14, 23)      # #0a0e17
 
-# 轮毂参数
-HUB_R = 33           # 轮毂窗半径
-HUB_LX = 45          # 左轮毂中心 x (相对图左)
-HUB_RX = W - 45      # 右轮毂中心 x
-HUB_CY = H // 2      # 轮毂中心 y
+# 轮毂参数 (高分辨率坐标)
+HUB_R = 33 * SS
+HUB_LX = 45 * SS
+HUB_RX = HW - 45 * SS
+HUB_CY = HH // 2
 
 # 跑道参数
-TRACK_R = 39         # 跑道半圆半径 (比轮毂大 6px)
+TRACK_R = 39 * SS
 
 # 磁带窗参数
-WIN_W, WIN_H = 104, 26
-WIN_X = (W - WIN_W) // 2
-WIN_Y = (H - WIN_H) // 2
+WIN_W, WIN_H = 104 * SS, 26 * SS
+WIN_X = (HW - WIN_W) // 2
+WIN_Y = (HH - WIN_H) // 2
 
 
 def make_gradient(w, h, top, mid, bot):
@@ -55,11 +57,12 @@ def make_gradient(w, h, top, mid, bot):
 
 
 def draw_peanut(draw, cx_l, cx_r, cy, r, color):
-    """花生形/哑铃形: 两半圆 + 两平行线连接"""
+    """花生形/哑铃形: 两半圆 + 两平行线连接 (2x分辨率)"""
+    lw = 2  # 线宽 (2x)
     # 上平行线
-    draw.rectangle([cx_l, cy - r, cx_r, cy - r + 1], fill=color)
+    draw.rectangle([cx_l, cy - r, cx_r, cy - r + lw], fill=color)
     # 下平行线
-    draw.rectangle([cx_l, cy + r - 1, cx_r, cy + r], fill=color)
+    draw.rectangle([cx_l, cy + r - lw, cx_r, cy + r], fill=color)
     # 左半圆 (向左凸出)
     draw.pieslice([cx_l - r, cy - r, cx_l + r, cy + r], 90, 270, fill=color)
     # 右半圆 (向右凸出)
@@ -84,55 +87,58 @@ def draw_coil(draw, cx, cy, side, n=7):
 
 
 def main():
-    # 1. 底色 (屏幕背景色, 圆角外区域)
-    img = Image.new("RGB", (W, H), SCREEN_BG)
+    # 1. 底色 (屏幕背景色, 圆角外区域) — 高分辨率
+    img = Image.new("RGB", (HW, HH), SCREEN_BG)
 
     # 2. 盒壳渐变 (圆角矩形 mask)
-    grad = make_gradient(W, H, SHELL_LIGHT, SHELL_MID, SHELL_DARK)
-    mask = Image.new("L", (W, H), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, W - 1, H - 1], radius=SHELL_RADIUS, fill=255)
+    grad = make_gradient(HW, HH, SHELL_LIGHT, SHELL_MID, SHELL_DARK)
+    mask = Image.new("L", (HW, HH), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, HW - 1, HH - 1], radius=SHELL_RADIUS * SS, fill=255)
     img.paste(grad, (0, 0), mask)
 
     draw = ImageDraw.Draw(img)
 
     # 3. 盒壳外缘描边 (深色)
-    draw.rounded_rectangle([0, 0, W - 1, H - 1], radius=SHELL_RADIUS,
-                           outline=SHELL_EDGE, width=1)
+    draw.rounded_rectangle([0, 0, HW - 1, HH - 1], radius=SHELL_RADIUS * SS,
+                           outline=SHELL_EDGE, width=2)
     # 顶部高光
-    draw.arc([1, 1, W - 2, SHELL_RADIUS * 2], 180, 360, fill=SHELL_GLOW, width=1)
+    draw.arc([2, 2, HW - 4, SHELL_RADIUS * 2 * SS], 180, 360, fill=SHELL_GLOW, width=2)
 
     # 4. 花生形跑道 (在盒壳之上, 轮毂之下)
     draw_peanut(draw, HUB_LX, HUB_RX, HUB_CY, TRACK_R, TRACK_COLOR)
     # 跑道顶部高光
     draw.line([HUB_LX, HUB_CY - TRACK_R, HUB_RX, HUB_CY - TRACK_R],
-              fill=(SHELL_LIGHT[0] // 2 + 60, SHELL_LIGHT[1] // 2 + 60, SHELL_LIGHT[2] // 2 + 60), width=1)
+              fill=(SHELL_LIGHT[0] // 2 + 60, SHELL_LIGHT[1] // 2 + 60, SHELL_LIGHT[2] // 2 + 60), width=2)
 
     # 5. 左右轮毂窗 (黑色圆 + 内阴影)
     for cx in (HUB_LX, HUB_RX):
         # 黑色内盘
         draw.ellipse([cx - HUB_R, HUB_CY - HUB_R, cx + HUB_R, HUB_CY + HUB_R], fill=HUB_BG)
         # 内圈高光 (顶部)
-        draw.arc([cx - HUB_R + 2, HUB_CY - HUB_R + 2, cx + HUB_R - 2, HUB_CY + HUB_R - 2],
-                 200, 340, fill=(60, 60, 70), width=1)
+        draw.arc([cx - HUB_R + 4, HUB_CY - HUB_R + 4, cx + HUB_R - 4, HUB_CY + HUB_R - 4],
+                 200, 340, fill=(60, 60, 70), width=2)
         # 外缘描边
         draw.ellipse([cx - HUB_R, HUB_CY - HUB_R, cx + HUB_R, HUB_CY + HUB_R],
-                     outline=(30, 30, 40), width=1)
+                     outline=(30, 30, 40), width=2)
 
     # 6. 中央磁带窗
     draw.rounded_rectangle([WIN_X, WIN_Y, WIN_X + WIN_W, WIN_Y + WIN_H],
-                           radius=3, fill=TAPE_WIN_BG, outline=(10, 13, 24), width=1)
+                           radius=6, fill=TAPE_WIN_BG, outline=(10, 13, 24), width=2)
     # 窗内阴影
-    draw.rounded_rectangle([WIN_X + 1, WIN_Y + 1, WIN_X + WIN_W - 1, WIN_Y + WIN_H - 1],
-                           radius=2, outline=(0, 0, 0), width=1)
+    draw.rounded_rectangle([WIN_X + 2, WIN_Y + 2, WIN_X + WIN_W - 2, WIN_Y + WIN_H - 2],
+                           radius=4, outline=(0, 0, 0), width=2)
 
     # 7. 磁带窗内线圈已移除 (P1-UI-fix: 同心圆弧太突兀), 仅保留横向磁带线
 
     # 8. 磁带主线 (两条横向细线, 居中)
     tape_cy = WIN_Y + WIN_H // 2
-    line_y1 = tape_cy - 1
-    line_y2 = tape_cy + 5
+    line_y1 = tape_cy - 2
+    line_y2 = tape_cy + 10
     for ly, alpha_color in [(line_y1, (70, 85, 115)), (line_y2, (55, 70, 100))]:
-        draw.line([WIN_X + 8, ly, WIN_X + WIN_W - 8, ly], fill=alpha_color, width=1)
+        draw.line([WIN_X + 16, ly, WIN_X + WIN_W - 16, ly], fill=alpha_color, width=2)
+
+    # 9. LANCZOS 缩小到输出尺寸 (抗锯齿)
+    img = img.resize((W, H), Image.LANCZOS)
 
     # 9. 输出 C array (RGB565)
     out_path = os.path.join(os.path.dirname(__file__), "..", "main", "cassette_bg.h")
