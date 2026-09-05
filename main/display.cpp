@@ -22,6 +22,7 @@
 #include "font_partition.h"
 #include "audio_player.h"
 #include "esp_timer.h"
+#include "reel_img.h"  // R109c: 预烘焙红轮毂位图 (带 6 辐条, 旋转只转 1 个 img 对象)
 
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -315,7 +316,7 @@ void display_init(void)
 
     ui_create();
     cjk_canvas_init();   /* R103: 在 ui_create 之后创建, 保证 canvas 位于最顶层可覆盖其它屏 */
-    lv_timer_create(reel_anim_cb, 50, NULL);   // 磁带卷轴旋转动画 (50ms/帧)
+    lv_timer_create(reel_anim_cb, 33, NULL);   // 磁带卷轴旋转动画 (~30fps, 更顺)
     lv_timer_create(sd_toast_timer_cb, 100, NULL);  // 插拔提示显隐控制 (100ms)
     lv_timer_create(vol_hide_timer_cb, 200, NULL);  // 音量条停止调节 3s 后自动隐藏
     display_mem_report();                            // 启动即打印一次内存水位
@@ -831,61 +832,45 @@ void display_start_lvgl_task(void)
 /* ============================================================
  * LVGL UI 构建与模式切换
  * ============================================================ */
+/* R109c: 磁带红色轮毂 = 预烘焙位图 (reel_img.h, 40x40 RGB565, 带 6 辐条)。
+   用 lv_img 显示, 旋转时只转 1 个对象 (流畅), 辐条细节全保留。 */
 static void ui_reel_create(lv_obj_t *parent, lv_obj_t **reel, lv_align_t align, int x)
 {
-    *reel = lv_obj_create(parent);
-    lv_obj_set_size(*reel, 40, 40);
+    *reel = lv_img_create(parent);
+    lv_img_set_src(*reel, &reel_frame_dsc[0]);  /* 预渲染帧 0 (透明背景) */
     lv_obj_align(*reel, align, x, 86);
-    lv_obj_set_style_radius(*reel, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(*reel, lv_color_hex(0x16203a), 0);
-    lv_obj_set_style_border_color(*reel, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_border_width(*reel, 2, 0);
-    lv_obj_set_style_pad_all(*reel, 0, 0);
-    /* 以圆心为旋转中心 (transform_angle 单位为 0.1°) */
-    lv_obj_set_style_transform_pivot_x(*reel, 20, 0);
-    lv_obj_set_style_transform_pivot_y(*reel, 20, 0);
     lv_obj_clear_flag(*reel, LV_OBJ_FLAG_CLICKABLE);
-
-    /* 中心孔 */
-    lv_obj_t *hole = lv_obj_create(*reel);
-    lv_obj_set_size(hole, 10, 10);
-    lv_obj_center(hole);
-    lv_obj_set_style_radius(hole, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(hole, lv_color_hex(0x0a0e17), 0);
-    lv_obj_set_style_border_width(hole, 0, 0);
-    lv_obj_clear_flag(hole, LV_OBJ_FLAG_CLICKABLE);
-
-    /* 偏心标记点：旋转时可见 (模拟磁带卷轴绕线转动) */
-    lv_obj_t *mark = lv_obj_create(*reel);
-    lv_obj_set_size(mark, 7, 7);
-    lv_obj_align(mark, LV_ALIGN_TOP_MID, 0, 5);
-    lv_obj_set_style_radius(mark, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(mark, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_border_width(mark, 0, 0);
-    lv_obj_clear_flag(mark, LV_OBJ_FLAG_CLICKABLE);
 }
 
-/* 磁带卷轴旋转动画：根据播放状态决定方向与速度 */
+/* 磁带卷轴旋转动画：预渲染帧切换 (消除实时仿射计算卡顿) */
 static player_state_t s_reel_state = PLAYER_STATE_STOPPED;
 static int            s_reel_gear  = 0;
-static int32_t        s_reel_angle = 0;
+static int            s_reel_frame = 0;
+static float          s_reel_acc   = 0.0f;  /* 帧累积器 (保证低速平滑) */
 
 static void reel_anim_cb(lv_timer_t *t)
 {
     (void)t;
-    int32_t delta = 0;
+    /* 速度 (帧/tick, timer 周期 33ms):
+       PLAYING 慢速 ~0.25 帧/tick ≈ 7.5 帧/s ≈ 0.31 圈/s (磁带轮正常观感) */
+    float speed = 0.0f;
     switch (s_reel_state) {
-    case PLAYER_STATE_PLAYING:      delta =  30; break; /* 正常：正向匀速 */
-    case PLAYER_STATE_FAST_FORWARD: delta = 200 * (1 + s_reel_gear); break; /* 快进：更快正向 */
-    case PLAYER_STATE_REWIND:       delta = -200 * (1 + s_reel_gear); break; /* 快退：反向 */
-    default: delta = 0; break; /* 暂停 / 停止：静止 */
+    case PLAYER_STATE_PLAYING:      speed =  0.25f; break;
+    case PLAYER_STATE_FAST_FORWARD: speed =  3.0f * (1 + s_reel_gear); break;  /* 快进：明显更快 */
+    case PLAYER_STATE_REWIND:       speed = -3.0f * (1 + s_reel_gear); break;  /* 快退：反向 */
+    default: speed = 0.0f; break;                                              /* 暂停/停止：静止 */
     }
-    if (delta != 0) {
-        s_reel_angle += delta;
-        if (s_reel_angle >= 3600) s_reel_angle -= 3600;
-        if (s_reel_angle < 0)     s_reel_angle += 3600;
-        lv_obj_set_style_transform_angle(reel_l, s_reel_angle, 0);
-        lv_obj_set_style_transform_angle(reel_r, s_reel_angle, 0);
+    if (speed != 0.0f) {
+        s_reel_acc += speed;
+        int adv = (int)s_reel_acc;
+        if (adv != 0) {
+            s_reel_acc -= adv;
+            s_reel_frame = (s_reel_frame + adv) % REEL_FRAME_COUNT;
+            if (s_reel_frame < 0) s_reel_frame += REEL_FRAME_COUNT;
+            const lv_img_dsc_t *f = &reel_frame_dsc[s_reel_frame];
+            lv_img_set_src(reel_l, f);
+            lv_img_set_src(reel_r, f);
+        }
     }
 }
 
@@ -903,7 +888,29 @@ static void ui_create(void)
     lv_obj_set_style_pad_all(g_player, 0, 0);
     lv_obj_clear_flag(g_player, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* 磁带卷轴装饰 (左右两圆) */
+    /* R109: 磁带盒壳 (浅蓝紫圆角矩形, 磁带外框) */
+    lv_obj_t *tape_case = lv_obj_create(g_player);
+    lv_obj_set_size(tape_case, W - 2 * M, 52);
+    lv_obj_align(tape_case, LV_ALIGN_TOP_MID, 0, 78);
+    lv_obj_set_style_bg_color(tape_case, lv_color_hex(0x2e2f4e), 0); /* 浅蓝紫 */
+    lv_obj_set_style_border_color(tape_case, lv_color_hex(0x4a4d7a), 0);
+    lv_obj_set_style_border_width(tape_case, 1, 0);
+    lv_obj_set_style_radius(tape_case, 8, 0);
+    lv_obj_set_style_pad_all(tape_case, 0, 0);
+    lv_obj_clear_flag(tape_case, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_move_to_index(tape_case, 0); /* 置于磁带区最底层 (v9 原生 API) */
+
+    /* R109: 磁带中央窗 (深色拉长矩形, 左右轮毂之间) */
+    lv_obj_t *tape_window = lv_obj_create(g_player);
+    lv_obj_set_size(tape_window, 120, 30);
+    lv_obj_align(tape_window, LV_ALIGN_TOP_MID, 0, 88);
+    lv_obj_set_style_bg_color(tape_window, lv_color_hex(0x0a0e17), 0);
+    lv_obj_set_style_border_width(tape_window, 0, 0);
+    lv_obj_set_style_radius(tape_window, 3, 0);
+    lv_obj_set_style_pad_all(tape_window, 0, 0);
+    lv_obj_clear_flag(tape_window, LV_OBJ_FLAG_CLICKABLE);
+
+    /* 磁带卷轴装饰 (左右红色轮毂, 纯 lv_obj 拼装) */
     ui_reel_create(g_player, &reel_l, LV_ALIGN_TOP_LEFT,  M + 6);
     ui_reel_create(g_player, &reel_r, LV_ALIGN_TOP_RIGHT, -(M + 6));
 
