@@ -12,8 +12,8 @@
 import math
 from PIL import Image, ImageDraw
 
-S = 40        # 尺寸
-FRAMES = 24   # 帧数 (每 360/24 = 15° 一帧)
+S = 64        # 尺寸 (P1-UI: 48->64, 匹配设计稿大轮毂)
+FRAMES = 48   # 帧数 (7.5°/帧)
 
 def rgb565(r, g, b):
     r5 = (r >> 3) & 0x1F
@@ -21,23 +21,41 @@ def rgb565(r, g, b):
     b5 = (b >> 3) & 0x1F
     return (r5 << 11) | (g6 << 5) | b5
 
-RED   = (0xD6, 0x45, 0x45)
-BLACK = (0x11, 0x13, 0x17)
-GREY  = (0x2A, 0x2D, 0x33)
+RED   = (0xE0, 0x20, 0x20)   # 设计稿亮红
+RED2  = (0xA0, 0x10, 0x10)   # 深红
+BLACK = (0x0A, 0x0A, 0x0A)
+HUB_LIGHT = (0xD0, 0xD0, 0xD0)
+HUB_DARK  = (0x40, 0x40, 0x48)
 
 def make_reel():
-    """画一张竖直的红轮毂 RGBA 图 (背景透明)。"""
+    """画一张红轮毂 RGBA 图 (背景透明), 64px 版。"""
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.ellipse([0, 0, S - 1, S - 1], fill=(*RED, 255))          # 外红圈
-    d.ellipse([7, 7, S - 8, S - 8], fill=(*BLACK, 255))        # 黑内盘
     cx = cy = S / 2
-    for i in range(6):                                          # 6 条红辐条
+    # 外红圈 (粗环)
+    d.ellipse([0, 0, S - 1, S - 1], fill=(*RED, 255))
+    # 黑内盘
+    inner = 9
+    d.ellipse([inner, inner, S - 1 - inner, S - 1 - inner], fill=(*BLACK, 255))
+    # 6 条矩形辐条 (红色渐变感: 用粗线)
+    spoke_w = 5
+    spoke_inner = 14
+    spoke_outer = 26
+    for i in range(6):
         a = math.radians(i * 60)
-        x0 = cx + 9 * math.sin(a); y0 = cy - 9 * math.cos(a)
-        x1 = cx + 13 * math.sin(a); y1 = cy - 13 * math.cos(a)
-        d.line([(x0, y0), (x1, y1)], fill=(*RED, 255), width=3)
-    d.ellipse([16, 16, 23, 23], fill=(*GREY, 255))             # 中心 hub
+        x0 = cx + spoke_inner * math.sin(a); y0 = cy - spoke_inner * math.cos(a)
+        x1 = cx + spoke_outer * math.sin(a); y1 = cy - spoke_outer * math.cos(a)
+        d.line([(x0, y0), (x1, y1)], fill=(*RED, 255), width=spoke_w)
+    # 金属轴心 (径向渐变模拟: 多层圆)
+    hub_r = 12
+    for r in range(hub_r, 0, -1):
+        t = r / hub_r
+        cr = int(HUB_LIGHT[0] * (1 - t) + HUB_DARK[0] * t)
+        cg = int(HUB_LIGHT[1] * (1 - t) + HUB_DARK[1] * t)
+        cb = int(HUB_LIGHT[2] * (1 - t) + HUB_DARK[2] * t)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(cr, cg, cb, 255))
+    # 中心螺丝孔
+    d.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=(*BLACK, 255))
     return img
 
 def to_rgb565a8(img):
@@ -66,7 +84,7 @@ for f in range(FRAMES):
     frames_bytes.append(to_rgb565a8(rot))
 
 with open("main/reel_img.h", "w", encoding="utf-8") as fh:
-    fh.write("/* 自动生成: tools/gen_reel.py (红轮毂 40x40 RGB565A8 透明, %d 帧预渲染, LVGL v9) */\n" % FRAMES)
+    fh.write("/* 自动生成: tools/gen_reel.py (红轮毂 64x64 RGB565A8 透明, %d 帧预渲染, LVGL v9) */\n" % FRAMES)
     fh.write("#pragma once\n")
     fh.write("#include \"lvgl.h\"\n")
     fh.write("#define REEL_FRAME_COUNT %d\n" % FRAMES)

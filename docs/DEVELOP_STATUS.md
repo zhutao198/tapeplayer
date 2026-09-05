@@ -132,3 +132,32 @@ PRD V2.0 扩展   ░░░░░░░░░░  规划 (蓝牙方案已出 BT_
 
 **作者**：CodeBuddy（由 R047 评审 + working-tree 现状核对生成）  
 **数据来源**：PRD.md、main/ 源代码、git log（R001~R047）、R047 全量代码评审报告
+
+---
+
+## R109 — 卷轴动画流畅化 + UI v2 重构（2026-09-05）
+
+### 卷轴动画卡顿修复（已验收"动画还可以"）
+- **根因排查链**：逐一排除异步 flush（回退阻塞）、双缓冲（回退单缓冲）、LVGL tick 驱动（改硬件 esp_timer @1ms）、跨任务锁竞争（flag-consumption 模式）、全屏 invalidate、电池 ADC（加 5 秒缓存）、SPI 速度（10→20MHz）、任务优先级（5→8）
+- **最终方案**：卷轴动画从 LVGL 定时器移到 lvgl_task 循环，用 esp_timer_get_time() 硬件时间戳驱动，在 lv_timer_handler() 之前切帧；帧率 30fps（33ms），48 帧/64px/step 恒±1
+- **已验证做不通**：异步 flush、双缓冲（均回退后仍卡）、FreeType 运行时渲染（死机）、I2S ALC 音量（崩溃）、闭源 PV-MP3 解码器（确定性崩溃）
+
+### UI v2 重构（对齐 docs/ui_preview_v2.html）
+- **P1 盒壳+布局**：PIL 生成 cassette_bg.h（296x96 RGB565 小端，浅蓝紫渐变壳+花生跑道+轮毂窗+磁带窗，已移除突兀线圈）；卷轴 48→64px（红圈+6辐条+金属轴心+螺丝孔）；全屏布局重排（磁带区 y=42~138，格式行 y=144，时间行 y=164，进度条 y=182）；隐藏 Now Playing 副标题和百分比
+- **P1 修复**：盒壳 RGB565 字节序（高字节在前→低字节在前）；状态栏 label 加宽 168→214px 防换行；percent 残留"0"（设空文本）
+- **P2 底部 6 键指示条**：快退/播放/快进/停止/上首/下首，纯几何图标（lv_line 闭合三角形 + lv_obj 矩形/竖线），无文字；当前状态深绿底(#0d3b1e)+亮绿图标(#4ade80)+绿边框高亮；播放/暂停图标显隐切换
+- **P2 待做**：状态栏图标化（音量/循环/NOR 徽章）
+
+### 关键参数
+- 显示缓冲：40 行 partial，单缓冲阻塞 flush，max_transfer_sz=32752
+- lvgl_task：优先级 8，Core 1，栈 16384 字，5ms 循环
+- SPI 时钟：20MHz（验证稳定无花屏）
+- 电池读取：5 秒缓存
+
+### 变更文件
+- main/display.cpp — 动画驱动+UI重构+按键条
+- main/reel_img.h — 64px 48帧卷轴
+- main/cassette_bg.h — 盒壳背景（新增）
+- main/power_mgmt.cpp — 电池 ADC 5秒缓存
+- tools/gen_reel.py — 卷轴生成器
+- tools/gen_cassette_bg.py — 盒壳生成器（新增）

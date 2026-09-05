@@ -111,6 +111,13 @@ int power_mgmt_get_battery_percent(void)
 {
     if (!s_adc_handle) return 100;   // ADC 未就绪, 假定满电
 
+    /* P1-fix: ADC 读电池需 ~1-5ms 阻塞, 缓存 5 秒避免 display_update 每秒阻塞 */
+    static int s_cached_pct = 100;
+    static uint64_t s_last_read_us = 0;
+    uint64_t now = esp_timer_get_time();
+    if (now - s_last_read_us < 5000000) return s_cached_pct;
+    s_last_read_us = now;
+
     int raw = 0;
     if (adc_oneshot_read(s_adc_handle, ADC_CHANNEL_0, &raw) != ESP_OK) {
         return 100;
@@ -120,6 +127,7 @@ int power_mgmt_get_battery_percent(void)
     int pct = (int)((v_bat - BAT_V_MIN) / (BAT_V_MAX - BAT_V_MIN) * 100.0f);
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
+    s_cached_pct = pct;
     return pct;
 }
 
