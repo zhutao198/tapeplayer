@@ -63,7 +63,7 @@ void audio_player_seek(int seconds);
 void audio_player_seek_ms(int ms);
 void audio_player_scrub_seek(int ms);
 void audio_player_scrub_enter(void);
-void audio_player_scrub_exit(void);
+void audio_player_scrub_exit(bool resume);  /* R111: resume=false时暂停态退出不resume */
 
 /**
  * @brief 获取当前播放位置 (毫秒)
@@ -133,6 +133,8 @@ bool audio_player_is_ab_enabled(void);
 int  audio_player_ab_a_ms(void);
 /** B 点位置(ms)，未标记返回 -1 */
 int  audio_player_ab_b_ms(void);
+/** R111: A-B 复读遍数计数 */
+int  audio_player_ab_loop_count(void);
 /** 直接设置 A 点位置(ms)（菜单微调用；负无效；若越过 B 则 B 顺延） */
 void audio_player_set_ab_a_ms(int ms);
 /** 直接设置 B 点位置(ms)（菜单微调用；自动保证 B>A+1000ms） */

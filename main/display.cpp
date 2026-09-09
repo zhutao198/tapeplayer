@@ -65,6 +65,20 @@ static char   s_menu_lines[BROWSE_VISIBLE_LINES][24];
 static int    s_menu_count = 0;
 static int    s_menu_sel = 0;
 static char   s_menu_hint[64];
+/* R111: A-B 菜单缓存（main只写缓存+设标志, lvgl_task持锁消费） */
+static bool   s_ab_menu_visible = false;
+static char   s_ab_title[64];
+static char   s_ab_lines[4][24];
+static int    s_ab_count = 0;
+static int    s_ab_sel = 0;
+static bool   s_ab_edit = false;
+static int    s_ab_scrub = 0;
+static int    s_ab_a_ms = -1;
+static int    s_ab_b_ms = -1;
+static bool   s_ab_on = false;
+static int    s_ab_total_ms = 0;
+static int    s_ab_cur_ms = 0;
+static char   s_ab_hint[128];
 
 /* R098f: display_init 提前到本文件靠前位置, 其依赖的下列函数定义在文件后段,
    此处补前向声明以满足编译 (均为本编译单元内函数)。 */
@@ -86,6 +100,7 @@ static void display_update_nolock(player_state_t state, const char *track_name,
 
 /* R102-fix: 菜单真正的 LVGL 绘制(仅供 lvgl_task 持锁区内调用, 前向声明见 menu_apply_nolock) */
 static void             menu_apply_nolock(void);
+static void             ab_menu_apply_nolock(void);  /* R111 */
 /* R103: 点阵 canvas (LVGL 原生位图路径), 在 display_init 中 ui_create 之后调用 */
 static void             cjk_canvas_init(void);
 static void             ui_show_msg(const char *msg);
@@ -132,6 +147,8 @@ static uint16_t *s_track_canvas_buf = NULL;
 /* LVGL UI 对象 */
 static lv_obj_t *g_player = NULL;   // 播放界面容器
 static lv_obj_t *g_msg    = NULL;   // 居中消息标签 (splash/提示)
+static lv_obj_t *s_splash = NULL;   // R111: TAPEBOOK 启动画面容器
+static lv_obj_t *s_splash_loading = NULL; // R111: 启动画面加载提示
 
 /* SD-OTA 升级界面 (R049c 真实化) */
 static lv_obj_t *g_ota     = NULL;  // 升级界面容器
@@ -154,7 +171,9 @@ static lv_obj_t *ota_hint  = NULL;  // 底部操作提示
 static lv_obj_t *lbl_status  = NULL; // 状态栏: 播放态/曲目/模式/电池/音量
 static lv_obj_t *lbl_title   = NULL; // "正在播放" 小标题
 static lv_obj_t *lbl_track   = NULL; // 当前曲目名 (大号, 滚动)
-static lv_obj_t *lbl_fmt     = NULL; // R108: 格式/品牌行 (FLAC|44KHZ|16bit|0918kbps SQ)
+static lv_obj_t *lbl_fmt     = NULL; // R108: 格式/品牌行 (FLAC|44KHZ|16bit|0918kbps)
+static lv_obj_t *s_sq_badge  = NULL; // R111: SQ 音质徽章 (紫底白字)
+static lv_obj_t *s_ab_badge  = NULL; // R111: A-B 复读徽章 (橙底白字)
 static lv_obj_t *lbl_cur     = NULL; // 当前时间 (左)
 static lv_obj_t *lbl_gear    = NULL; // 加速档位 (中部, 加速时显示)
 static lv_obj_t *lbl_dur     = NULL; // 总时长 (右)
@@ -185,7 +204,8 @@ static lv_obj_t *batt_charge = NULL; // 充电标记 "充"
 static lv_obj_t *vol_box     = NULL; // 音量容器 (右侧竖向: 扬声器图标 + 竖向音量条)
 static lv_obj_t *vol_spk_box = NULL; // 扬声器箱体 (小矩形)
 static lv_obj_t *vol_cone    = NULL; // 扬声器锥体 (三角线, 指向右)
-static lv_obj_t *vol_lvl     = NULL; // 竖向音量条 (level 0..14)
+static lv_obj_t *vol_lvl     = NULL; // 音量条 (level 0..14)
+static lv_obj_t *vol_num     = NULL; // R111: 音量数字 label
 static lv_obj_t *lbl_seek    = NULL; // 快进/快退 读秒（居中醒目）
 
 /* TF 卡状态图标与插拔提示 */
@@ -263,6 +283,7 @@ static volatile uint32_t s_main_tick_call_count = 0;  /* 诊断：调用次数 *
    与音量条同源——main_task 只设标志,lvgl_task 在持锁状态下调 LVGL,
    避免 main 直接调 ui_show_msg(裸 LVGL API) 与 lvgl_task 死锁→TWDT(R062 死锁回退)。 */
 static volatile bool s_msg_pending = false;
+static volatile bool s_show_splash_pending = false;  /* R111: 显示启动画面 */
 
 /* P1-fix: display_update flag-consumption cache (main->lvgl_task, 消除跨任务锁竞争) */
 typedef struct {
@@ -279,6 +300,11 @@ static volatile bool s_disp_update_pending = false;
 static esp_timer_handle_t s_lv_tick_timer = NULL;
 static void lv_tick_esp_cb(void *arg) { (void)arg; lv_tick_inc(1); }
 static char          s_msg_text[96] = {0};
+/* R111: A-B标记 toast (底部临时提示, 3秒自动消失) */
+static volatile bool s_toast_pending = false;
+static char          s_toast_text[64] = {0};
+static uint32_t      s_toast_hide_ms = 0;
+static lv_obj_t     *s_toast = NULL;
 /* R100: SD 图标/插拔提示/清消息返回播放器——全部由 lvgl 任务消费,
    main_task 只设标志,彻底避免 main 调 LVGL 与 lvgl_task 死锁(拔卡死机根因)。 */
 static volatile bool s_sd_icon_pending  = false;   /* SD 图标+插拔提示待更新 */
@@ -293,6 +319,7 @@ static volatile bool s_clear_msg_pending = false;   /* 清全屏消息返回播�
    这与 R063/R097/R100 的"main_task 完全不碰 LVGL"是同一类问题, 故沿用同一范式:
    main 只设标志, 真正的 LVGL 操作由 lvgl_task 在持锁区内执行。 */
 static volatile bool s_menu_pending       = false;  /* 菜单内容待绘制 */
+static volatile bool s_ab_menu_pending    = false;  /* R111: A-B菜单内容待绘制 */
 static volatile bool s_menu_close_pending = false;  /* 菜单关闭待处理(恢复 player) */
 
 void display_register_main_tick(display_main_tick_fn_t fn)
@@ -705,11 +732,13 @@ static void lvgl_task(void *arg)
             s_vol_pending = false;
             int vol = s_vol_value;
             if (vol_box) {
-                lv_color_t vol_col = (vol <= 0) ? lv_color_hex(0x33405e) : lv_color_hex(0x2dd4bf);
-                lv_obj_set_style_bg_color(vol_spk_box, vol_col, 0);
-                lv_obj_set_style_line_color(vol_cone, vol_col, 0);
                 int vol_clamped = vol < 0 ? 0 : (vol > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : vol);
                 lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
+                if (vol_num) {
+                    char vbuf[16];
+                    snprintf(vbuf, sizeof(vbuf), "%d / %d", vol_clamped, VOLUME_LEVEL_MAX);
+                    lv_label_set_text(vol_num, vbuf);
+                }
                 lv_obj_clear_flag(vol_box, LV_OBJ_FLAG_HIDDEN);
             }
         }
@@ -723,6 +752,13 @@ static void lvgl_task(void *arg)
         if (s_msg_pending) {
             s_msg_pending = false;
             ui_show_msg_nolock(s_msg_text);
+        }
+        /* R111: 显示 TAPEBOOK 启动画面 */
+        if (s_show_splash_pending) {
+            s_show_splash_pending = false;
+            if (s_splash) {
+                lv_obj_clear_flag(s_splash, LV_OBJ_FLAG_HIDDEN);
+            }
         }
         /* R100: 消费 SD 图标/插拔提示更新(避免 main 调 LVGL 死锁) */
         if (s_sd_icon_pending) {
@@ -745,6 +781,11 @@ static void lvgl_task(void *arg)
         if (s_menu_pending) {
             s_menu_pending = false;
             menu_apply_nolock();
+        }
+        /* R111: 消费 A-B 菜单绘制标志 */
+        if (s_ab_menu_pending) {
+            s_ab_menu_pending = false;
+            ab_menu_apply_nolock();
         }
         if (s_menu_close_pending) {
             s_menu_close_pending = false;
@@ -1026,44 +1067,37 @@ static void ui_create(void)
     lv_obj_clear_flag(bolt, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
 
-    /* 图形音量: 屏幕右侧竖向条 (扬声器图标 + 竖向音量条) */
+    /* R111: 音量 OSD 中央浮层 (设计稿风格: 半透明深色背景 + 扬声器 + 横向音量条 + 数字) */
     vol_box = lv_obj_create(g_player);
-    lv_obj_set_size(vol_box, 18, 90);
-    lv_obj_align(vol_box, LV_ALIGN_RIGHT_MID, -6, -18);  // 右侧竖向, 避开状态栏(上)与进度条(下)
-    lv_obj_set_style_bg_opa(vol_box, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(vol_box, 0, 0);
+    lv_obj_set_size(vol_box, 200, 50);
+    lv_obj_center(vol_box);
+    lv_obj_set_style_bg_color(vol_box, lv_color_hex(0x0c111e), 0);
+    lv_obj_set_style_bg_opa(vol_box, 220, 0);
+    lv_obj_set_style_border_color(vol_box, lv_color_hex(0x2a3552), 0);
+    lv_obj_set_style_border_width(vol_box, 1, 0);
+    lv_obj_set_style_radius(vol_box, 12, 0);
+    lv_obj_set_style_pad_all(vol_box, 0, 0);
     lv_obj_clear_flag(vol_box, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(vol_box, LV_OBJ_FLAG_HIDDEN);  // 默认隐藏, 调节音量时显示
+    lv_obj_add_flag(vol_box, LV_OBJ_FLAG_HIDDEN);
 
-    /* 扬声器图标 (箱体 + 锥体, 置于竖向条顶部作为标识) */
-    vol_spk_box = lv_obj_create(vol_box);
-    lv_obj_set_size(vol_spk_box, 6, 8);
-    lv_obj_align(vol_spk_box, LV_ALIGN_TOP_LEFT, 3, 5);
-    lv_obj_set_style_bg_color(vol_spk_box, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_border_width(vol_spk_box, 0, 0);
-    lv_obj_set_style_radius(vol_spk_box, 1, 0);
-    lv_obj_clear_flag(vol_spk_box, LV_OBJ_FLAG_CLICKABLE);
-
-    static lv_point_precise_t cone_pts[] = {{0, 0}, {0, 8}, {7, 4}, {0, 0}};
-    vol_cone = lv_line_create(vol_box);
-    lv_line_set_points(vol_cone, cone_pts, 4);
-    lv_obj_align(vol_cone, LV_ALIGN_TOP_LEFT, 9, 5);
-    lv_obj_set_style_line_width(vol_cone, 2, 0);
-    lv_obj_set_style_line_color(vol_cone, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_line_rounded(vol_cone, true, 0);
-    lv_obj_clear_flag(vol_cone, LV_OBJ_FLAG_CLICKABLE);
-
-    /* 竖向音量条 (填充自底向上 = 音量 level 0..VOLUME_LEVEL_MAX) */
+    /* 横向音量条 (居中) */
     vol_lvl = lv_bar_create(vol_box);
-    lv_obj_set_size(vol_lvl, 6, 64);
-    lv_obj_align(vol_lvl, LV_ALIGN_BOTTOM_MID, 0, -4);
-    lv_bar_set_orientation(vol_lvl, LV_BAR_ORIENTATION_VERTICAL);
+    lv_obj_set_size(vol_lvl, 160, 10);
+    lv_obj_align(vol_lvl, LV_ALIGN_TOP_MID, 0, 10);
     lv_bar_set_range(vol_lvl, 0, VOLUME_LEVEL_MAX);
     lv_bar_set_value(vol_lvl, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(vol_lvl, lv_color_hex(0x16203a), 0);
-    lv_obj_set_style_bg_color(vol_lvl, lv_color_hex(0x2dd4bf), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(vol_lvl, 3, 0);
+    lv_obj_set_style_bg_color(vol_lvl, lv_color_hex(0x1d2740), 0);
+    lv_obj_set_style_bg_color(vol_lvl, lv_color_hex(0x22c55e), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(vol_lvl, 5, 0);
     lv_obj_clear_flag(vol_lvl, LV_OBJ_FLAG_CLICKABLE);
+
+    /* 音量数字 (居中底部) */
+    vol_num = lv_label_create(vol_box);
+    lv_label_set_text(vol_num, "10");
+    lv_obj_align(vol_num, LV_ALIGN_TOP_MID, 0, 28);
+    lv_obj_set_style_text_color(vol_num, lv_color_white(), 0);
+    lv_obj_set_style_text_font(vol_num, UI_FONT, 0);
+    lv_obj_clear_flag(vol_num, LV_OBJ_FLAG_CLICKABLE);
 
     /* TF 卡图标 (状态栏: 插入=青色卡片, 弹出=灰) —— 位于充电标记左侧 */
     sd_icon_box = lv_obj_create(g_player);
@@ -1115,10 +1149,49 @@ static void ui_create(void)
     /* R108: 格式/品牌行 (文件名下方): FLAC|44KHZ|16bit|0918kbps + SQ */
     lbl_fmt = lv_label_create(g_player);
     lv_obj_set_pos(lbl_fmt, M, 44);  /* P2-UI: 曲名下方, 盒壳上方 */
-    lv_obj_set_width(lbl_fmt, W - 2 * M);
+    lv_obj_set_width(lbl_fmt, W - 2 * M - 40);  /* R111: 留 40px 给 SQ 徽章 */
     lv_label_set_long_mode(lbl_fmt, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(lbl_fmt, lv_color_hex(0x8a93a6), 0);
+    lv_obj_set_style_text_color(lbl_fmt, lv_color_hex(0xb8a4dc), 0);  /* R111: 紫色文字 */
     lv_obj_set_style_text_font(lbl_fmt, UI_FONT, 0);
+
+    /* R111: SQ 音质徽章 (紫底白字, 设计稿风格) */
+    s_sq_badge = lv_obj_create(g_player);
+    lv_obj_set_size(s_sq_badge, 30, 16);
+    lv_obj_set_pos(s_sq_badge, W - M - 30, 43);
+    lv_obj_set_style_bg_color(s_sq_badge, lv_color_hex(0x7a4ec0), 0);
+    lv_obj_set_style_bg_opa(s_sq_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_sq_badge, 3, 0);
+    lv_obj_set_style_border_width(s_sq_badge, 0, 0);
+    lv_obj_set_style_pad_all(s_sq_badge, 0, 0);
+    lv_obj_clear_flag(s_sq_badge, LV_OBJ_FLAG_CLICKABLE);
+    {
+        lv_obj_t *sq_lbl = lv_label_create(s_sq_badge);
+        lv_label_set_text(sq_lbl, "SQ");
+        lv_obj_center(sq_lbl);
+        lv_obj_set_style_text_color(sq_lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(sq_lbl, UI_FONT, 0);
+        lv_obj_clear_flag(sq_lbl, LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    /* R111: A-B 复读徽章 (橙底白字, 复读开启时显示) */
+    s_ab_badge = lv_obj_create(g_player);
+    lv_obj_set_size(s_ab_badge, 36, 16);
+    lv_obj_set_pos(s_ab_badge, W - M - 30 - 42, 43);  /* SQ 徽章左侧 */
+    lv_obj_set_style_bg_color(s_ab_badge, lv_color_hex(0xf59e0b), 0);
+    lv_obj_set_style_bg_opa(s_ab_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_ab_badge, 3, 0);
+    lv_obj_set_style_border_width(s_ab_badge, 0, 0);
+    lv_obj_set_style_pad_all(s_ab_badge, 0, 0);
+    lv_obj_clear_flag(s_ab_badge, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
+    {
+        lv_obj_t *ab_lbl = lv_label_create(s_ab_badge);
+        lv_label_set_text(ab_lbl, "A-B");
+        lv_obj_center(ab_lbl);
+        lv_obj_set_style_text_color(ab_lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(ab_lbl, UI_FONT, 0);
+        lv_obj_clear_flag(ab_lbl, LV_OBJ_FLAG_CLICKABLE);
+    }
 
     /* 时间行: 当前(左) / 档位(中) / 总时长(右) */
     lbl_cur = lv_label_create(g_player);
@@ -1132,7 +1205,8 @@ static void ui_create(void)
     lv_obj_set_style_text_font(lbl_gear, UI_FONT, 0);
 
     lbl_dur = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_dur, W - M, 164);  /* P2-UI */
+    lv_obj_set_pos(lbl_dur, W - M - 80, 164);  /* R111: 左移80px给右对齐留空间 */
+    lv_obj_set_width(lbl_dur, 80);
     lv_obj_set_style_text_align(lbl_dur, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(lbl_dur, lv_color_hex(0x8a93a6), 0);
     lv_obj_set_style_text_font(lbl_dur, UI_FONT, 0);
@@ -1156,7 +1230,7 @@ static void ui_create(void)
 
     /* 快进/快退 读秒提示（居中醒目，仅快进退时显示） */
     lbl_seek = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_seek, M, 196);  /* P1-UI */
+    lv_obj_set_pos(lbl_seek, M, 164);  /* R111: 移到进度条上方, 与倍速指示同一行 */
     lv_obj_set_width(lbl_seek, W - 2 * M);
     lv_obj_set_style_text_align(lbl_seek, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(lbl_seek, lv_color_hex(0xf5a623), 0);
@@ -1305,6 +1379,57 @@ static void ui_create(void)
     lv_obj_align(g_msg, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
 
+    /* R111: A-B toast (底部居中临时提示) */
+    s_toast = lv_label_create(scr);
+    lv_obj_set_width(s_toast, W - 48);
+    lv_obj_set_style_text_align(s_toast, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(s_toast, lv_color_white(), 0);
+    lv_obj_set_style_text_font(s_toast, UI_FONT, 0);
+    lv_obj_set_style_bg_color(s_toast, lv_color_hex(0x0c111e), 0);
+    lv_obj_set_style_bg_opa(s_toast, 220, 0);
+    lv_obj_set_style_radius(s_toast, 6, 0);
+    lv_obj_set_style_pad_left(s_toast, 8, 0);
+    lv_obj_set_style_pad_right(s_toast, 8, 0);
+    lv_obj_set_style_pad_top(s_toast, 4, 0);
+    lv_obj_set_style_pad_bottom(s_toast, 4, 0);
+    lv_obj_align(s_toast, LV_ALIGN_BOTTOM_MID, 0, -30);
+    lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+
+    /* R111: TAPEBOOK 启动画面 (设计稿风格: 大标题 + 装饰线 + 副标题 + 加载提示) */
+    s_splash = lv_obj_create(scr);
+    lv_obj_set_size(s_splash, W, H);
+    lv_obj_set_style_bg_color(s_splash, lv_color_hex(0x0a0e17), 0);
+    lv_obj_set_style_border_width(s_splash, 0, 0);
+    lv_obj_set_style_pad_all(s_splash, 0, 0);
+    lv_obj_clear_flag(s_splash, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_splash, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *splash_title = lv_label_create(s_splash);
+    lv_label_set_text(splash_title, "TAPEBOOK");
+    lv_obj_set_style_text_color(splash_title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(splash_title, UI_FONT, 0);
+    lv_obj_align(splash_title, LV_ALIGN_CENTER, 0, -30);
+
+    lv_obj_t *splash_line = lv_obj_create(s_splash);
+    lv_obj_set_size(splash_line, 120, 2);
+    lv_obj_set_style_bg_color(splash_line, lv_color_hex(0x4a9eff), 0);
+    lv_obj_set_style_border_width(splash_line, 0, 0);
+    lv_obj_set_style_radius(splash_line, 1, 0);
+    lv_obj_clear_flag(splash_line, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(splash_line, LV_ALIGN_CENTER, 0, -8);
+
+    lv_obj_t *splash_sub = lv_label_create(s_splash);
+    lv_label_set_text(splash_sub, "ESP32-S3 Audio Player");
+    lv_obj_set_style_text_color(splash_sub, lv_color_hex(0x8899aa), 0);
+    lv_obj_set_style_text_font(splash_sub, UI_FONT, 0);
+    lv_obj_align(splash_sub, LV_ALIGN_CENTER, 0, 10);
+
+    s_splash_loading = lv_label_create(s_splash);
+    lv_label_set_text(s_splash_loading, "Loading SD Card...");
+    lv_obj_set_style_text_color(s_splash_loading, lv_color_hex(0x667788), 0);
+    lv_obj_set_style_text_font(s_splash_loading, UI_FONT, 0);
+    lv_obj_align(s_splash_loading, LV_ALIGN_CENTER, 0, 40);
+
     /* ---- SD-OTA 升级界面 ---- */
     g_ota = lv_obj_create(scr);
     lv_obj_set_size(g_ota, W, H);
@@ -1420,8 +1545,11 @@ static void ui_show_player(void)
     n++;
     lv_obj_clear_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_splash, LV_OBJ_FLAG_HIDDEN);  /* R111: 隐藏启动画面 */
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
+    s_ab_menu_visible = false;
+    s_menu_visible = false;
 }
 
 static void ui_show_msg(const char *txt)
@@ -1482,6 +1610,18 @@ static const char *state_word(player_state_t state)
     case PLAYER_STATE_FAST_FORWARD:  return "FF";
     case PLAYER_STATE_REWIND:        return "REW";
     default:                         return "???";
+    }
+}
+
+static const char *state_icon(player_state_t state)
+{
+    switch (state) {
+    case PLAYER_STATE_PLAYING:       return ">";
+    case PLAYER_STATE_PAUSED:        return "||";
+    case PLAYER_STATE_STOPPED:       return "[]";
+    case PLAYER_STATE_FAST_FORWARD:  return ">>";
+    case PLAYER_STATE_REWIND:        return "<<";
+    default:                         return "";
     }
 }
 
@@ -1593,15 +1733,8 @@ void display_mem_report(void)
 void display_show_splash(void)
 {
     if (!g_display_initialized) return;
-    /* freetype 未就绪（cjk.ttf 未烧录到 font 分区）时, 渲染中文 label 会走入
-     * 未初始化的 freetype 路径导致 LVGL 死循环 + task_wdt, 故用 ASCII 兜底 */
-    const char *msg = font_partition_ready()
-        ? "TapeBook Player\nESP32-S3\nLoading SD Card..."
-        : "TapeBook Player\nESP32-S3\nloading SD...";
-    /* R063-fix: 仅设标志,避免 main 直接调 LVGL 与 lvgl_task 死锁 */
-    strncpy(s_msg_text, msg, sizeof(s_msg_text) - 1);
-    s_msg_text[sizeof(s_msg_text) - 1] = '\0';
-    s_msg_pending = true;
+    /* R111: 显示 TAPEBOOK 启动画面 (专用容器, 不再用 g_msg 文字) */
+    s_show_splash_pending = true;
 }
 
 void display_show_no_files(void)
@@ -1622,6 +1755,14 @@ void display_show_no_card(void)
             sizeof(s_msg_text) - 1);
     s_msg_text[sizeof(s_msg_text) - 1] = '\0';
     s_msg_pending = true;
+}
+
+/* R111: A-B标记 toast (main侧只缓存+设标志) */
+void display_toast(const char *msg)
+{
+    if (!g_display_initialized || !msg) return;
+    snprintf(s_toast_text, sizeof(s_toast_text), "%s", msg);
+    s_toast_pending = true;
 }
 
 /* R100: 清除全屏消息(如"SD card not detected")并返回播放器界面，插卡成功/正常播放时调用 */
@@ -1772,11 +1913,11 @@ static void display_update_nolock(player_state_t state,
     /* 状态栏: 状态 · 曲目 x/y · [模式] · NOR（电量/音量已改为图形）
        R108: 模式词映射设计稿风格缩写 (SEQ=顺序/LST=列表循环/SGL=单曲), 尾加 NOR 标 */
     const char *mode_s = (s_play_mode == 1) ? "LST" : (s_play_mode == 2) ? "SGL" : "SEQ";
+    const char *ab_s = ab_on ? " AB" : "";  /* R111: 复读开启时状态栏显示 AB */
     char line0[64];
-    snprintf(line0, sizeof(line0), "%s %03d/%03d %s NOR",
-             state_word(state), track_idx, total, mode_s);
+    snprintf(line0, sizeof(line0), "%s %03d/%03d %s%s NOR",
+             state_word(state), track_idx, total, mode_s, ab_s);
     lv_label_set_text(lbl_status, line0);
-
     /* P2: 底部按键条高亮 */
     {
         int active_idx = -1;
@@ -1822,8 +1963,27 @@ static void display_update_nolock(player_state_t state,
         }
     }
 
-    /* R108: 格式/品牌行 (静态占位, 真实采样率/码率/编码接入留待后续) */
-    lv_label_set_text(lbl_fmt, "MP3|44KHZ|16bit|0320kbps SQ");
+    /* R111: 格式行 = MP3 + A-B复读信息 (去掉静态44KHZ/16bit/320kbps) */
+    {
+        char fmt_buf[64];
+        if (ab_a >= 0) {
+            char abuf[8], bbuf[8];
+            format_time(ab_a / 1000, abuf, sizeof(abuf));
+            if (ab_b >= 0) {
+                format_time(ab_b / 1000, bbuf, sizeof(bbuf));
+                int loop_n = audio_player_ab_loop_count();
+                if (ab_on && loop_n > 0)
+                    snprintf(fmt_buf, sizeof(fmt_buf), "MP3 | A:%s->B:%s x%d", abuf, bbuf, loop_n);
+                else
+                    snprintf(fmt_buf, sizeof(fmt_buf), "MP3 | A:%s->B:%s", abuf, bbuf);
+            } else {
+                snprintf(fmt_buf, sizeof(fmt_buf), "MP3 | A:%s B:--", abuf);
+            }
+        } else {
+            snprintf(fmt_buf, sizeof(fmt_buf), "MP3");
+        }
+        lv_label_set_text(lbl_fmt, fmt_buf);
+    }
 
     /* 图形电量: 外框填充宽度 + 低电量变红 + 充电标记 */
     int bp = power_mgmt_get_battery_percent();
@@ -1835,17 +1995,13 @@ static void display_update_nolock(player_state_t state,
     if (power_mgmt_is_charging()) lv_obj_clear_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
     else                          lv_obj_add_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
 
-    /* 图形音量: 扬声器随静音变灰 + 右侧竖向音量条填充=音量 level */
-    lv_color_t vol_col = (volume <= 0) ? lv_color_hex(0x33405e) : lv_color_hex(0x2dd4bf);
-    lv_obj_set_style_bg_color(vol_spk_box, vol_col, 0);
-    lv_obj_set_style_line_color(vol_cone, vol_col, 0);
+    /* R111: 音量 OSD: 横向音量条 + 数字 */
     int vol_clamped = volume < 0 ? 0 : (volume > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : volume);
     lv_bar_set_value(vol_lvl, vol_clamped, LV_ANIM_OFF);
-    /* 状态栏音量数字 */
-    if (s_st_vol) {
-        char vbuf[8];
-        snprintf(vbuf, sizeof(vbuf), "%02d", vol_clamped);
-        lv_label_set_text(s_st_vol, vbuf);
+    if (vol_num) {
+        char vbuf[16];
+        snprintf(vbuf, sizeof(vbuf), "%d / %d", vol_clamped, VOLUME_LEVEL_MAX);
+        lv_label_set_text(vol_num, vbuf);
     }
 
     /* 文件名: R105 改走曲名 canvas 点阵。
@@ -1872,11 +2028,20 @@ static void display_update_nolock(player_state_t state,
        canvas 在上方已单独 invalidate, 各 label/bar 内容变化时自行 invalidate.
        全屏 invalidate 会导致 320x240 整屏刷新 (~120ms@10MHz SPI), 阻塞卷轴动画. */
 
-    /* 时间(左) / 档位(中) / 总时长(右) */
-    lv_label_set_text(lbl_cur, cur);
+    /* 时间(左) / 档位(中) / 总时长(右) — R111: 左侧加播放状态图标 */
+    {
+        static char cur_with_icon[32];
+        snprintf(cur_with_icon, sizeof(cur_with_icon), "%s %s",
+                 state_icon(state), cur);
+        lv_label_set_text(lbl_cur, cur_with_icon);
+    }
     lv_label_set_text(lbl_dur, tot);
     const char *gs = gear_str(gear);
-    lv_label_set_text(lbl_gear, (gs && gs[0]) ? gs : "");
+    if (state == PLAYER_STATE_FAST_FORWARD || state == PLAYER_STATE_REWIND) {
+        lv_label_set_text(lbl_gear, "");  /* R111: 快进/快退时倍速已包含在读秒提示中, 避免重叠 */
+    } else {
+        lv_label_set_text(lbl_gear, (gs && gs[0]) ? gs : "");
+    }
 
     /* 进度条 + 百分比 */
     int v = 0;
@@ -1890,32 +2055,12 @@ static void display_update_nolock(player_state_t state,
     snprintf(pct, sizeof(pct), "%d%%", v / 10);
     lv_label_set_text(lbl_percent, "");  /* P1-UI: 设计稿无百分比 */
 
-    /* A-B 复读：底部灰栏显示 A/B 点 + 进度条标记 */
+    /* R111: A-B 复读：进度条标记点 + AB徽章 (A-B文字信息已移至格式行lbl_fmt, 移除底部lbl_ab避免重叠) */
     if (ab_a < 0) {
-        /* 未标记 A：完全隐藏 */
-        lv_obj_add_flag(lbl_ab, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+        if (s_ab_badge) lv_obj_add_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
     } else {
-        char abuf[10], bbuf[10];
-        format_time(ab_a / 1000, abuf, sizeof(abuf));
-        if (ab_b >= 0) {
-            format_time(ab_b / 1000, bbuf, sizeof(bbuf));
-        } else {
-            snprintf(bbuf, sizeof(bbuf), "--:--");
-        }
-        char abtxt[48];
-        if (ab_b >= 0) {
-            snprintf(abtxt, sizeof(abtxt), "A:%s -> B:%s  %s",
-                     abuf, bbuf, ab_on ? "LOOP ON" : "PAUSED");
-        } else {
-            snprintf(abtxt, sizeof(abtxt), "A:%s  B:PENDING", abuf);
-        }
-        lv_label_set_text(lbl_ab, abtxt);
-        lv_obj_set_style_text_color(lbl_ab,
-            ab_on ? lv_color_hex(0x2dd4bf) : lv_color_hex(0x8a93a6), 0);
-        lv_obj_clear_flag(lbl_ab, LV_OBJ_FLAG_HIDDEN);
-
         /* 进度条上的 A/B 点标记（需要已知总时长才能定位） */
         if (total_sec > 0) {
             int64_t dur_ms = (int64_t)total_sec * 1000;
@@ -1929,6 +2074,11 @@ static void display_update_nolock(player_state_t state,
             lv_obj_clear_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
             if (ab_b >= 0) lv_obj_clear_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
             else lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+            /* R111: A-B 徽章仅在复读开启时显示 */
+            if (s_ab_badge) {
+                if (ab_on) lv_obj_clear_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
+                else       lv_obj_add_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
+            }
         } else {
             lv_obj_add_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
@@ -2051,6 +2201,7 @@ static void menu_apply_nolock(void)
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota,    LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ab_menu,LV_OBJ_FLAG_HIDDEN);
+    s_ab_menu_visible = false;  /* R111: 退出A-B菜单 */
 
     /* R103: 用 canvas 画点阵菜单 (LVGL 原生位图路径, 不碰 SPI) */
     if (!s_cjk_canvas) return;
@@ -2087,71 +2238,101 @@ void display_menu_closed(void)
 }
 
 /* R051：A-B 复读状态屏 —— 迷你进度条(白A/橙B) + 实时状态 + 动作列表 */
+/* R111: main侧只缓存数据+设标志, 绝不触碰 LVGL (与 display_show_menu 同范式)。
+   原实现直接 lv_lock+LVGL写, 与 CPU1 lvgl_task 并发竞争→损坏 LVGL 内部结构
+   →lv_refr遍历死循环→main卡30s→task_wdt。 */
 void display_show_ab_menu(const char *title, char lines[][24], int count, int sel,
                           bool edit, int scrub,
                           int ab_a_ms, int ab_b_ms, bool ab_on,
                           int total_ms, int cur_ms, const char *hint)
 {
     if (!g_display_initialized) return;
-    lv_lock();   /* 保护整个 A-B 界面 LVGL 写: 与 lvgl_task 并发必须加锁 */
+
+    /* 仅缓存 (纯内存写, 不触碰 LVGL) */
+    s_ab_count = count;
+    s_ab_sel   = sel;
+    s_ab_edit  = edit;
+    s_ab_scrub = scrub;
+    s_ab_a_ms  = ab_a_ms;
+    s_ab_b_ms  = ab_b_ms;
+    s_ab_on    = ab_on;
+    s_ab_total_ms = total_ms;
+    s_ab_cur_ms   = cur_ms;
+    snprintf(s_ab_title, sizeof(s_ab_title), "%s", (title && title[0]) ? title : "A-B Repeat");
+    for (int i = 0; i < count && i < 4; i++)
+        snprintf(s_ab_lines[i], sizeof(s_ab_lines[i]), "%s", lines[i]);
+    if (hint) snprintf(s_ab_hint, sizeof(s_ab_hint), "%s", hint);
+    else      s_ab_hint[0] = '\0';
+    s_ab_menu_visible = true;
+    s_menu_visible = false;
+
+    /* 唤醒背光 (非 LVGL 操作) */
+    if (g_display_sleep) {
+        display_set_brightness(s_last_brightness);
+        g_display_sleep = false;
+    }
+
+    s_ab_menu_pending = true;   /* 由 lvgl_task 持锁区消费 ab_menu_apply_nolock() */
+}
+
+/* R111: A-B菜单真正的 LVGL 绘制 —— 必须在 lv_lock() 内调用。
+   调用点: lvgl_task 消费 s_ab_menu_pending */
+static void ab_menu_apply_nolock(void)
+{
+    if (!g_display_initialized || !s_ab_menu_visible) return;
 
     /* 隐藏其它界面，独占显示 A-B 状态屏 */
     lv_obj_add_flag(g_msg,    LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota,    LV_OBJ_FLAG_HIDDEN);
+    if (s_cjk_canvas) lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);  /* R111: 隐藏点阵菜单canvas, 避免覆盖A-B屏 */
     lv_obj_clear_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
 
-    if (g_display_sleep) {          // 菜单活跃，唤醒背光
-        display_set_brightness(s_last_brightness);
-        g_display_sleep = false;
-    }
-
-    lv_label_set_text(abm_title, (title && title[0]) ? title : "A-B Repeat");
+    lv_label_set_text(abm_title, s_ab_title);
 
     /* 迷你进度条：填充 = 当前播放位置 */
     int cur_v = 0;
-    if (total_ms > 0 && cur_ms >= 0) {
-        cur_v = (int)((int64_t)cur_ms * 1000 / total_ms);
+    if (s_ab_total_ms > 0 && s_ab_cur_ms >= 0) {
+        cur_v = (int)((int64_t)s_ab_cur_ms * 1000 / s_ab_total_ms);
         if (cur_v < 0) cur_v = 0;
         if (cur_v > 1000) cur_v = 1000;
     }
     lv_bar_set_value(abm_bar, cur_v, LV_ANIM_OFF);
 
-    /* A/B 标记定位（需已知总时长） */
+    /* A/B 标记定位 */
     const int MARGIN = 8;
     int bar_w = DISPLAY_WIDTH - 2 * MARGIN;
     int ap = -1, bp = -1;
-    if (total_ms > 0) {
-        if (ab_a_ms >= 0) { ap = (int)((int64_t)ab_a_ms * 1000 / total_ms); ap = ap < 0 ? 0 : (ap > 1000 ? 1000 : ap); }
-        if (ab_b_ms >= 0) { bp = (int)((int64_t)ab_b_ms * 1000 / total_ms); bp = bp < 0 ? 0 : (bp > 1000 ? 1000 : bp); }
+    if (s_ab_total_ms > 0) {
+        if (s_ab_a_ms >= 0) { ap = (int)((int64_t)s_ab_a_ms * 1000 / s_ab_total_ms); ap = ap < 0 ? 0 : (ap > 1000 ? 1000 : ap); }
+        if (s_ab_b_ms >= 0) { bp = (int)((int64_t)s_ab_b_ms * 1000 / s_ab_total_ms); bp = bp < 0 ? 0 : (bp > 1000 ? 1000 : bp); }
     }
     if (ap >= 0) { lv_obj_set_x(abm_mark_a, MARGIN + (ap * bar_w) / 1000); lv_obj_clear_flag(abm_mark_a, LV_OBJ_FLAG_HIDDEN); }
     else         { lv_obj_add_flag(abm_mark_a, LV_OBJ_FLAG_HIDDEN); }
     if (bp >= 0) { lv_obj_set_x(abm_mark_b, MARGIN + (bp * bar_w) / 1000); lv_obj_clear_flag(abm_mark_b, LV_OBJ_FLAG_HIDDEN); }
     else         { lv_obj_add_flag(abm_mark_b, LV_OBJ_FLAG_HIDDEN); }
 
-    /* 状态行：A:.. B:.. 复读:.. */
+    /* 状态行 */
     char a_buf[10], b_buf[10];
-    if (ab_a_ms >= 0) format_time(ab_a_ms / 1000, a_buf, sizeof(a_buf));
-    else              snprintf(a_buf, sizeof(a_buf), "--:--");
-    if (ab_b_ms >= 0) format_time(ab_b_ms / 1000, b_buf, sizeof(b_buf));
-    else              snprintf(b_buf, sizeof(b_buf), "PENDING");
+    if (s_ab_a_ms >= 0) format_time(s_ab_a_ms / 1000, a_buf, sizeof(a_buf));
+    else                snprintf(a_buf, sizeof(a_buf), "--:--");
+    if (s_ab_b_ms >= 0) format_time(s_ab_b_ms / 1000, b_buf, sizeof(b_buf));
+    else                snprintf(b_buf, sizeof(b_buf), "PENDING");
     char stat[48];
-    snprintf(stat, sizeof(stat), "A:%s  B:%s  Repeat:%s", a_buf, b_buf, ab_on ? "ON" : "OFF");
+    snprintf(stat, sizeof(stat), "A:%s  B:%s  Repeat:%s", a_buf, b_buf, s_ab_on ? "ON" : "OFF");
     lv_label_set_text(abm_stat, stat);
-    lv_obj_set_style_text_color(abm_stat, ab_on ? lv_color_hex(0x2dd4bf) : lv_color_hex(0x8a93a6), 0);
+    lv_obj_set_style_text_color(abm_stat, s_ab_on ? lv_color_hex(0x2dd4bf) : lv_color_hex(0x8a93a6), 0);
 
-    /* 动作行（选中行高亮白字） */
+    /* 动作行 */
     for (int i = 0; i < 4; i++) {
-        if (i < count) lv_label_set_text(abm_lines[i], lines[i]);
-        else           lv_label_set_text(abm_lines[i], "");
-        bool sel_i = (i == sel);
+        if (i < s_ab_count) lv_label_set_text(abm_lines[i], s_ab_lines[i]);
+        else                 lv_label_set_text(abm_lines[i], "");
+        bool sel_i = (i == s_ab_sel);
         lv_obj_set_style_text_color(abm_lines[i],
             sel_i ? lv_color_hex(0xffffff) : lv_color_hex(0x8a93a6), 0);
     }
 
-    lv_label_set_text(abm_hint, hint ? hint : "");
-    lv_unlock();
+    lv_label_set_text(abm_hint, s_ab_hint[0] ? s_ab_hint : "");
 }
 void display_show_info(const char *title, const char *text)
 {

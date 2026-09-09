@@ -96,12 +96,12 @@ static const menu_item_t g_play_sub[] = {
     { "播放模式", MI_TOGGLE, s_mode_opts, 3, app_get_play_mode, app_set_play_mode, NULL, 0, NULL },
 };
 
-/* R049b：A-B 复读子菜单 */
+/* R049b：A-B 复读子菜单 (R111: label用英文, 因 g_ab_menu 用 lv_font_montserrat_14 无中文) */
 static const menu_item_t g_ab_sub[] = {
-    { "标记 A 点", MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_mark_a },
-    { "标记 B 点", MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_mark_b },
-    { "复读开关",   MI_TOGGLE, s_onoff_opts, 2, ab_get_idx, ab_set_idx, NULL, 0, NULL },
-    { "清除",       MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_clear },
+    { "Mark A",     MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_mark_a },
+    { "Mark B",     MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_mark_b },
+    { "Loop",       MI_TOGGLE, s_onoff_opts, 2, ab_get_idx, ab_set_idx, NULL, 0, NULL },
+    { "Clear",      MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_clear },
 };
 
 /* R049c / R049d：系统子菜单（蓝牙音箱在 USE_BT_SPEAKER 时置于此，占原 A-B 复读位置） */
@@ -215,11 +215,10 @@ static void menu_render(void)
         int total_ms = audio_player_get_duration() * 1000;
         int cur_ms   = audio_player_get_position_ms();
         const char *hint = (s_ab_scrub != AB_SCRUB_NONE)
-            /* R103: "●"/"±" 点阵字库缺失, 分别改用 ">"/"+" */
-            ? "> 微调 A/B 点  单击 +2s / 长按扫段  同步试听  播放/停止 确定"
-            : (s_edit ? "> 编辑中 VOL+ 开/关  播放/停止 完成"
-                      : "VOL+/方向 选动作  播放 标记/进入  停止 返回");
-        display_show_ab_menu(lv->title, lines, lv->count, lv->sel,
+            ? "> Adjust A/B: tap +/-2s, hold scan, PLAY/STOP confirm"
+            : (s_edit ? "> Edit: VOL+ toggle, PLAY/STOP done"
+                      : "VOL+/NAV select, PLAY mark/enter, STOP back");
+        display_show_ab_menu("A-B Repeat", lines, lv->count, lv->sel,
                              s_edit, (int)s_ab_scrub,
                              audio_player_ab_a_ms(), audio_player_ab_b_ms(),
                              audio_player_is_ab_enabled(), total_ms, cur_ms, hint);
@@ -252,6 +251,7 @@ void menu_handle_button(const btn_event_info_t *events, int n)
     for (int k = 0; k < n; k++) {
         const btn_event_info_t *e = &events[k];
         if (e->event == BTN_EVENT_NONE) continue;
+        ESP_LOGW("MENU", "DBG btn id=%d ev=%d depth=%d sel=%d", (int)e->id, (int)e->event, s_depth, s_stack[s_depth-1].sel);
         app_play_beep();   // R049c：菜单内按键提示音（设置开启时）
 
         menu_level_t *lv = &s_stack[s_depth - 1];
@@ -371,6 +371,7 @@ void menu_handle_button(const btn_event_info_t *events, int n)
 
         case BTN_ID_PLAY_PAUSE:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
+                ESP_LOGW("MENU", "DBG PLAY short, kind=%d label=%s", (int)it->kind, it->label ? it->label : "null");
                 if (it->kind == MI_SUBMENU) {
                     if (s_depth < MENU_MAX_DEPTH) {
                         s_stack[s_depth].items = it->children;
@@ -378,6 +379,7 @@ void menu_handle_button(const btn_event_info_t *events, int n)
                         s_stack[s_depth].sel   = 0;
                         s_stack[s_depth].title = it->label;
                         s_depth++;
+                        s_edit = false;
                         // R050：仅含单个 TOGGLE 的子菜单（如「播放模式」）自动进入编辑态
                         const menu_item_t *top = &s_stack[s_depth - 1].items[0];
                         if (s_stack[s_depth - 1].count == 1 &&

@@ -91,6 +91,7 @@ static uint64_t     g_last_scrub_us = 0;               // M1: 上次跳帧时间
 static int  g_ab_a_ms = -1;
 static int  g_ab_b_ms = -1;
 static bool g_ab_enabled = false;
+static int  g_ab_loop_count = 0;   /* R111: A-B 复读遍数计数 */
 
 /* --- R067-fix：ID3v2 跳过工具 ---
  * 问题：ESP-ADF v5.5 + esp_audio_codec 静态库的 mp3 decoder 在含 ID3v2
@@ -317,6 +318,7 @@ bool audio_player_play(const char *filepath)
     g_ab_a_ms = -1;
     g_ab_b_ms = -1;
     g_ab_enabled = false;
+    g_ab_loop_count = 0;   /* R111 */
 
     // 1. 创建 pipeline
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
@@ -871,15 +873,25 @@ void audio_player_scrub_enter(void)
     g_last_scrub_us = esp_timer_get_time();   /* 重置 tick 计时 */
 }
 
-void audio_player_scrub_exit(void)
+void audio_player_scrub_exit(bool resume)
 {
     if (!g_pipeline) return;
     int final_ms = audio_player_get_position_ms();   /* 释放时显示位置(最后 seek 目标) */
     g_scrub_active = false;
     mp3_decoder_set_volume(g_volume_saved);
-    /* R099: 轻量 seek 仅更新显示(reader 重开才应用 byte_pos)，释放时做一次暂停式 seek
-       真正跳到最终位置并恢复播放。FF 期间不进队列，此单次操作可干净完成。 */
-    audio_player_pause_seek_resume(final_ms);
+    /* R111: 暂停态退出scrub不resume, 避免RESUME->PAUSE抖动导致管道状态混乱 */
+    if (resume) {
+        audio_player_pause_seek_resume(final_ms);
+    } else {
+        audio_pipeline_pause(g_pipeline);
+        audio_player_seek_ms_internal(final_ms);
+        if (g_decoder) {
+            audio_element_reset_input_ringbuf(g_decoder);
+            audio_element_reset_output_ringbuf(g_decoder);
+            mp3_decoder_libhelix_reset(g_decoder);
+        }
+        g_play_start_us = 0;  /* 保持暂停态, 不累积播放时间 */
+    }
 }
 
 int audio_player_get_position_ms(void)
@@ -1004,7 +1016,8 @@ void audio_player_tick(void)
     if (g_ab_enabled && g_ab_a_ms >= 0 && g_ab_b_ms > g_ab_a_ms) {
         int cur = audio_player_get_position_ms();
         if (cur >= g_ab_b_ms) {
-            ESP_LOGD(TAG, "AB loop: seek back to A (%d ms)", g_ab_a_ms);
+            g_ab_loop_count++;   /* R111: 遍数 +1 */
+            ESP_LOGD(TAG, "AB loop #%d: seek back to A (%d ms)", g_ab_loop_count, g_ab_a_ms);
             audio_player_pause_seek_resume(g_ab_a_ms);
         }
     }
@@ -1075,7 +1088,13 @@ void audio_player_mark_b(void)
     }
     g_ab_b_ms = audio_player_get_position_ms();
     if (g_ab_b_ms <= g_ab_a_ms) g_ab_b_ms = g_ab_a_ms + 1000; // 保证 B>A
-    ESP_LOGI(TAG, "AB mark B = %d ms (span %d ms)", g_ab_b_ms, g_ab_b_ms - g_ab_a_ms);
+    /* R111: 标记 B 后自动开启循环（间隔>=1s） */
+    if (g_ab_b_ms - g_ab_a_ms >= 1000) {
+        g_ab_enabled = true;
+        g_ab_loop_count = 0;
+    }
+    ESP_LOGI(TAG, "AB mark B = %d ms (span %d ms), auto-enable=%d",
+             g_ab_b_ms, g_ab_b_ms - g_ab_a_ms, g_ab_enabled);
 }
 
 void audio_player_clear_ab(void)
@@ -1083,6 +1102,7 @@ void audio_player_clear_ab(void)
     g_ab_a_ms = -1;
     g_ab_b_ms = -1;
     g_ab_enabled = false;
+    g_ab_loop_count = 0;   /* R111: 重置遍数 */
     ESP_LOGI(TAG, "AB cleared");
 }
 
@@ -1094,12 +1114,14 @@ void audio_player_set_ab_enabled(bool en)
         return;
     }
     g_ab_enabled = en;
+    if (!en) g_ab_loop_count = 0;   /* R111: 关闭时重置遍数 */
     ESP_LOGI(TAG, "AB enabled = %d", g_ab_enabled);
 }
 
 bool audio_player_is_ab_enabled(void) { return g_ab_enabled; }
 int  audio_player_ab_a_ms(void) { return g_ab_a_ms; }
 int  audio_player_ab_b_ms(void) { return g_ab_b_ms; }
+int  audio_player_ab_loop_count(void) { return g_ab_loop_count; }   /* R111 */
 
 /* R051：菜单内 A-B 微调 —— 直接设置 A/B 点到任意毫秒位置 */
 void audio_player_set_ab_a_ms(int ms)

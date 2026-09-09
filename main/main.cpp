@@ -121,6 +121,7 @@ static int            g_pending_save_position = 0;
 static int            g_browse_index = 0;              // 娴忚妯″紡閫変腑绱㈠紩
 static app_state_t    g_state_before_browse = APP_STATE_STOPPED;
 static app_state_t    g_state_before_menu   = APP_STATE_STOPPED;
+static app_state_t    g_state_before_scrub  = APP_STATE_STOPPED;  /* R111: 快进/快退前状态, 退出时恢复 */
 static uint32_t       g_browse_repeat_ms = 0;          // 娴忚闀挎寜杩炵画绉诲姩鍩哄噯鏃跺埢 (hold_ms)
 
 // 缁勫悎閿?REW+STOP锛氫袱閿湪 COMBO_WINDOW_US 鍐呭厛鍚?鍚屾椂鐭寜 鈫?璺冲埌褰撳墠鏇查
@@ -209,6 +210,7 @@ static void stop_playback(void)
         g_seek_on_play_position = audio_player_get_position();
     }
     audio_player_stop();
+    g_seek_on_play_position = 0;   /* R111: stop resets to start, next play from beginning */
     // 缁熶竴閫€鍑虹甯︽ā寮忥紙涓嶉檺 FF/RW锛?
     if (g_app_state == APP_STATE_FAST_FORWARD) {
         tape_control_ff_release();
@@ -368,6 +370,7 @@ void app_menu_exit(void)
     menu_close();
     display_menu_closed();   /* R102: 清点阵菜单缓存, 恢复 player 渲染 */
     g_app_state = g_state_before_menu;
+    if (g_app_state == APP_STATE_PLAYING) audio_player_resume();
 }
 
 void app_enter_browse(void)
@@ -471,6 +474,7 @@ static void handle_button_events(void)
             (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
              g_app_state == APP_STATE_STOPPED)) {
             g_state_before_menu = g_app_state;
+            if (g_app_state == APP_STATE_PLAYING) audio_player_pause();
             menu_open();
             g_app_state = APP_STATE_MENU;
             return;
@@ -647,8 +651,36 @@ static void handle_button_events(void)
                     g_app_state = APP_STATE_PLAYING;
                 }
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
-                /* 闀挎寜锛氬垏鎹㈡挱鏀炬ā寮忥紙椤哄簭 鈫?鍒楄〃寰幆 鈫?鍗曟洸寰幆锛?*/
-                cycle_play_mode();
+                /* R111: long-press PLAY = A-B mark (mode switch moved to menu) */
+                int a_ms = audio_player_ab_a_ms();
+                int b_ms = audio_player_ab_b_ms();
+                char tbuf[24];
+                if (a_ms < 0) {
+                    audio_player_mark_a();
+                    int pos = audio_player_get_position_ms() / 1000;
+                    snprintf(tbuf, sizeof(tbuf), "A: %02d:%02d", pos / 60, pos % 60);
+                    display_toast(tbuf);
+                } else if (b_ms < 0) {
+                    int pos = audio_player_get_position_ms();
+                    if (pos - a_ms >= 1000) {
+                        audio_player_mark_b();
+                        /* R111: 标记B后自动恢复播放. 暂停态先seek到A点再resume,
+                           避免在B点resume后立即触发AB循环seek回A, RESUME/PAUSE碰撞导致无声 */
+                        if (audio_player_is_paused()) {
+                            audio_player_seek_ms(audio_player_ab_a_ms());
+                            audio_player_resume();
+                        }
+                        g_app_state = APP_STATE_PLAYING;
+                        int p = pos / 1000;
+                        snprintf(tbuf, sizeof(tbuf), "B: %02d:%02d -> LOOP", p / 60, p % 60);
+                        display_toast(tbuf);
+                    } else {
+                        display_toast("Too short (<1s)");
+                    }
+                } else {
+                    audio_player_clear_ab();
+                    display_toast("A-B Cleared");
+                }
             }
             break;
 
@@ -782,9 +814,8 @@ static void handle_button_events(void)
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
                 // 杩涘叆鍙橀€熸€侊細浠呭湪闀挎寜棣栨瑙﹀彂涓€娆★紙閬垮厤涓?HOLD 閲嶅璋冪敤 press锛?
                 if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
-                    if (g_app_state == APP_STATE_PAUSED) {
-                        audio_player_resume();
-                    }
+                    g_state_before_scrub = g_app_state;   /* R111 */
+                    /* R111: 暂停态不resume, scrub seek不需要管道运行, 避免PAUSE/RESUME混乱 */
                     skip_seconds(SEEK_STEP_SEC);            // R046锛氬厛缁ф壙鐭寜鍩哄噯璺宠繘 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
                     tape_control_ff_press();
                     audio_player_set_speed(tape_control_get_speed());
@@ -800,11 +831,13 @@ static void handle_button_events(void)
                     audio_player_set_speed(tape_control_get_speed());
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
-                tape_control_ff_release();
-                audio_player_set_speed(TAPE_SPEED_NORMAL);
-                audio_player_scrub_exit();   /* R098: 从最后 seek 位置恢复播放 */
-                g_app_state = APP_STATE_PLAYING;
-                g_combo_rew_us = 0; g_combo_stop_us = 0;  // 閫€鍑哄彉閫熸€侊紝娓呯┖缁勫悎閿鏃?
+                if (g_app_state == APP_STATE_FAST_FORWARD) {
+                                tape_control_ff_release();
+                                audio_player_set_speed(TAPE_SPEED_NORMAL);
+                                audio_player_scrub_exit(g_state_before_scrub != APP_STATE_PAUSED);
+                                g_app_state = g_state_before_scrub;   /* R111: 恢复快进前状态 */
+                                g_combo_rew_us = 0; g_combo_stop_us = 0;  // 閫€鍑哄彉閫熸€侊紝娓呯┖缁勫悎閿鏃?
+                            }
             }
             break;
 
@@ -825,9 +858,8 @@ static void handle_button_events(void)
             } else if (e->event == BTN_EVENT_LONG_PRESS) {
                 // 杩涘叆鍙橀€熸€侊細浠呭湪闀挎寜棣栨瑙﹀彂涓€娆★紙閬垮厤涓?HOLD 閲嶅璋冪敤 press锛?
                 if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
-                    if (g_app_state == APP_STATE_PAUSED) {
-                        audio_player_resume();
-                    }
+                    g_state_before_scrub = g_app_state;   /* R111 */
+                    /* R111: 暂停态不resume */
                     skip_seconds(-SEEK_STEP_SEC);           // R046锛氬厛缁ф壙鐭寜鍩哄噯鍚庨€€ 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
                     tape_control_rewind_press();
                     audio_player_set_speed(tape_control_get_speed());
@@ -842,11 +874,13 @@ static void handle_button_events(void)
                     audio_player_set_speed(tape_control_get_speed());
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
-                tape_control_rewind_release();
-                audio_player_set_speed(TAPE_SPEED_NORMAL);
-                audio_player_scrub_exit();   /* R098: 从最后 seek 位置恢复播放 */
-                g_app_state = APP_STATE_PLAYING;
-                g_combo_rew_us = 0; g_combo_stop_us = 0;  // 閫€鍑哄彉閫熸€侊紝娓呯┖缁勫悎閿鏃?
+                if (g_app_state == APP_STATE_REWIND) {
+                                tape_control_rewind_release();
+                                audio_player_set_speed(TAPE_SPEED_NORMAL);
+                                audio_player_scrub_exit(g_state_before_scrub != APP_STATE_PAUSED);
+                                g_app_state = g_state_before_scrub;   /* R111: 恢复快进前状态 */
+                                g_combo_rew_us = 0; g_combo_stop_us = 0;  // 閫€鍑哄彉閫熸€侊紝娓呯┖缁勫悎閿鏃?
+                            }
             }
             break;
 

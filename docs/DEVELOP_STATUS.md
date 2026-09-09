@@ -192,3 +192,50 @@ PRD V2.0 扩展   ░░░░░░░░░░  规划 (蓝牙方案已出 BT_
 - main/cassette_bg.h — 盒壳背景 2xSSAA
 - tools/gen_reel.py — 橙色+2xSSAA生成器
 - tools/gen_cassette_bg.py — 2xSSAA生成器
+
+
+---
+
+## R111 — A-B复读混合式 + UI优化 + Bug修复 (2026-09-09)
+
+### A-B复读混合式改造 (核心功能)
+- 长按PLAY键改为A-B标记状态机: 无标记→标记A; 有A无B→标记B(≥1s自动开循环); 循环中→清除标记
+- 标记时底部toast提示3秒 (A: 00:58 / B: 01:07 -> LOOP / Too short / A-B Cleared)
+- 状态栏A标记 + 格式行A-B信息 (MP3 | A:58->B:07 x3) + 进度条A/B标记点 + AB徽章
+- 原长按PLAY切换播放模式移至菜单
+- 菜单→A-B复读保留精细微调 (Mark A/Mark B/Loop/Clear)
+
+### A-B复读Bug修复 (多轮排查)
+- task_wdt死机: display_show_ab_menu()直接在main任务调lv_lock()与lvgl_task竞争→改为缓存+标志范式
+- PLAY键无响应: 进入子菜单时s_edit未重置→进入时s_edit=false
+- 界面被覆盖: s_menu_visible未生效 + ab_menu_apply_nolock()未隐藏s_cjk_canvas→修复
+- 中文方块: g_ab_menu用montserrat_14仅ASCII→A-B子菜单改用英文 (Mark A/Mark B/Loop/Clear)
+- 暂停态标记B后界面仍暂停: 标记B后自动恢复播放
+- 状态不一致(按键指示暂停但磁带轮转): 快进/快退退出无条件设PLAYING→保存进入前状态并恢复
+- 暂停态快进导致管道混乱: 暂停态进入scrub不resume + audio_player_scrub_exit(resume)参数控制
+- 标记B后无声: 在B点resume后立即触发AB循环seek回A, RESUME/PAUSE碰撞→暂停态先seek到A点再resume
+
+### UI优化
+- 音量OSD中央浮层 (去掉喇叭图标, 高50px)
+- TAPEBOOK启动画面
+- 格式行: 移除静态44KHZ/16bit/320kbps, 改为动态A-B复读信息
+- 移除底部lbl_ab (y=202与按键重叠), A-B文字移至格式行
+- SQ徽章化 + 总时长右对齐修复
+- 进入菜单自动暂停播放, 退出菜单自动恢复
+
+### 功能修复
+- 停止状态FF/REW RELEASE状态检查 (假播放bug)
+- 快进/快退响应优化 (BTN_LONG_PRESS_MS 800→500ms)
+- 停止键重置播放位置 (从开始播放而非继续)
+- FF/REW时间显示移至进度条上方, 与倍速指示同一行
+- RW/FF倍速指示与读秒重叠修复
+- NOR和TF卡图标重叠修复
+
+### 变更文件
+- main/main.cpp — A-B标记状态机 + 快进/快退状态恢复 + 标记B seek-to-A
+- main/display.cpp — toast机制 + 格式行动态A-B信息 + 移除lbl_ab + A-B菜单缓存范式
+- main/display.h — display_toast()声明
+- main/menu.cpp — s_edit重置 + A-B子菜单英文label
+- main/audio_player.cpp — A-B遍数计数 + 标记B自动开循环 + scrub_exit(resume)参数
+- main/audio_player.h — ab_loop_count() + scrub_exit()签名变更
+- main/config.h — BTN_LONG_PRESS_MS=500

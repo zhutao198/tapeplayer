@@ -134,7 +134,7 @@
 #define BTN_VOL_UP          GPIO_NUM_3    // VOL+  右拨 (LCK a-d)
 
 #define BTN_DEBOUNCE_MS     30            // 按键去抖时间 (ms)
-#define BTN_LONG_PRESS_MS   800           // 长按判定时间 (ms) — 所有按键短按/长按分界（R045）
+#define BTN_LONG_PRESS_MS   500           // 长按判定时间 (ms) — R111: 800→500, 快进/快退更快进入连续模式
 #define BTN_SCAN_INTERVAL   20            // 按键扫描间隔 (ms)
 
 /* 浏览模式长按连续移动曲目：间隔随按住时长加速缩短 (ms) */
@@ -183,8 +183,8 @@
 // 加速档位切换时间阈值 (进入变速态后的累计按住时长) — 无 1x 缓冲，进即 4x
 // 档位: 0=4.0x(进入即), 1=8.0x, 2=16.0x
 #define TAPE_ACCEL_STEP1_MS  0            // 进入变速态立即 4x（无 1x 缓冲，R045）
-#define TAPE_ACCEL_STEP2_MS  5000         // 累计5.0s后进入8x
-#define TAPE_ACCEL_STEP3_MS  8000         // 累计8.0s后进入16x（跳帧）
+#define TAPE_ACCEL_STEP2_MS  8000         // 累计5.0s后进入8x
+#define TAPE_ACCEL_STEP3_MS  12000         // 累计8.0s后进入16x（跳帧）
 
 // R100: FF/REW 短按跳进秒数（长按初始基准跳进同此值，保持一致避免断层）
 #define SEEK_STEP_SEC       2

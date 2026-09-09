@@ -71,6 +71,12 @@ void display_show_no_card(void);
 void display_clear_msg(void);
 
 /**
+ * @brief R111: 底部临时提示 (A-B标记等), 3秒自动消失
+ * @param msg 提示文本 (ASCII)
+ */
+void display_toast(const char *msg);
+
+/**
  * @brief 设置 TF 卡在位状态 (状态栏 SD 图标 + 插拔瞬时提示)
  * @param present true=已插入, false=已弹出
  */
