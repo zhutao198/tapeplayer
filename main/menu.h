@@ -56,6 +56,9 @@ void menu_close(void);
 /** 菜单是否打开 */
 bool menu_is_open(void);
 
+/** 重新渲染当前菜单 (从 browse 返回菜单时调用) */
+void menu_refresh(void);
+
 /** 处理一批按键事件 (菜单打开时由 main 转发) */
 void menu_handle_button(const btn_event_info_t *events, int n);
 

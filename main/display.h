@@ -132,7 +132,20 @@ void display_show_browse(int selected, int total, char lines[][24], int count);
  * @param sel    当前选中索引 (未使用, 预留)
  * @param hint   底部操作提示
  */
-void display_show_menu(const char *title, char lines[][24], int count, int sel, const char *hint);
+/** R111: 菜单显示项 (结构化) */
+typedef enum {
+    MENU_DISP_ACTION = 0,
+    MENU_DISP_SUBMENU,
+    MENU_DISP_TOGGLE,
+} menu_disp_kind_t;
+
+typedef struct {
+    const char *label;
+    menu_disp_kind_t kind;
+    const char *value;
+} menu_disp_item_t;
+
+void display_show_menu(const char *title, const menu_disp_item_t *items, int count, int sel, const char *hint);
 
 /**
  * @brief 菜单关闭通知 (R102): 清点阵菜单缓存, 恢复 player 渲染

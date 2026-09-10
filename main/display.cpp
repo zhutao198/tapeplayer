@@ -61,7 +61,14 @@ static const char *TAG = "display";
 /* R102: 菜单点阵绘制缓存 (绕开 LVGL 中文路径, 最小验证) */
 static bool   s_menu_visible = false;
 static char   s_menu_title[64];
-static char   s_menu_lines[BROWSE_VISIBLE_LINES][24];
+/* R111: 内部缓存用字符数组而非指针 (浏览文件名为局部变量, 函数返回后指针失效) */
+typedef struct {
+    char label[32];
+    char value[16];
+    menu_disp_kind_t kind;
+    int  disp_index;   /* R111: 显示序号, -1=自动(i+1), browse模式用全局索引 */
+} menu_cache_item_t;
+static menu_cache_item_t s_menu_items[BROWSE_VISIBLE_LINES];
 static int    s_menu_count = 0;
 static int    s_menu_sel = 0;
 static char   s_menu_hint[64];
@@ -672,6 +679,21 @@ static void cjk_blit_text(uint16_t *fb, int fb_w, int fb_h,
 static void cjk_canvas_text(int x, int y, const char *utf8, uint16_t fg, uint16_t bg)
 {
     cjk_blit_text(s_cjk_canvas_buf, CJK_CANVAS_W, CJK_CANVAS_H, x, y, utf8, fg, bg);
+}
+
+/* R111: 画填充矩形 (用于菜单选中高亮、状态栏图标等) */
+static void cjk_canvas_fill_rect(int x, int y, int w, int h, uint16_t color)
+{
+    if (!s_cjk_canvas_buf) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > CJK_CANVAS_W) w = CJK_CANVAS_W - x;
+    if (y + h > CJK_CANVAS_H) h = CJK_CANVAS_H - y;
+    if (w <= 0 || h <= 0) return;
+    for (int row = 0; row < h; row++) {
+        uint16_t *p = s_cjk_canvas_buf + (y + row) * CJK_CANVAS_W + x;
+        for (int col = 0; col < w; col++) p[col] = color;
+    }
 }
 
 /* R105: 曲名小 canvas */
@@ -2154,8 +2176,26 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
        直接转调 display_show_menu(安全入口: 只缓存数据+置标志, 由 lvgl_task 持锁绘制)。 */
     char title[32];
     snprintf(title, sizeof(title), "Browse %d/%d", selected + 1, total);
-    display_show_menu(title, lines, count, -1,
-                      "UP/DN scroll   PREV/NEXT move   PLAY confirm   STOP exit");
+    /* R111: 浏览项作为 action 类型, 需处理:
+       1. lines[i] 含 ">" 或 " " 前缀, 需去掉
+       2. 选中行索引 = 带 ">" 前缀的行 (selected是全局索引, 不能直接用)
+       3. 显示序号 = 全局索引 (随滚动变化), 而非行号 */
+    menu_disp_item_t items[BROWSE_VISIBLE_LINES];
+    int shown = count > BROWSE_VISIBLE_LINES ? BROWSE_VISIBLE_LINES : count;
+    int sel_row = 0;
+    for (int i = 0; i < shown; i++) {
+        if (lines[i][0] == '>') sel_row = i;
+        items[i].label = lines[i] + 1;   /* 跳过前缀 */
+        items[i].kind  = MENU_DISP_ACTION;
+        items[i].value = NULL;
+    }
+    int first_visible = selected - sel_row;   /* 可见区域首项的全局索引 */
+    display_show_menu(title, items, count, sel_row,
+                      "PREV/NEXT/VOL 移动  PLAY 播放  STOP 返回");
+    /* R111: 覆盖 disp_index 为全局索引 (display_show_menu 默认设为-1) */
+    for (int i = 0; i < shown; i++) {
+        s_menu_items[i].disp_index = first_visible + i + 1;
+    }
 }
 
 /* R102-fix: 菜单绘制 —— main 侧只缓存数据 + 置标志, 绝不触碰 LVGL。
@@ -2163,10 +2203,9 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
     menu_render 路径下 main 并未持 lv_lock, 与 CPU1 的 lvgl_task 并发竞争,
     损坏 LVGL 内部结构 → lv_refr/lv_obj_pos 遍历死循环 → main 卡 30s → task_wdt。
     这与 R063/R097/R100 "main_task 完全不碰 LVGL" 是同一类问题, 沿用同一范式。) */
-void display_show_menu(const char *title, char lines[][24], int count, int sel, const char *hint)
+void display_show_menu(const char *title, const menu_disp_item_t *items, int count, int sel, const char *hint)
 {
-    (void)sel;
-    if (!g_display_initialized || count <= 0) return;
+    if (!g_display_initialized || count <= 0 || !items) return;
 
     /* 仅缓存菜单内容到全局(纯内存写, 不触碰 LVGL) */
     s_menu_count = count;
@@ -2175,8 +2214,14 @@ void display_show_menu(const char *title, char lines[][24], int count, int sel, 
              (title && title[0]) ? title : "Menu");
     int shown = count;
     if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
-    for (int i = 0; i < shown; i++)
-        snprintf(s_menu_lines[i], sizeof(s_menu_lines[i]), "%s", lines[i]);
+    for (int i = 0; i < shown; i++) {
+        snprintf(s_menu_items[i].label, sizeof(s_menu_items[i].label), "%s",
+                 items[i].label ? items[i].label : "");
+        s_menu_items[i].kind = items[i].kind;
+        snprintf(s_menu_items[i].value, sizeof(s_menu_items[i].value), "%s",
+                 items[i].value ? items[i].value : "");
+        s_menu_items[i].disp_index = -1;   /* 默认自动编号 */
+    }
     if (hint) snprintf(s_menu_hint, sizeof(s_menu_hint), "%s", hint);
     else      s_menu_hint[0] = '\0';
     s_menu_visible = true;
@@ -2203,26 +2248,86 @@ static void menu_apply_nolock(void)
     lv_obj_add_flag(g_ab_menu,LV_OBJ_FLAG_HIDDEN);
     s_ab_menu_visible = false;  /* R111: 退出A-B菜单 */
 
-    /* R103: 用 canvas 画点阵菜单 (LVGL 原生位图路径, 不碰 SPI) */
+    /* R111: 设计稿风格菜单 —— 顶部状态栏 + 选中高亮 + 序号 + 子菜单箭头 + TOGGLE右对齐 */
     if (!s_cjk_canvas) return;
 
-    const uint16_t fg = (uint16_t)lv_color_to_u16(lv_color_white());
-    const uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+    const uint16_t fg       = (uint16_t)lv_color_to_u16(lv_color_white());
+    const uint16_t bg       = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+    const uint16_t purple   = (uint16_t)lv_color_to_u16(lv_color_hex(0xb8a4dc));
+    const uint16_t cyan     = (uint16_t)lv_color_to_u16(lv_color_hex(0x2dd4bf));
+    const uint16_t gray     = (uint16_t)lv_color_to_u16(lv_color_hex(0x8a93a6));
+    const uint16_t hilite   = (uint16_t)lv_color_to_u16(lv_color_hex(0x1d2740));
+    const uint16_t dim      = (uint16_t)lv_color_to_u16(lv_color_hex(0x6b7280));
+
     int shown = s_menu_count;
     if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
 
     cjk_canvas_clear();
-    int y = 24;
-    cjk_canvas_text(8, y, s_menu_title, fg, bg);    /* 标题 */
-    y += 22;
-    for (int i = 0; i < shown; i++) {               /* 菜单行 */
-        cjk_canvas_text(8, y, s_menu_lines[i], fg, bg);
-        y += 20;
+
+    /* === 顶部状态栏 (y=6~22) === */
+    cjk_canvas_text(8, 6, s_menu_title, purple, bg);   /* 标题(紫色) */
+    /* NOR 徽章 */
+    cjk_canvas_fill_rect(60, 7, 26, 12, bg);
+    cjk_canvas_text(62, 6, "NOR", purple, bg);
+    /* 电量图标 */
+    int bp = power_mgmt_get_battery_percent();
+    cjk_canvas_fill_rect(290, 8, 20, 10, bg);
+    cjk_canvas_fill_rect(290, 8, 20, 10, fg);  /* 外框 */
+    cjk_canvas_fill_rect(291, 9, 18, 8, bg);   /* 内空 */
+    int bw = (bp * 16) / 100;
+    if (bw > 16) bw = 16;
+    if (bw < 0) bw = 0;
+    cjk_canvas_fill_rect(292, 10, bw, 6, bp < 20 ? (uint16_t)lv_color_to_u16(lv_color_hex(0xf59e0b)) : fg);
+
+    /* === 菜单列表 (y=36开始, 每行18px) === */
+    const int LIST_X = 12;
+    const int LIST_Y = 36;
+    const int ROW_H  = 18;
+    const int IDX_W  = 32;   /* 序号宽度 (两位数需32px) */
+    for (int i = 0; i < shown; i++) {
+        int ry = LIST_Y + i * ROW_H;
+        bool selected = (i == s_menu_sel);
+
+        /* 选中高亮背景 */
+        if (selected) {
+            cjk_canvas_fill_rect(8, ry - 1, DISPLAY_WIDTH - 16, ROW_H, hilite);
+        }
+
+        const menu_cache_item_t *it = &s_menu_items[i];
+        uint16_t row_fg = selected ? fg : dim;
+
+        /* 序号: 选中项显示 ▶, 其他显示数字 */
+        char idxbuf[16];
+        if (selected) {
+            snprintf(idxbuf, sizeof(idxbuf), ">");
+        } else {
+            int disp = (it->disp_index >= 0) ? it->disp_index : (i + 1);
+            snprintf(idxbuf, sizeof(idxbuf), "%d", disp);
+        }
+        cjk_canvas_text(LIST_X, ry, idxbuf, selected ? cyan : gray, selected ? hilite : bg);
+
+        /* 菜单项文字 */
+        cjk_canvas_text(LIST_X + IDX_W, ry, it->label, row_fg, selected ? hilite : bg);
+
+        /* 右侧: 子菜单箭头 或 TOGGLE值 */
+        if (it->kind == MENU_DISP_SUBMENU) {
+            cjk_canvas_text(DISPLAY_WIDTH - 24, ry, ">", cyan, selected ? hilite : bg);
+        } else if (it->kind == MENU_DISP_TOGGLE && it->value[0]) {
+            /* TOGGLE值右对齐: 估算文字宽度(每字符16px), 从右侧往左画 */
+            int vlen = 0;
+            const char *v = it->value;
+            while (*v) { if ((*v & 0xC0) != 0x80) vlen++; v++; }
+            int vx = DISPLAY_WIDTH - 12 - vlen * 16;
+            if (vx < LIST_X + IDX_W + 40) vx = LIST_X + IDX_W + 40;
+            cjk_canvas_text(vx, ry, it->value, cyan, selected ? hilite : bg);
+        }
     }
-    if (s_menu_hint[0]) {                           /* 底部提示 */
-        cjk_canvas_text(8, DISPLAY_HEIGHT - 20, s_menu_hint,
-                        (uint16_t)lv_color_to_u16(lv_color_hex(0x8a93a6)), bg);
+
+    /* === 底部操作提示 (y=DISPLAY_HEIGHT-20) === */
+    if (s_menu_hint[0]) {
+        cjk_canvas_text(8, DISPLAY_HEIGHT - 20, s_menu_hint, gray, bg);
     }
+
     lv_obj_clear_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
     lv_obj_invalidate(s_cjk_canvas);
 }

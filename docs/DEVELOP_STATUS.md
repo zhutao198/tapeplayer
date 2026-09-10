@@ -239,3 +239,35 @@ PRD V2.0 扩展   ░░░░░░░░░░  规划 (蓝牙方案已出 BT_
 - main/audio_player.cpp — A-B遍数计数 + 标记B自动开循环 + scrub_exit(resume)参数
 - main/audio_player.h — ab_loop_count() + scrub_exit()签名变更
 - main/config.h — BTN_LONG_PRESS_MS=500
+
+
+## R112 (2026-09-10) 菜单UI设计稿对齐 + 浏览文件交互修复
+
+### 菜单UI改进
+- 顶部状态栏: 标题(紫色) + NOR徽章 + 电量图标(低电量橙色)
+- 选中项高亮背景 (#1d2740 深蓝块) + 白色文字
+- 序号列: 选中项青色">", 未选中灰色数字
+- 子菜单指示箭头 (右侧青色">")
+- TOGGLE值右对齐 + 青色高亮
+- 未选中项灰色文字, 层次分明
+- 菜单数据结构化: menu_disp_item_t (label/kind/value) 替代预格式化字符串
+- 新增 cjk_canvas_fill_rect() 点阵矩形绘制
+
+### 浏览文件交互修复
+- 从菜单进入浏览时保留菜单状态, STOP返回一级菜单 (不再直接回播放界面)
+- 浏览中PLAY选曲后自动关闭菜单
+- 浏览中VOL+/VOL- 用于上下移动 (与菜单一致)
+- VOL方向统一: 往上拨=向上移动, 往下拨=向下移动 (菜单和浏览同步)
+- 浏览翻页后高亮跟随选中项 (修复: 选中行索引 vs 全局索引)
+- 浏览序号随滚动变化 (全局索引, 如7-12而非固定1-6)
+- 浏览序号列宽32px支持两位数显示
+- 去掉文件名前的">"前缀 (由渲染层统一画选中指示)
+- 按键分发: 浏览模式优先于菜单处理 (菜单保持打开但不拦截浏览按键)
+- 新增 menu_refresh() 公开函数 (从浏览返回菜单时重渲染)
+
+### 变更文件
+- main/display.cpp - menu_apply_nolock重写(设计稿风格) + cjk_canvas_fill_rect + menu_cache_item_t(字符数组缓存) + display_show_browse修复
+- main/display.h - menu_disp_item_t定义 + display_show_menu签名变更 + menu_refresh声明
+- main/menu.cpp - menu_render结构化输出 + VOL方向修正 + menu_refresh实现
+- main/menu.h - menu_refresh声明
+- main/main.cpp - 浏览从菜单进入保留菜单状态 + STOP返回菜单 + VOL导航 + 按键分发优先级

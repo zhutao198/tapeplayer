@@ -120,6 +120,7 @@ static int            g_pending_save_position = 0;
 
 static int            g_browse_index = 0;              // 娴忚妯″紡閫変腑绱㈠紩
 static app_state_t    g_state_before_browse = APP_STATE_STOPPED;
+static bool           g_browse_from_menu = false;   /* R111: browse从菜单进入, STOP返回菜单 */
 static app_state_t    g_state_before_menu   = APP_STATE_STOPPED;
 static app_state_t    g_state_before_scrub  = APP_STATE_STOPPED;  /* R111: 快进/快退前状态, 退出时恢复 */
 static uint32_t       g_browse_repeat_ms = 0;          // 娴忚闀挎寜杩炵画绉诲姩鍩哄噯鏃跺埢 (hold_ms)
@@ -377,11 +378,13 @@ void app_enter_browse(void)
 {
     if (playlist_count() == 0) {
         menu_close();
+        display_menu_closed();
         g_app_state = g_state_before_menu;
         return;
     }
     g_state_before_browse = g_state_before_menu;
-    menu_close();
+    g_browse_from_menu = true;
+    /* R111: 不关闭菜单, 保留菜单状态, browse STOP 时返回菜单 */
     g_app_state = APP_STATE_BROWSING;
     g_browse_index = g_current_track;
     ESP_LOGI(TAG, "Enter browse via menu");
@@ -456,7 +459,7 @@ static void handle_button_events(void)
     }
 
     /* 缁熶竴鑿滃崟璺敱 (R049): 鑿滃崟鎵撳紑鏃舵墍鏈夋寜閿氦缁欒彍鍗曞鐞?*/
-    if (menu_is_open()) {
+    if (menu_is_open() && g_app_state != APP_STATE_BROWSING) {
         menu_handle_button(events, n);
         return;
     }
@@ -548,11 +551,23 @@ static void handle_button_events(void)
                     g_browse_repeat_ms = 0;
                 }
                 break;
+            case BTN_ID_VOL_DOWN:
+                if (e->event == BTN_EVENT_SHORT_PRESS) {
+                    g_browse_index = (g_browse_index + 1) % total;
+                }
+                break;
+            case BTN_ID_VOL_UP:
+                if (e->event == BTN_EVENT_SHORT_PRESS) {
+                    g_browse_index = (g_browse_index - 1 + total) % total;
+                }
+                break;
             case BTN_ID_PLAY_PAUSE:
                 if (e->event == BTN_EVENT_SHORT_PRESS) {
                     g_current_track = g_browse_index;
                     playlist_set_index(g_current_track);
                     g_seek_on_play_position = 0;
+                    g_browse_from_menu = false;
+                    if (menu_is_open()) { menu_close(); display_menu_closed(); }
                     g_app_state = g_state_before_browse;
                     /* R106-fix: 退出 browse 必须通知 display 清独占态。
                        原代码只切 g_app_state, 未清 s_menu_visible, 导致
@@ -590,10 +605,15 @@ static void handle_button_events(void)
             }
             case BTN_ID_STOP:
                 if (e->event == BTN_EVENT_SHORT_PRESS) {
-                    g_app_state = g_state_before_browse;
-                    /* R106-fix: 同 PLAY 退出 browse, 必须清显示独占态,
-                       否则 browse 点阵 canvas 会盖住返回的 player 屏。 */
-                    display_clear_msg();
+                    if (g_browse_from_menu) {
+                        /* R111: 从菜单进入的 browse, STOP 返回一级菜单 */
+                        g_app_state = APP_STATE_MENU;
+                        g_browse_from_menu = false;
+                        menu_refresh();
+                    } else {
+                        g_app_state = g_state_before_browse;
+                        display_clear_msg();
+                    }
                 } else if (e->event == BTN_EVENT_LONG_PRESS) {
                     int bm = bookmark_add(g_browse_index, 0);
                     if (bm >= 0) ESP_LOGI(TAG, "Bookmark added at track %d (slot %d)", g_browse_index, bm);

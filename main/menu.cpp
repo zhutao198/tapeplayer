@@ -192,6 +192,11 @@ bool menu_is_open(void)
     return s_open;
 }
 
+void menu_refresh(void)
+{
+    if (s_open) menu_render();
+}
+
 static void menu_render(void)
 {
     if (!s_open) return;
@@ -225,25 +230,29 @@ static void menu_render(void)
         return;
     }
 
-    char lines[BROWSE_VISIBLE_LINES][24];
+    /* R111: 结构化菜单项 (支持序号/子菜单箭头/TOGGLE值右对齐) */
+    menu_disp_item_t items[BROWSE_VISIBLE_LINES];
     int shown = lv->count;
     if (shown > BROWSE_VISIBLE_LINES) shown = BROWSE_VISIBLE_LINES;
     for (int i = 0; i < shown; i++) {
         const menu_item_t *it = &lv->items[i];
-        const char *mark = (i == lv->sel) ? (s_edit ? "»" : ">") : " ";
-        if (it->kind == MI_TOGGLE && it->get_idx) {
+        items[i].label = it->label;
+        if (it->kind == MI_SUBMENU) {
+            items[i].kind = MENU_DISP_SUBMENU;
+            items[i].value = NULL;
+        } else if (it->kind == MI_TOGGLE && it->get_idx) {
+            items[i].kind = MENU_DISP_TOGGLE;
             int idx = it->get_idx();
-            const char *val = (idx >= 0 && idx < it->option_count) ? it->options[idx] : "";
-            snprintf(lines[i], sizeof(lines[i]), "%s %s: %s", mark, it->label, val);
+            items[i].value = (idx >= 0 && idx < it->option_count) ? it->options[idx] : "";
         } else {
-            snprintf(lines[i], sizeof(lines[i]), "%s %s", mark, it->label);
+            items[i].kind = MENU_DISP_ACTION;
+            items[i].value = NULL;
         }
     }
-    /* R103: "●"/"±" 点阵字库缺失, 分别改用 ">"/"+" */
     const char *hint = s_edit
-        ? "> 编辑中 VOL+ 调值 播放/停止 完成"
-        : "PREV/NEXT/VOL 移动 播放 进入 停止 返回";
-    display_show_menu(lv->title, lines, lv->count, lv->sel, hint);
+        ? "编辑中  VOL+ 调值  PLAY/STOP 完成"
+        : "PREV/NEXT/VOL 选择  PLAY 进入  STOP 返回";
+    display_show_menu(lv->title, items, lv->count, lv->sel, hint);
 }
 
 void menu_handle_button(const btn_event_info_t *events, int n)
@@ -356,15 +365,15 @@ void menu_handle_button(const btn_event_info_t *events, int n)
             break;
 
         case BTN_ID_VOL_DOWN:
-            if (e->event == BTN_EVENT_SHORT_PRESS) {   // R050：波轮在浏览态仅导航
-                lv->sel = (lv->sel - 1 + lv->count) % lv->count;
+            if (e->event == BTN_EVENT_SHORT_PRESS) {   /* R111: 往下拨 = 向下 */
+                lv->sel = (lv->sel + 1) % lv->count;
                 menu_render();
             }
             break;
 
         case BTN_ID_VOL_UP:
-            if (e->event == BTN_EVENT_SHORT_PRESS) {   // R050：波轮在浏览态仅导航
-                lv->sel = (lv->sel + 1) % lv->count;
+            if (e->event == BTN_EVENT_SHORT_PRESS) {   /* R111: 往上拨 = 向上 */
+                lv->sel = (lv->sel - 1 + lv->count) % lv->count;
                 menu_render();
             }
             break;
