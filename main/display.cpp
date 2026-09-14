@@ -73,19 +73,6 @@ static int    s_menu_count = 0;
 static int    s_menu_sel = 0;
 static char   s_menu_hint[64];
 /* R111: A-B 菜单缓存（main只写缓存+设标志, lvgl_task持锁消费） */
-static bool   s_ab_menu_visible = false;
-static char   s_ab_title[64];
-static char   s_ab_lines[4][24];
-static int    s_ab_count = 0;
-static int    s_ab_sel = 0;
-static bool   s_ab_edit = false;
-static int    s_ab_scrub = 0;
-static int    s_ab_a_ms = -1;
-static int    s_ab_b_ms = -1;
-static bool   s_ab_on = false;
-static int    s_ab_total_ms = 0;
-static int    s_ab_cur_ms = 0;
-static char   s_ab_hint[128];
 
 /* R098f: display_init 提前到本文件靠前位置, 其依赖的下列函数定义在文件后段,
    此处补前向声明以满足编译 (均为本编译单元内函数)。 */
@@ -107,7 +94,6 @@ static void display_update_nolock(player_state_t state, const char *track_name,
 
 /* R102-fix: 菜单真正的 LVGL 绘制(仅供 lvgl_task 持锁区内调用, 前向声明见 menu_apply_nolock) */
 static void             menu_apply_nolock(void);
-static void             ab_menu_apply_nolock(void);  /* R111 */
 /* R103: 点阵 canvas (LVGL 原生位图路径), 在 display_init 中 ui_create 之后调用 */
 static void             cjk_canvas_init(void);
 static void             ui_show_msg(const char *msg);
@@ -162,14 +148,6 @@ static lv_obj_t *g_ota     = NULL;  // 升级界面容器
 static lv_obj_t *ota_title = NULL;  // 标题
 
 /* R051：A-B 复读状态屏（带迷你进度条） */
-static lv_obj_t *g_ab_menu   = NULL;
-static lv_obj_t *abm_title   = NULL;
-static lv_obj_t *abm_bar     = NULL;
-static lv_obj_t *abm_mark_a  = NULL;
-static lv_obj_t *abm_mark_b  = NULL;
-static lv_obj_t *abm_stat    = NULL;
-static lv_obj_t *abm_lines[4]= {NULL, NULL, NULL, NULL};
-static lv_obj_t *abm_hint    = NULL;
 static lv_obj_t *ota_body  = NULL;  // 正文(摘要/状态, 多行)
 static lv_obj_t *ota_bar   = NULL;  // 写入进度条
 static lv_obj_t *ota_pct   = NULL;  // 进度百分比
@@ -201,6 +179,7 @@ static lv_obj_t *s_pause_r = NULL;
 static lv_obj_t *lbl_ab      = NULL; // A-B 复读信息（底部灰栏）
 static lv_obj_t *ab_mark_a   = NULL; // 进度条上的 A 点标记
 static lv_obj_t *ab_mark_b   = NULL; // 进度条上的 B 点标记
+static lv_obj_t *ab_region    = NULL; // R112: A-B 区间高亮（进度条上A→B半透明绿色）
 static lv_obj_t *reel_l      = NULL; // 磁带左卷轴装饰
 static lv_obj_t *reel_r      = NULL; // 磁带右卷轴装饰
 
@@ -326,7 +305,6 @@ static volatile bool s_clear_msg_pending = false;   /* 清全屏消息返回播�
    这与 R063/R097/R100 的"main_task 完全不碰 LVGL"是同一类问题, 故沿用同一范式:
    main 只设标志, 真正的 LVGL 操作由 lvgl_task 在持锁区内执行。 */
 static volatile bool s_menu_pending       = false;  /* 菜单内容待绘制 */
-static volatile bool s_ab_menu_pending    = false;  /* R111: A-B菜单内容待绘制 */
 static volatile bool s_menu_close_pending = false;  /* 菜单关闭待处理(恢复 player) */
 
 void display_register_main_tick(display_main_tick_fn_t fn)
@@ -670,7 +648,7 @@ static void cjk_blit_text(uint16_t *fb, int fb_w, int fb_h,
                 if (px >= 0 && px < fb_w) fb[py * fb_w + px] = (b1 & (0x80 >> j)) ? fg : bg;
             }
         }
-        pen += GW;
+        pen += (u < 0x80) ? 12 : GW;  /* ASCII紧凑12px, 中文保持16px */
         if (pen > fb_w) break;
     }
 }
@@ -805,10 +783,6 @@ static void lvgl_task(void *arg)
             menu_apply_nolock();
         }
         /* R111: 消费 A-B 菜单绘制标志 */
-        if (s_ab_menu_pending) {
-            s_ab_menu_pending = false;
-            ab_menu_apply_nolock();
-        }
         if (s_menu_close_pending) {
             s_menu_close_pending = false;
             /* R103: 隐藏点阵 canvas */
@@ -1358,6 +1332,17 @@ static void ui_create(void)
     lv_obj_set_style_text_font(lbl_hint, UI_FONT, 0);
     lv_obj_add_flag(lbl_hint, LV_OBJ_FLAG_HIDDEN);
 
+    /* R112: A-B 区间高亮（进度条上A→B半透明绿色区域） */
+    ab_region = lv_obj_create(g_player);
+    lv_obj_set_size(ab_region, 0, 8);
+    lv_obj_set_pos(ab_region, M, 185);
+    lv_obj_set_style_bg_color(ab_region, lv_color_hex(0x22c55e), 0);
+    lv_obj_set_style_bg_opa(ab_region, LV_OPA_30, 0);
+    lv_obj_set_style_border_width(ab_region, 0, 0);
+    lv_obj_set_style_pad_all(ab_region, 0, 0);
+    lv_obj_set_style_radius(ab_region, 2, 0);
+    lv_obj_add_flag(ab_region, LV_OBJ_FLAG_HIDDEN);
+
     /* A-B 复读：进度条上的 A/B 点标记（细竖线）+ 底部灰栏信息 */
     ab_mark_a = lv_obj_create(g_player);
     lv_obj_set_size(ab_mark_a, 2, 10);
@@ -1494,68 +1479,6 @@ static void ui_create(void)
     lv_obj_set_pos(ota_hint, M, H - 20);
     lv_obj_set_style_text_color(ota_hint, lv_color_hex(0x8a93a6), 0);
     lv_obj_set_style_text_font(ota_hint, UI_FONT, 0);
-
-    /* ---- R051：A-B 复读状态屏（迷你进度条 + 状态 + 动作列表） ---- */
-    g_ab_menu = lv_obj_create(scr);
-    lv_obj_set_size(g_ab_menu, W, H);
-    lv_obj_set_style_bg_color(g_ab_menu, lv_color_hex(0x0a0e17), 0);
-    lv_obj_set_style_border_width(g_ab_menu, 0, 0);
-    lv_obj_set_style_pad_all(g_ab_menu, 0, 0);
-    lv_obj_clear_flag(g_ab_menu, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
-
-    abm_title = lv_label_create(g_ab_menu);
-    lv_obj_set_pos(abm_title, M, 12);
-    lv_obj_set_style_text_color(abm_title, lv_color_hex(0x2dd4bf), 0);
-    lv_obj_set_style_text_font(abm_title, UI_FONT, 0);
-
-    abm_bar = lv_bar_create(g_ab_menu);
-    lv_obj_set_size(abm_bar, W - 2 * M, 12);
-    lv_obj_set_pos(abm_bar, M, 40);
-    lv_bar_set_range(abm_bar, 0, 1000);
-    lv_bar_set_value(abm_bar, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(abm_bar, lv_color_hex(0x16203a), 0);
-    lv_obj_set_style_bg_color(abm_bar, lv_color_hex(0x2dd4bf), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(abm_bar, 4, 0);
-
-    abm_mark_a = lv_obj_create(g_ab_menu);
-    lv_obj_set_size(abm_mark_a, 2, 16);
-    lv_obj_set_pos(abm_mark_a, M, 38);
-    lv_obj_set_style_bg_color(abm_mark_a, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_border_width(abm_mark_a, 0, 0);
-    lv_obj_set_style_pad_all(abm_mark_a, 0, 0);
-    lv_obj_set_style_shadow_width(abm_mark_a, 0, 0);
-    lv_obj_set_style_radius(abm_mark_a, 0, 0);
-    lv_obj_add_flag(abm_mark_a, LV_OBJ_FLAG_HIDDEN);
-
-    abm_mark_b = lv_obj_create(g_ab_menu);
-    lv_obj_set_size(abm_mark_b, 2, 16);
-    lv_obj_set_pos(abm_mark_b, M, 38);
-    lv_obj_set_style_bg_color(abm_mark_b, lv_color_hex(0xf5a623), 0);
-    lv_obj_set_style_border_width(abm_mark_b, 0, 0);
-    lv_obj_set_style_pad_all(abm_mark_b, 0, 0);
-    lv_obj_set_style_shadow_width(abm_mark_b, 0, 0);
-    lv_obj_set_style_radius(abm_mark_b, 0, 0);
-    lv_obj_add_flag(abm_mark_b, LV_OBJ_FLAG_HIDDEN);
-
-    abm_stat = lv_label_create(g_ab_menu);
-    lv_obj_set_pos(abm_stat, M, 60);
-    lv_obj_set_width(abm_stat, W - 2 * M);
-    lv_obj_set_style_text_color(abm_stat, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(abm_stat, UI_FONT, 0);
-
-    for (int i = 0; i < 4; i++) {
-        abm_lines[i] = lv_label_create(g_ab_menu);
-        lv_obj_set_pos(abm_lines[i], M, 92 + i * 22);
-        lv_obj_set_width(abm_lines[i], W - 2 * M);
-        lv_obj_set_style_text_color(abm_lines[i], lv_color_hex(0x8a93a6), 0);
-        lv_obj_set_style_text_font(abm_lines[i], UI_FONT, 0);
-    }
-
-    abm_hint = lv_label_create(g_ab_menu);
-    lv_obj_set_pos(abm_hint, M, H - 20);
-    lv_obj_set_style_text_color(abm_hint, lv_color_hex(0x8a93a6), 0);
-    lv_obj_set_style_text_font(abm_hint, UI_FONT, 0);
 }
 
 static void ui_show_player(void)
@@ -1569,8 +1492,6 @@ static void ui_show_player(void)
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_splash, LV_OBJ_FLAG_HIDDEN);  /* R111: 隐藏启动画面 */
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
-    s_ab_menu_visible = false;
     s_menu_visible = false;
 }
 
@@ -1581,7 +1502,6 @@ static void ui_show_msg(const char *txt)
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
     lv_unlock();
 }
 
@@ -1592,7 +1512,6 @@ static void ui_show_msg_nolock(const char *txt)
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
 }
 
 void display_set_play_mode(int mode)
@@ -2081,6 +2000,7 @@ static void display_update_nolock(player_state_t state,
     if (ab_a < 0) {
         lv_obj_add_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ab_region, LV_OBJ_FLAG_HIDDEN);
         if (s_ab_badge) lv_obj_add_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
     } else {
         /* 进度条上的 A/B 点标记（需要已知总时长才能定位） */
@@ -2091,11 +2011,24 @@ static void display_update_nolock(player_state_t state,
             int bp = (ab_b >= 0) ? (int)((int64_t)ab_b * 1000 / dur_ms) : ap;
             bp = bp < 0 ? 0 : (bp > 1000 ? 1000 : bp);
             int bar_w = DISPLAY_WIDTH - 2 * 8;
-            lv_obj_set_x(ab_mark_a, 8 + (ap * bar_w) / 1000);
-            lv_obj_set_x(ab_mark_b, 8 + (bp * bar_w) / 1000);
+            int ax = 8 + (ap * bar_w) / 1000;
+            int bx = 8 + (bp * bar_w) / 1000;
+            lv_obj_set_x(ab_mark_a, ax);
+            lv_obj_set_x(ab_mark_b, bx);
             lv_obj_clear_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
-            if (ab_b >= 0) lv_obj_clear_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
-            else lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+            if (ab_b >= 0) {
+                lv_obj_clear_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+                /* R112: A-B 区间高亮 */
+                int rx = (ax < bx) ? ax : bx;
+                int rw = (bx > ax) ? (bx - ax) : (ax - bx);
+                if (rw < 2) rw = 2;
+                lv_obj_set_pos(ab_region, rx, 185);
+                lv_obj_set_width(ab_region, rw);
+                lv_obj_clear_flag(ab_region, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(ab_region, LV_OBJ_FLAG_HIDDEN);
+            }
             /* R111: A-B 徽章仅在复读开启时显示 */
             if (s_ab_badge) {
                 if (ab_on) lv_obj_clear_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
@@ -2104,6 +2037,7 @@ static void display_update_nolock(player_state_t state,
         } else {
             lv_obj_add_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ab_region, LV_OBJ_FLAG_HIDDEN);
         }
     }
 
@@ -2245,8 +2179,6 @@ static void menu_apply_nolock(void)
     lv_obj_add_flag(g_msg,    LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota,    LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_ab_menu,LV_OBJ_FLAG_HIDDEN);
-    s_ab_menu_visible = false;  /* R111: 退出A-B菜单 */
 
     /* R111: 设计稿风格菜单 —— 顶部状态栏 + 选中高亮 + 序号 + 子菜单箭头 + TOGGLE右对齐 */
     if (!s_cjk_canvas) return;
@@ -2266,9 +2198,6 @@ static void menu_apply_nolock(void)
 
     /* === 顶部状态栏 (y=6~22) === */
     cjk_canvas_text(8, 6, s_menu_title, purple, bg);   /* 标题(紫色) */
-    /* NOR 徽章 */
-    cjk_canvas_fill_rect(60, 7, 26, 12, bg);
-    cjk_canvas_text(62, 6, "NOR", purple, bg);
     /* 电量图标 */
     int bp = power_mgmt_get_battery_percent();
     cjk_canvas_fill_rect(290, 8, 20, 10, bg);
@@ -2346,99 +2275,6 @@ void display_menu_closed(void)
 /* R111: main侧只缓存数据+设标志, 绝不触碰 LVGL (与 display_show_menu 同范式)。
    原实现直接 lv_lock+LVGL写, 与 CPU1 lvgl_task 并发竞争→损坏 LVGL 内部结构
    →lv_refr遍历死循环→main卡30s→task_wdt。 */
-void display_show_ab_menu(const char *title, char lines[][24], int count, int sel,
-                          bool edit, int scrub,
-                          int ab_a_ms, int ab_b_ms, bool ab_on,
-                          int total_ms, int cur_ms, const char *hint)
-{
-    if (!g_display_initialized) return;
-
-    /* 仅缓存 (纯内存写, 不触碰 LVGL) */
-    s_ab_count = count;
-    s_ab_sel   = sel;
-    s_ab_edit  = edit;
-    s_ab_scrub = scrub;
-    s_ab_a_ms  = ab_a_ms;
-    s_ab_b_ms  = ab_b_ms;
-    s_ab_on    = ab_on;
-    s_ab_total_ms = total_ms;
-    s_ab_cur_ms   = cur_ms;
-    snprintf(s_ab_title, sizeof(s_ab_title), "%s", (title && title[0]) ? title : "A-B Repeat");
-    for (int i = 0; i < count && i < 4; i++)
-        snprintf(s_ab_lines[i], sizeof(s_ab_lines[i]), "%s", lines[i]);
-    if (hint) snprintf(s_ab_hint, sizeof(s_ab_hint), "%s", hint);
-    else      s_ab_hint[0] = '\0';
-    s_ab_menu_visible = true;
-    s_menu_visible = false;
-
-    /* 唤醒背光 (非 LVGL 操作) */
-    if (g_display_sleep) {
-        display_set_brightness(s_last_brightness);
-        g_display_sleep = false;
-    }
-
-    s_ab_menu_pending = true;   /* 由 lvgl_task 持锁区消费 ab_menu_apply_nolock() */
-}
-
-/* R111: A-B菜单真正的 LVGL 绘制 —— 必须在 lv_lock() 内调用。
-   调用点: lvgl_task 消费 s_ab_menu_pending */
-static void ab_menu_apply_nolock(void)
-{
-    if (!g_display_initialized || !s_ab_menu_visible) return;
-
-    /* 隐藏其它界面，独占显示 A-B 状态屏 */
-    lv_obj_add_flag(g_msg,    LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_ota,    LV_OBJ_FLAG_HIDDEN);
-    if (s_cjk_canvas) lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);  /* R111: 隐藏点阵菜单canvas, 避免覆盖A-B屏 */
-    lv_obj_clear_flag(g_ab_menu, LV_OBJ_FLAG_HIDDEN);
-
-    lv_label_set_text(abm_title, s_ab_title);
-
-    /* 迷你进度条：填充 = 当前播放位置 */
-    int cur_v = 0;
-    if (s_ab_total_ms > 0 && s_ab_cur_ms >= 0) {
-        cur_v = (int)((int64_t)s_ab_cur_ms * 1000 / s_ab_total_ms);
-        if (cur_v < 0) cur_v = 0;
-        if (cur_v > 1000) cur_v = 1000;
-    }
-    lv_bar_set_value(abm_bar, cur_v, LV_ANIM_OFF);
-
-    /* A/B 标记定位 */
-    const int MARGIN = 8;
-    int bar_w = DISPLAY_WIDTH - 2 * MARGIN;
-    int ap = -1, bp = -1;
-    if (s_ab_total_ms > 0) {
-        if (s_ab_a_ms >= 0) { ap = (int)((int64_t)s_ab_a_ms * 1000 / s_ab_total_ms); ap = ap < 0 ? 0 : (ap > 1000 ? 1000 : ap); }
-        if (s_ab_b_ms >= 0) { bp = (int)((int64_t)s_ab_b_ms * 1000 / s_ab_total_ms); bp = bp < 0 ? 0 : (bp > 1000 ? 1000 : bp); }
-    }
-    if (ap >= 0) { lv_obj_set_x(abm_mark_a, MARGIN + (ap * bar_w) / 1000); lv_obj_clear_flag(abm_mark_a, LV_OBJ_FLAG_HIDDEN); }
-    else         { lv_obj_add_flag(abm_mark_a, LV_OBJ_FLAG_HIDDEN); }
-    if (bp >= 0) { lv_obj_set_x(abm_mark_b, MARGIN + (bp * bar_w) / 1000); lv_obj_clear_flag(abm_mark_b, LV_OBJ_FLAG_HIDDEN); }
-    else         { lv_obj_add_flag(abm_mark_b, LV_OBJ_FLAG_HIDDEN); }
-
-    /* 状态行 */
-    char a_buf[10], b_buf[10];
-    if (s_ab_a_ms >= 0) format_time(s_ab_a_ms / 1000, a_buf, sizeof(a_buf));
-    else                snprintf(a_buf, sizeof(a_buf), "--:--");
-    if (s_ab_b_ms >= 0) format_time(s_ab_b_ms / 1000, b_buf, sizeof(b_buf));
-    else                snprintf(b_buf, sizeof(b_buf), "PENDING");
-    char stat[48];
-    snprintf(stat, sizeof(stat), "A:%s  B:%s  Repeat:%s", a_buf, b_buf, s_ab_on ? "ON" : "OFF");
-    lv_label_set_text(abm_stat, stat);
-    lv_obj_set_style_text_color(abm_stat, s_ab_on ? lv_color_hex(0x2dd4bf) : lv_color_hex(0x8a93a6), 0);
-
-    /* 动作行 */
-    for (int i = 0; i < 4; i++) {
-        if (i < s_ab_count) lv_label_set_text(abm_lines[i], s_ab_lines[i]);
-        else                 lv_label_set_text(abm_lines[i], "");
-        bool sel_i = (i == s_ab_sel);
-        lv_obj_set_style_text_color(abm_lines[i],
-            sel_i ? lv_color_hex(0xffffff) : lv_color_hex(0x8a93a6), 0);
-    }
-
-    lv_label_set_text(abm_hint, s_ab_hint[0] ? s_ab_hint : "");
-}
 void display_show_info(const char *title, const char *text)
 {
     if (!g_display_initialized) return;

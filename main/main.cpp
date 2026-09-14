@@ -416,12 +416,10 @@ void app_show_info(const char *title, const char *text)
     ESP_LOGI(TAG, "Info: %s", title);
 }
 
-/* R049c锛氭寜閿彁绀洪煶锛堣缃紑鍚笖闈炴挱鏀炬€佹椂鍦ㄨ彍鍗?娴忚/鍋滄鎬佹挱鏀撅級 */
+/* R049c: 按键提示音 (已禁用: beep管道在无主音频时会导致task_wdt死机) */
 void app_play_beep(void)
 {
-    if (settings_load_key_beep()) {
-        audio_player_play_beep();
-    }
+    /* 禁用: audio_player_play_beep()在停止态创建raw+i2s管道会触发死机 */
 }
 
 /* R049c锛氳繘鍏?閫€鍑?TF 鍗″浐浠跺崌绾у悜瀵硷紙鐢?menu.cpp 鐨?app_ota_enter 璋冪敤锛?*/

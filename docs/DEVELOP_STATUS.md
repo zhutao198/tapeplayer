@@ -271,3 +271,35 @@ PRD V2.0 扩展   ░░░░░░░░░░  规划 (蓝牙方案已出 BT_
 - main/menu.cpp - menu_render结构化输出 + VOL方向修正 + menu_refresh实现
 - main/menu.h - menu_refresh声明
 - main/main.cpp - 浏览从菜单进入保留菜单状态 + STOP返回菜单 + VOL导航 + 按键分发优先级
+
+## R113 (2026-09-14) A-B菜单移除 + ASCII字体重构 + 按键音死机修复
+
+### A-B菜单移除
+- 菜单中移除"A-B 复读"入口(根菜单从5项变为4项: 浏览文件/书签/播放模式/系统设置)
+- 移除A-B二级菜单及微调状态机
+- 保留播放界面A-B功能: 长按PLAY键标记A/B, 自动进入循环, 进度条标记线+区间高亮+格式行动态A-B信息
+
+### ASCII字体重构
+- 全部95个ASCII字模(0x20-0x7E)从原点阵字库替换为Arial 15px渲染
+- 下对齐(baseline=13): 符合人类书写习惯, 所有字符baseline一致
+- 左对齐(x=1): 字符从同一列开始, 水平位置一致
+- 解决原点阵字库大量字符字形错误(A左上缺像素/2/7/V/X等缺陷)及高低不平问题
+
+### 字符间距优化
+- cjk_blit_text: ASCII字符步进从16px改为12px, 中文字符保持16px
+- 解决ASCII字符间距过大问题
+
+### 按键音死机修复
+- 根因: 停止态按STOP/PREV/NEXT键时, app_play_beep()创建raw+i2s管道播放提示音, 触发task_wdt死机(main任务)
+- 修复: app_play_beep()改为空函数, 禁用所有按键提示音
+- 验证: 启动后直接按任意键不再死机
+
+### 菜单UI
+- 移除顶部状态栏"NOR"徽章(无意义)
+
+### 变更文件
+- main/cjk_font.c - 全部95个ASCII字模替换为Arial 15px(baseline=13, x=1)
+- main/display.cpp - cjk_blit_text ASCII步进12px + 移除菜单NOR徽章
+- main/main.cpp - app_play_beep()禁用 + A-B菜单移除相关清理
+- main/menu.cpp - 移除A-B子菜单及相关代码
+- main/display.h - 移除A-B菜单相关声明

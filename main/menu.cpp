@@ -27,9 +27,6 @@ void app_play_beep(void);
 void app_enter_ota(void);
 
 /* R049b / R049c 菜单动作（本文件实现，调用 audio_player / main） */
-void app_ab_mark_a(void);
-void app_ab_mark_b(void);
-void app_ab_clear(void);
 void app_ota_enter(void);
 void app_usb_enter(void);
 void app_about_enter(void);
@@ -85,23 +82,11 @@ static void eq_set_idx(int i) { settings_save_eq(i); }
 static int key_beep_get_idx(void) { return settings_load_key_beep() ? 1 : 0; }
 static void key_beep_set_idx(int i) { settings_save_key_beep(i != 0); }
 
-/* ---- R049b A-B 复读开关 ---- */
-static int ab_get_idx(void) { return audio_player_is_ab_enabled() ? 1 : 0; }
-static void ab_set_idx(int i) { audio_player_set_ab_enabled(i != 0); }
-
 /* ============================================================
  * 菜单树（完整：R049a 已落地 + R049b/c 接入 + R049d 桩）
  * ============================================================ */
 static const menu_item_t g_play_sub[] = {
     { "播放模式", MI_TOGGLE, s_mode_opts, 3, app_get_play_mode, app_set_play_mode, NULL, 0, NULL },
-};
-
-/* R049b：A-B 复读子菜单 (R111: label用英文, 因 g_ab_menu 用 lv_font_montserrat_14 无中文) */
-static const menu_item_t g_ab_sub[] = {
-    { "Mark A",     MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_mark_a },
-    { "Mark B",     MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_mark_b },
-    { "Loop",       MI_TOGGLE, s_onoff_opts, 2, ab_get_idx, ab_set_idx, NULL, 0, NULL },
-    { "Clear",      MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ab_clear },
 };
 
 /* R049c / R049d：系统子菜单（蓝牙音箱在 USE_BT_SPEAKER 时置于此，占原 A-B 复读位置） */
@@ -120,7 +105,6 @@ static const menu_item_t g_system_sub[] = {
 
 static const menu_item_t g_root[] = {
     { "浏览文件", MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_enter_browse },
-    { "A-B 复读", MI_SUBMENU, NULL, 0, NULL, NULL, g_ab_sub,     4, NULL },
     { "书签",     MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_bookmark_enter },
     { "播放模式", MI_SUBMENU, NULL, 0, NULL, NULL, g_play_sub,   1, NULL },
     { "系统设置", MI_SUBMENU, NULL, 0, NULL, NULL, g_system_sub,
@@ -130,14 +114,11 @@ static const menu_item_t g_root[] = {
         7, NULL },
 #endif
 };
-static const int g_root_count = 5;   // 根菜单顺序：浏览文件/A-B复读/书签/播放模式/系统设置
+static const int g_root_count = 4;   // 根菜单顺序：浏览文件/书签/播放模式/系统设置 (R113: 移除A-B复读菜单项, 仅保留快捷键)
 
 /* ============================================================
  * R049b/c 动作实现
  * ============================================================ */
-void app_ab_mark_a(void)   { audio_player_mark_a(); }
-void app_ab_mark_b(void)   { audio_player_mark_b(); }
-void app_ab_clear(void)    { audio_player_clear_ab(); }
 void app_ota_enter(void)   { app_enter_ota(); }
 void app_usb_enter(void)   { app_show_info("USB 存储", "大容量存储模式\n需 USB OTG\n功能未开放"); }
 void app_about_enter(void) { app_show_info("关于", "有声书播放器\nESP32-S3\nV1.1 · R049"); }
@@ -151,11 +132,6 @@ static menu_level_t s_stack[MENU_MAX_DEPTH];
 static int         s_depth = 0;
 static bool        s_edit = false;   // R050：TOGGLE 编辑态（VOL± 调值，PLAY/STOP 退出）
 
-/* R051：A-B 微调态（标记 A/B 后进入，VOL± 前后移动时间点） */
-typedef enum { AB_SCRUB_NONE = 0, AB_SCRUB_A, AB_SCRUB_B } ab_scrub_t;
-static ab_scrub_t s_ab_scrub = AB_SCRUB_NONE;
-static int         s_ab_hold_cnt = 0;   // 长按加速计数
-
 /* 前向声明 */
 static void menu_render(void);
 
@@ -167,18 +143,14 @@ void menu_init(void)
 
 void menu_open(void)
 {
-    ESP_LOGW("MENU", "DBG menu_open ENTER");
     s_open = true;
     s_depth = 1;
     s_edit = false;
-    s_ab_scrub = AB_SCRUB_NONE;
-    s_ab_hold_cnt = 0;
     s_stack[0].items = g_root;
     s_stack[0].count = g_root_count;
     s_stack[0].sel   = 0;
     s_stack[0].title = "菜单";
     menu_render();
-    ESP_LOGW("MENU", "DBG menu_open EXIT");
 }
 
 void menu_close(void)
@@ -201,34 +173,6 @@ static void menu_render(void)
 {
     if (!s_open) return;
     menu_level_t *lv = &s_stack[s_depth - 1];
-
-    /* R051：A-B 复读子菜单 -> 带迷你进度条的状态屏 */
-    if (lv->items == g_ab_sub) {
-        char lines[4][24];
-        for (int i = 0; i < lv->count; i++) {
-            const menu_item_t *it = &lv->items[i];
-            /* R103: 原用 "»" 作编辑态标记, 但点阵字库无此符号(会显示空心方框), 改用 "*" */
-            const char *mark = (i == lv->sel) ? (s_edit ? "*" : ">") : " ";
-            if (it->kind == MI_TOGGLE && it->get_idx) {
-                int idx = it->get_idx();
-                const char *val = (idx >= 0 && idx < it->option_count) ? it->options[idx] : "";
-                snprintf(lines[i], sizeof(lines[i]), "%s %s: %s", mark, it->label, val);
-            } else {
-                snprintf(lines[i], sizeof(lines[i]), "%s %s", mark, it->label);
-            }
-        }
-        int total_ms = audio_player_get_duration() * 1000;
-        int cur_ms   = audio_player_get_position_ms();
-        const char *hint = (s_ab_scrub != AB_SCRUB_NONE)
-            ? "> Adjust A/B: tap +/-2s, hold scan, PLAY/STOP confirm"
-            : (s_edit ? "> Edit: VOL+ toggle, PLAY/STOP done"
-                      : "VOL+/NAV select, PLAY mark/enter, STOP back");
-        display_show_ab_menu("A-B Repeat", lines, lv->count, lv->sel,
-                             s_edit, (int)s_ab_scrub,
-                             audio_player_ab_a_ms(), audio_player_ab_b_ms(),
-                             audio_player_is_ab_enabled(), total_ms, cur_ms, hint);
-        return;
-    }
 
     /* R111: 结构化菜单项 (支持序号/子菜单箭头/TOGGLE值右对齐) */
     menu_disp_item_t items[BROWSE_VISIBLE_LINES];
@@ -260,60 +204,10 @@ void menu_handle_button(const btn_event_info_t *events, int n)
     for (int k = 0; k < n; k++) {
         const btn_event_info_t *e = &events[k];
         if (e->event == BTN_EVENT_NONE) continue;
-        ESP_LOGW("MENU", "DBG btn id=%d ev=%d depth=%d sel=%d", (int)e->id, (int)e->event, s_depth, s_stack[s_depth-1].sel);
         app_play_beep();   // R049c：菜单内按键提示音（设置开启时）
 
         menu_level_t *lv = &s_stack[s_depth - 1];
         const menu_item_t *it = &lv->items[lv->sel];
-
-        /* ---- R051：A-B 微调态：VOL± 前后移动 A/B 点，PLAY/STOP/PREV/NEXT 确认 ---- */
-        if (s_ab_scrub != AB_SCRUB_NONE) {
-            if (e->id == BTN_ID_VOL_DOWN || e->id == BTN_ID_VOL_UP) {
-                btn_event_t ev = e->event;
-                if (ev == BTN_EVENT_SHORT_PRESS || ev == BTN_EVENT_LONG_PRESS ||
-                    ev == BTN_EVENT_HOLD || ev == BTN_EVENT_EXTRA_LONG_PRESS) {
-                    int dir = (e->id == BTN_ID_VOL_UP) ? 1 : -1;
-                    int step;
-                    if (ev == BTN_EVENT_SHORT_PRESS) {
-                        step = 2000;            // 单击 ±2s（细）
-                        s_ab_hold_cnt = 0;
-                    } else {                    // 长按：随计数加速（5s→60s/拍）
-                        s_ab_hold_cnt++;
-                        step = 5000 + s_ab_hold_cnt * 1500;
-                        if (step > 60000) step = 60000;
-                    }
-                    int a = audio_player_ab_a_ms();
-                    int b = audio_player_ab_b_ms();
-                    int dur = audio_player_get_duration() * 1000;
-                    int seek_ms;
-                    if (s_ab_scrub == AB_SCRUB_A) {
-                        int na = a + dir * step;
-                        if (na < 0) na = 0;
-                        if (b >= 0 && na > b - 2000) na = b - 2000;   // 不越过 B
-                        if (dur > 0 && na > dur) na = dur;
-                        audio_player_set_ab_a_ms(na);
-                        seek_ms = na;
-                    } else {
-                        int nb = b + dir * step;
-                        int lo = (a >= 0 ? a + 2000 : 2000);
-                        if (nb < lo) nb = lo;
-                        if (dur > 0 && nb > dur) nb = dur;
-                        audio_player_set_ab_b_ms(nb);
-                        seek_ms = nb;
-                    }
-                    /* 边听边校：微调即把播放头 seek 到该点并试听 */
-                    if (audio_player_is_paused()) audio_player_resume();
-                    audio_player_seek_ms(seek_ms);
-                    menu_render();
-                }
-            } else if (e->id == BTN_ID_PLAY_PAUSE || e->id == BTN_ID_STOP ||
-                       e->id == BTN_ID_PREV || e->id == BTN_ID_NEXT) {
-                s_ab_scrub = AB_SCRUB_NONE;     // 确认/取消均退出微调
-                s_ab_hold_cnt = 0;
-                menu_render();
-            }
-            continue;   // 微调态已消费该事件
-        }
 
         /* ---- 编辑态：VOL± 调值，PLAY/STOP/PREV/NEXT 退出 ---- */
         if (s_edit) {
@@ -380,7 +274,6 @@ void menu_handle_button(const btn_event_info_t *events, int n)
 
         case BTN_ID_PLAY_PAUSE:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
-                ESP_LOGW("MENU", "DBG PLAY short, kind=%d label=%s", (int)it->kind, it->label ? it->label : "null");
                 if (it->kind == MI_SUBMENU) {
                     if (s_depth < MENU_MAX_DEPTH) {
                         s_stack[s_depth].items = it->children;
@@ -398,26 +291,7 @@ void menu_handle_button(const btn_event_info_t *events, int n)
                         menu_render();
                     }
                 } else if (it->kind == MI_ACTION && it->on_enter) {
-                    if (it == &g_ab_sub[0]) {                 // 标记 A 点 -> 进入 A 微调
-                        if (audio_player_ab_a_ms() < 0)
-                            audio_player_set_ab_a_ms(audio_player_get_position_ms());
-                        s_ab_scrub = AB_SCRUB_A;
-                        s_ab_hold_cnt = 0;
-                        menu_render();
-                    } else if (it == &g_ab_sub[1]) {          // 标记 B 点 -> 进入 B 微调
-                        if (audio_player_ab_a_ms() < 0)
-                            audio_player_set_ab_a_ms(audio_player_get_position_ms());
-                        if (audio_player_ab_b_ms() < 0) {
-                            int init = audio_player_get_position_ms();
-                            int lo = audio_player_ab_a_ms() + 5000;
-                            audio_player_set_ab_b_ms(init > lo ? init : lo);
-                        }
-                        s_ab_scrub = AB_SCRUB_B;
-                        s_ab_hold_cnt = 0;
-                        menu_render();
-                    } else {
-                        it->on_enter();   // 其它动作（清除/浏览等）由宿主处理
-                    }
+                    it->on_enter();   // 动作由宿主处理
                 } else if (it->kind == MI_TOGGLE && it->set_idx) {
                     s_edit = true;    // 列表·TOGGLE：PLAY 进入编辑态
                     menu_render();
@@ -428,7 +302,6 @@ void menu_handle_button(const btn_event_info_t *events, int n)
         case BTN_ID_STOP:
             if (e->event == BTN_EVENT_SHORT_PRESS) {
                 s_edit = false;
-                s_ab_scrub = AB_SCRUB_NONE;
                 if (s_depth > 1) {
                     s_depth--;
                     menu_render();
