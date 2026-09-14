@@ -303,3 +303,18 @@ PRD V2.0 扩展   ░░░░░░░░░░  规划 (蓝牙方案已出 BT_
 - main/main.cpp - app_play_beep()禁用 + A-B菜单移除相关清理
 - main/menu.cpp - 移除A-B子菜单及相关代码
 - main/display.h - 移除A-B菜单相关声明
+
+## R114 (2026-09-14) 书签功能实现
+
+### 书签功能
+- 菜单→书签: 动态子菜单, 第一项"+ 添加当前位置", 后续为当前文件的书签列表(时间点)
+- 添加书签: 播放/暂停态用当前位置, 停止态用NVS中最后保存的位置
+- 跳转播放: 选中书签按PLAY → 关闭菜单, 从书签位置开始播放
+- 每文件最多10个书签, 满了自动覆盖最旧
+- NVS持久化存储, 重启不丢失
+
+### 变更文件
+- main/bookmark.h - 新增 bookmark_get_all() / bookmark_delete()
+- main/bookmark.cpp - 实现 bookmark_get_all() / bookmark_delete()
+- main/menu.cpp - 书签动态子菜单(bookmark_fill_and_enter) + PLAY键特殊处理
+- main/main.cpp - app_get_current_track_idx() / app_bookmark_add_current() / app_bookmark_jump()

@@ -422,6 +422,46 @@ void app_play_beep(void)
     /* 禁用: audio_player_play_beep()在停止态创建raw+i2s管道会触发死机 */
 }
 
+/* R114: 书签回调 */
+int app_get_current_track_idx(void)
+{
+    return g_current_track;
+}
+
+void app_bookmark_add_current(void)
+{
+    int pos_s = 0;
+    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
+        g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
+        pos_s = audio_player_get_position();
+    } else {
+        /* 停止态: 从NVS读取最后保存的位置 */
+        int saved_idx = 0, saved_pos = 0;
+        if (settings_load_position(&saved_idx, &saved_pos) && saved_idx == g_current_track) {
+            pos_s = saved_pos;
+        }
+    }
+    if (pos_s < 0) pos_s = 0;
+    int slot = bookmark_add(g_current_track, pos_s);
+    if (slot >= 0) {
+        char msg[32];
+        snprintf(msg, sizeof(msg), "书签已添加 %02d:%02d", pos_s / 60, pos_s % 60);
+        display_toast(msg);
+        ESP_LOGI(TAG, "Bookmark added from menu: track=%d pos=%ds slot=%d", g_current_track, pos_s, slot);
+    } else {
+        display_toast("书签添加失败");
+    }
+}
+
+void app_bookmark_jump(int position_s)
+{
+    ESP_LOGI(TAG, "Bookmark jump: track=%d pos=%ds", g_current_track, position_s);
+    menu_close();
+    g_seek_on_play_position = position_s;
+    play_current_track();
+    display_clear_msg();
+}
+
 /* R049c锛氳繘鍏?閫€鍑?TF 鍗″浐浠跺崌绾у悜瀵硷紙鐢?menu.cpp 鐨?app_ota_enter 璋冪敤锛?*/
 void app_enter_ota(void)
 {

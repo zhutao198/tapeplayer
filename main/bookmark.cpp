@@ -106,4 +106,30 @@ int bookmark_add(int file_idx, int position_s)
     return slot;
 }
 
+int bookmark_get_all(int file_idx, bookmark_t *out, int max_count)
+{
+    if (!g_bm_handle || file_idx < 0 || !out || max_count <= 0) return 0;
+    int count = 0;
+    for (int i = 0; i < BOOKMARK_MAX_PER_FILE && count < max_count; i++) {
+        char key[24];
+        make_key(file_idx, i, key, sizeof(key));
+        int32_t val = 0;
+        if (nvs_get_i32(g_bm_handle, key, &val) == ESP_OK) {
+            out[count].position_s = (int)val;
+            count++;
+        }
+    }
+    return count;
+}
+
+void bookmark_delete(int file_idx, int slot)
+{
+    if (!g_bm_handle || file_idx < 0 || slot < 0 || slot >= BOOKMARK_MAX_PER_FILE) return;
+    char key[24];
+    make_key(file_idx, slot, key, sizeof(key));
+    nvs_erase_key(g_bm_handle, key);
+    nvs_commit(g_bm_handle);
+    ESP_LOGI(TAG, "Bookmark deleted: file=%d slot=%d", file_idx, slot);
+}
+
 

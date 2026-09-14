@@ -12,6 +12,7 @@
 #include "settings.h"
 #include "power_mgmt.h"
 #include "audio_player.h"
+#include "bookmark.h"
 #include "esp_log.h"
 #include <cstdio>
 
@@ -25,12 +26,16 @@ void app_set_play_mode(int m);
 void app_show_info(const char *title, const char *text);
 void app_play_beep(void);
 void app_enter_ota(void);
+int  app_get_current_track_idx(void);
+void app_bookmark_add_current(void);
+void app_bookmark_jump(int position_s);
 
 /* R049b / R049c 菜单动作（本文件实现，调用 audio_player / main） */
 void app_ota_enter(void);
 void app_usb_enter(void);
 void app_about_enter(void);
 void app_bookmark_enter(void);
+void bookmark_fill_and_enter(void);  /* R114: 前向声明 */
 
 /* ============================================================
  * 菜单模型
@@ -122,7 +127,7 @@ static const int g_root_count = 4;   // 根菜单顺序：浏览文件/书签/�
 void app_ota_enter(void)   { app_enter_ota(); }
 void app_usb_enter(void)   { app_show_info("USB 存储", "大容量存储模式\n需 USB OTG\n功能未开放"); }
 void app_about_enter(void) { app_show_info("关于", "有声书播放器\nESP32-S3\nV1.1 · R049"); }
-void app_bookmark_enter(void) { app_show_info("书签", "书签列表管理\n开发中 (R049d)"); }
+void app_bookmark_enter(void) { bookmark_fill_and_enter(); }
 
 /* ============================================================
  * 导航状态
@@ -134,6 +139,63 @@ static bool        s_edit = false;   // R050：TOGGLE 编辑态（VOL± 调值�
 
 /* 前向声明 */
 static void menu_render(void);
+
+/* ============================================================
+ * 书签动态子菜单 (R114)
+ * ============================================================ */
+static menu_item_t s_bookmark_items[BOOKMARK_MAX_PER_FILE + 1];
+static char s_bookmark_labels[BOOKMARK_MAX_PER_FILE + 1][24];
+
+static void bookmark_fill_items(void)
+{
+    int track = app_get_current_track_idx();
+    bookmark_t bms[BOOKMARK_MAX_PER_FILE];
+    int n = bookmark_get_all(track, bms, BOOKMARK_MAX_PER_FILE);
+
+    snprintf(s_bookmark_labels[0], sizeof(s_bookmark_labels[0]), "+ 添加当前位置");
+    s_bookmark_items[0].label = s_bookmark_labels[0];
+    s_bookmark_items[0].kind = MI_ACTION;
+    s_bookmark_items[0].on_enter = NULL;  /* 添加项特殊处理 */
+    s_bookmark_items[0].options = NULL;
+    s_bookmark_items[0].option_count = 0;
+    s_bookmark_items[0].get_idx = NULL;
+    s_bookmark_items[0].set_idx = NULL;
+    s_bookmark_items[0].children = NULL;
+    s_bookmark_items[0].child_count = 0;
+
+    for (int i = 0; i < n; i++) {
+        int pos = bms[i].position_s;
+        snprintf(s_bookmark_labels[i + 1], sizeof(s_bookmark_labels[i + 1]),
+                 "%02d:%02d", pos / 60, pos % 60);
+        s_bookmark_items[i + 1].label = s_bookmark_labels[i + 1];
+        s_bookmark_items[i + 1].kind = MI_ACTION;
+        s_bookmark_items[i + 1].on_enter = NULL;
+        s_bookmark_items[i + 1].options = NULL;
+        s_bookmark_items[i + 1].option_count = 0;
+        s_bookmark_items[i + 1].get_idx = NULL;
+        s_bookmark_items[i + 1].set_idx = NULL;
+        s_bookmark_items[i + 1].children = NULL;
+        s_bookmark_items[i + 1].child_count = 0;
+    }
+}
+
+void bookmark_fill_and_enter(void)
+{
+    bookmark_fill_items();
+    int track = app_get_current_track_idx();
+    bookmark_t bms[BOOKMARK_MAX_PER_FILE];
+    int n = bookmark_get_all(track, bms, BOOKMARK_MAX_PER_FILE);
+
+    if (s_depth < MENU_MAX_DEPTH) {
+        s_stack[s_depth].items = s_bookmark_items;
+        s_stack[s_depth].count = n + 1;
+        s_stack[s_depth].sel   = 0;
+        s_stack[s_depth].title = "书签";
+        s_depth++;
+        s_edit = false;
+        menu_render();
+    }
+}
 
 void menu_init(void)
 {
@@ -292,6 +354,28 @@ void menu_handle_button(const btn_event_info_t *events, int n)
                     }
                 } else if (it->kind == MI_ACTION && it->on_enter) {
                     it->on_enter();   // 动作由宿主处理
+                } else if (it->kind == MI_ACTION && it->on_enter == NULL &&
+                           lv->items == s_bookmark_items) {
+                    /* R114: 书签子菜单 */
+                    if (lv->sel == 0) {
+                        /* 添加当前位置 */
+                        app_bookmark_add_current();
+                        bookmark_fill_items();
+                        int track = app_get_current_track_idx();
+                        bookmark_t bms[BOOKMARK_MAX_PER_FILE];
+                        int n = bookmark_get_all(track, bms, BOOKMARK_MAX_PER_FILE);
+                        lv->count = n + 1;
+                        menu_render();
+                    } else {
+                        /* 跳转到书签位置 */
+                        int idx = lv->sel - 1;
+                        bookmark_t bms[BOOKMARK_MAX_PER_FILE];
+                        int track = app_get_current_track_idx();
+                        int n = bookmark_get_all(track, bms, BOOKMARK_MAX_PER_FILE);
+                        if (idx >= 0 && idx < n) {
+                            app_bookmark_jump(bms[idx].position_s);
+                        }
+                    }
                 } else if (it->kind == MI_TOGGLE && it->set_idx) {
                     s_edit = true;    // 列表·TOGGLE：PLAY 进入编辑态
                     menu_render();
