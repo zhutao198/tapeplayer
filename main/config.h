@@ -170,7 +170,7 @@
  * =1: 用户已用跳线旁路开关机硬件电路，IO40 拉低会产生 latch 误触风险，
  *     此时 power_mgmt_power_off() 只打警告、不操作 IO40、不进入 deep-sleep。
  *     真正"关机"由用户在外部断电完成（电池低时仅警告不强行断电）。 */
-#define TAPEBOOK_POWER_LATCH_BYPASSED  1
+#define TAPEBOOK_POWER_LATCH_BYPASSED  0
 
 /* ============================================================
  * 磁带机加速参数

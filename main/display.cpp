@@ -132,10 +132,18 @@ static uint16_t *s_cjk_canvas_buf = NULL;
    坐标与 lbl_track 保持一致 (ui_create 中 lbl_track 位于 M=8, y=56; R108 下移以容纳格式行)。 */
 static lv_obj_t *s_track_canvas     = NULL;
 static uint16_t *s_track_canvas_buf = NULL;
+static lv_obj_t *s_fmt_canvas       = NULL;   /* R115: 格式行canvas */
+static uint16_t *s_fmt_canvas_buf   = NULL;
 #define TRACK_CANVAS_X  (8)
 #define TRACK_CANVAS_Y  (24)
 #define TRACK_CANVAS_W  (DISPLAY_WIDTH - 2 * 8)   /* 304 */
 #define TRACK_CANVAS_H  (18)
+
+/* R115: 格式行 canvas (支持中文播放模式) */
+#define FMT_CANVAS_X    (8)
+#define FMT_CANVAS_Y    (44)
+#define FMT_CANVAS_W    (274)  /* R115: AB徽章取消, 到x=282, 给SQ徽章留空间 */
+#define FMT_CANVAS_H    (18)
 
 /* LVGL UI 对象 */
 static lv_obj_t *g_player = NULL;   // 播放界面容器
@@ -318,9 +326,7 @@ void display_register_main_tick(display_main_tick_fn_t fn)
  * 屏幕只停在上电残留帧（花屏），UI 不刷新。这里统一在 init 末尾拉起渲染任务。 */
 void display_init(void)
 {
-    lcd_backlight_init();
-    display_set_brightness(100);
-
+    /* R115: LCD先初始化(背光未开), 避免上电瞬间GRAM随机数据造成花屏 */
     if (lcd_hw_init() != ESP_OK) {
         ESP_LOGE(TAG, "LCD hw init failed, display disabled");
         return;
@@ -379,6 +385,10 @@ void display_init(void)
     ESP_LOGI(TAG, "DBG: show msg ascii");
     ui_show_msg("Initializing...");
     ESP_LOGI(TAG, "DBG: ui_show_msg done");
+
+    /* R115: 首次渲染完成后再开背光, 避免开机花屏 */
+    lcd_backlight_init();
+    display_set_brightness(100);
 
     g_display_initialized = true;
     ESP_LOGI(TAG, "ST7789 + LVGL display initialized (%dx%d)",
@@ -579,6 +589,23 @@ static void cjk_canvas_init(void)
         ESP_LOGE(TAG, "track canvas buffer alloc failed (%u bytes)", (unsigned)tbytes);
     }
 
+    /* R115: 格式行 canvas (支持中文播放模式) */
+    size_t fbytes = (size_t)FMT_CANVAS_W * FMT_CANVAS_H * 2;
+    s_fmt_canvas_buf = (uint16_t *)heap_caps_malloc(fbytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_fmt_canvas_buf)
+        s_fmt_canvas_buf = (uint16_t *)heap_caps_malloc(fbytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (s_fmt_canvas_buf) {
+        memset(s_fmt_canvas_buf, 0, fbytes);
+        s_fmt_canvas = lv_canvas_create(lv_screen_active());
+        lv_canvas_set_buffer(s_fmt_canvas, s_fmt_canvas_buf,
+                             FMT_CANVAS_W, FMT_CANVAS_H, LV_COLOR_FORMAT_RGB565);
+        lv_obj_set_pos(s_fmt_canvas, FMT_CANVAS_X, FMT_CANVAS_Y);
+        lv_obj_clear_flag(s_fmt_canvas, LV_OBJ_FLAG_HIDDEN);
+        ESP_LOGI(TAG, "fmt canvas ready %dx%d@(%d,%d)", FMT_CANVAS_W, FMT_CANVAS_H, FMT_CANVAS_X, FMT_CANVAS_Y);
+    } else {
+        ESP_LOGE(TAG, "fmt canvas buffer alloc failed");
+    }
+
     size_t bytes = (size_t)CJK_CANVAS_W * CJK_CANVAS_H * 2;
     s_cjk_canvas_buf = (uint16_t *)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_cjk_canvas_buf)
@@ -648,7 +675,7 @@ static void cjk_blit_text(uint16_t *fb, int fb_w, int fb_h,
                 if (px >= 0 && px < fb_w) fb[py * fb_w + px] = (b1 & (0x80 >> j)) ? fg : bg;
             }
         }
-        pen += (u < 0x80) ? 12 : GW;  /* ASCII紧凑12px, 中文保持16px */
+        pen += (u < 0x80) ? 12 : GW;  /* ASCII 12px, 中文保持16px */
         if (pen > fb_w) break;
     }
 }
@@ -690,6 +717,61 @@ static void cjk_track_text(const char *utf8)
     const uint16_t fg = (uint16_t)lv_color_to_u16(lv_color_white());
     const uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
     cjk_blit_text(s_track_canvas_buf, TRACK_CANVAS_W, TRACK_CANVAS_H, 0, 0, utf8, fg, bg);
+}
+
+/* R115: 格式行 canvas */
+static void cjk_fmt_clear(void)
+{
+    if (!s_fmt_canvas_buf) return;
+    uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+    size_t n = (size_t)FMT_CANVAS_W * FMT_CANVAS_H;
+    for (size_t i = 0; i < n; i++) s_fmt_canvas_buf[i] = bg;
+}
+
+/* R115: 格式行 canvas — A/B字符用黄色高亮 */
+static void cjk_fmt_text_ab(const char *utf8)
+{
+    if (!s_fmt_canvas_buf) return;
+    const uint16_t fg = (uint16_t)lv_color_to_u16(lv_color_hex(0xb8a4dc));  /* 紫色 */
+    const uint16_t fg_yellow = (uint16_t)lv_color_to_u16(lv_color_hex(0xf59e0b));  /* 黄色(同AB徽章) */
+    const uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+    const int GW = cjk_font_w, GH = cjk_font_h;
+    int pen = 0;
+    const char *p = utf8;
+    while (*p) {
+        uint32_t u = 0; int n = 0;
+        if ((*p & 0x80) == 0)         { u = (uint8_t)*p; n = 1; }
+        else if ((*p & 0xE0) == 0xC0) { u = ((uint32_t)(*p & 0x1F) << 6)  | (*(p+1) & 0x3F); n = 2; }
+        else if ((*p & 0xF0) == 0xE0) { u = ((uint32_t)(*p & 0x0F) << 12) | ((*(p+1) & 0x3F) << 6) | (*(p+2) & 0x3F); n = 3; }
+        else { p++; continue; }
+        p += n;
+        /* A/B 字符用黄色 */
+        uint16_t cur_fg = (u == 'A' || u == 'B') ? fg_yellow : fg;
+        int idx = cjk_unicode_to_glyph_idx(u);
+        for (int i = 0; i < GH; i++) {
+            int py = 1 + i;
+            if (py < 0 || py >= FMT_CANVAS_H) continue;
+            uint8_t b0, b1;
+            if (idx >= 0) {
+                const uint8_t *src = cjk_font_raw + (size_t)idx * cjk_font_glyph_bytes;
+                b0 = src[i * 2]; b1 = src[i * 2 + 1];
+            } else {
+                bool edge = (i == 0 || i == GH - 1);
+                b0 = edge ? 0xFF : 0x80; b1 = edge ? 0xFF : 0x01;
+            }
+            for (int j = 0; j < 8; j++) {
+                int px = pen + j;
+                if (px >= 0 && px < FMT_CANVAS_W)
+                    s_fmt_canvas_buf[py * FMT_CANVAS_W + px] = (b0 & (0x80 >> j)) ? cur_fg : bg;
+            }
+            for (int j = 0; j < 8; j++) {
+                int px = pen + 8 + j;
+                if (px >= 0 && px < FMT_CANVAS_W)
+                    s_fmt_canvas_buf[py * FMT_CANVAS_W + px] = (b1 & (0x80 >> j)) ? cur_fg : bg;
+            }
+        }
+        pen += (u < 0x80) ? 12 : GW;
+    }
 }
 
 /* flush_cb 在本帧写屏前调用: 把点阵队列写进 shadow 帧缓冲 + 掩码 */
@@ -757,7 +839,12 @@ static void lvgl_task(void *arg)
         if (s_show_splash_pending) {
             s_show_splash_pending = false;
             if (s_splash) {
+                /* R115: 隐藏其他屏, 确保splash独占显示 */
+                lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_clear_flag(s_splash, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_move_foreground(s_splash);
             }
         }
         /* R100: 消费 SD 图标/插拔提示更新(避免 main 调 LVGL 死锁) */
@@ -946,6 +1033,17 @@ static esp_err_t lcd_hw_init(void)
     esp_lcd_panel_disp_on_off(s_panel_handle, true);   // 二次确认开显示
     ESP_LOGI(TAG, "DBG: disp_on_off done, BLK gpio15 level=%d, POW_EN gpio39 level=%d",
              gpio_get_level(DISPLAY_BLK_IO), gpio_get_level(LCD_POW_EN_IO));
+
+    /* R115: LCD初始化后立即清屏(全黑), 避免上电瞬间GRAM随机数据造成花屏。
+       分块绘制: 每块40行(320*40*2=25600字节 < SPI单事务上限32752) */
+    {
+        static uint16_t clear_buf[320 * 40];
+        memset(clear_buf, 0x00, sizeof(clear_buf));  /* RGB565 黑色, 驱动自动处理invert */
+        for (int y = 0; y < DISPLAY_HEIGHT; y += 40) {
+            int h = (y + 40 <= DISPLAY_HEIGHT) ? 40 : (DISPLAY_HEIGHT - y);
+            esp_lcd_panel_draw_bitmap(s_panel_handle, 0, y, DISPLAY_WIDTH, y + h, clear_buf);
+        }
+    }
 
     return ESP_OK;
 }
@@ -1142,13 +1240,9 @@ static void ui_create(void)
     lv_obj_set_style_text_color(lbl_track, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl_track, UI_FONT, 0);
 
-    /* R108: 格式/品牌行 (文件名下方): FLAC|44KHZ|16bit|0918kbps + SQ */
+    /* R108: 格式/品牌行 (文件名下方) — R115: 改用canvas渲染, 支持中文播放模式 */
     lbl_fmt = lv_label_create(g_player);
-    lv_obj_set_pos(lbl_fmt, M, 44);  /* P2-UI: 曲名下方, 盒壳上方 */
-    lv_obj_set_width(lbl_fmt, W - 2 * M - 40);  /* R111: 留 40px 给 SQ 徽章 */
-    lv_label_set_long_mode(lbl_fmt, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_color(lbl_fmt, lv_color_hex(0xb8a4dc), 0);  /* R111: 紫色文字 */
-    lv_obj_set_style_text_font(lbl_fmt, UI_FONT, 0);
+    lv_obj_add_flag(lbl_fmt, LV_OBJ_FLAG_HIDDEN);  /* R115: 隐藏, 用s_fmt_canvas代替 */
 
     /* R111: SQ 音质徽章 (紫底白字, 设计稿风格) */
     s_sq_badge = lv_obj_create(g_player);
@@ -1406,6 +1500,7 @@ static void ui_create(void)
     s_splash = lv_obj_create(scr);
     lv_obj_set_size(s_splash, W, H);
     lv_obj_set_style_bg_color(s_splash, lv_color_hex(0x0a0e17), 0);
+    lv_obj_set_style_bg_opa(s_splash, LV_OPA_COVER, 0);  /* R115: 完全不透明, 避免透出下层UI */
     lv_obj_set_style_border_width(s_splash, 0, 0);
     lv_obj_set_style_pad_all(s_splash, 0, 0);
     lv_obj_clear_flag(s_splash, LV_OBJ_FLAG_SCROLLABLE);
@@ -1904,26 +1999,31 @@ static void display_update_nolock(player_state_t state,
         }
     }
 
-    /* R111: 格式行 = MP3 + A-B复读信息 (去掉静态44KHZ/16bit/320kbps) */
+    /* R115: 格式行 = MP3 + 播放模式(中文) + A-B复读信息 (canvas渲染支持中文) */
     {
-        char fmt_buf[64];
+        char fmt_buf[128];
         if (ab_a >= 0) {
+            /* A-B时不显示播放模式, 给A-B时间和循环次数留空间 */
             char abuf[8], bbuf[8];
             format_time(ab_a / 1000, abuf, sizeof(abuf));
             if (ab_b >= 0) {
                 format_time(ab_b / 1000, bbuf, sizeof(bbuf));
                 int loop_n = audio_player_ab_loop_count();
                 if (ab_on && loop_n > 0)
-                    snprintf(fmt_buf, sizeof(fmt_buf), "MP3 | A:%s->B:%s x%d", abuf, bbuf, loop_n);
+                    snprintf(fmt_buf, sizeof(fmt_buf), "MP3|A%s B%sx%d", abuf, bbuf, loop_n);
                 else
-                    snprintf(fmt_buf, sizeof(fmt_buf), "MP3 | A:%s->B:%s", abuf, bbuf);
+                    snprintf(fmt_buf, sizeof(fmt_buf), "MP3|A%s B%s", abuf, bbuf);
             } else {
-                snprintf(fmt_buf, sizeof(fmt_buf), "MP3 | A:%s B:--", abuf);
+                snprintf(fmt_buf, sizeof(fmt_buf), "MP3|A%s B:--", abuf);
             }
         } else {
-            snprintf(fmt_buf, sizeof(fmt_buf), "MP3");
+            const char *mode_cn = (s_play_mode == 1) ? "列表循环" :
+                                  (s_play_mode == 2) ? "单曲循环" : "顺序播放";
+            snprintf(fmt_buf, sizeof(fmt_buf), "MP3|%s", mode_cn);
         }
-        lv_label_set_text(lbl_fmt, fmt_buf);
+        cjk_fmt_clear();
+        cjk_fmt_text_ab(fmt_buf);
+        if (s_fmt_canvas) lv_obj_invalidate(s_fmt_canvas);
     }
 
     /* 图形电量: 外框填充宽度 + 低电量变红 + 充电标记 */
@@ -1964,6 +2064,13 @@ static void display_update_nolock(player_state_t state,
         lv_obj_invalidate(s_track_canvas);
     } else if (s_track_canvas) {
         lv_obj_add_flag(s_track_canvas, LV_OBJ_FLAG_HIDDEN);  /* 菜单/browse 独占态隐藏 */
+    }
+
+    /* R115: 格式行 canvas 显示/隐藏 (同 track canvas) */
+    if (s_fmt_canvas && !s_menu_visible) {
+        lv_obj_clear_flag(s_fmt_canvas, LV_OBJ_FLAG_HIDDEN);
+    } else if (s_fmt_canvas) {
+        lv_obj_add_flag(s_fmt_canvas, LV_OBJ_FLAG_HIDDEN);
     }
     /* P1-fix: 移除全屏 invalidate — 旧 flush_cb 点阵队列已废弃, 现走 canvas,
        canvas 在上方已单独 invalidate, 各 label/bar 内容变化时自行 invalidate.
@@ -2029,11 +2136,8 @@ static void display_update_nolock(player_state_t state,
                 lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_add_flag(ab_region, LV_OBJ_FLAG_HIDDEN);
             }
-            /* R111: A-B 徽章仅在复读开启时显示 */
-            if (s_ab_badge) {
-                if (ab_on) lv_obj_clear_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
-                else       lv_obj_add_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
-            }
+            /* R115: AB徽章已取消, 改用格式行A/B黄色文字 */
+            if (s_ab_badge) lv_obj_add_flag(s_ab_badge, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(ab_mark_a, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(ab_mark_b, LV_OBJ_FLAG_HIDDEN);
@@ -2401,4 +2505,26 @@ void display_show_ota_error(const char *msg)
     lv_lock();
     ui_show_ota();
     lv_unlock();
+}
+
+/* ============================================================
+ * R115: 关机倒计时显示
+ * ============================================================ */
+void display_show_shutdown_countdown(int type, int remaining)
+{
+    if (!g_display_initialized) return;
+    if (type <= 0 || remaining < 0) {
+        /* 无倒计时: 隐藏消息, 返回播放器界面 */
+        lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    char buf[64];
+    if (type == 1) {
+        snprintf(buf, sizeof(buf), "Low Battery\nShutdown in %d s", remaining);
+    } else {
+        snprintf(buf, sizeof(buf), "Auto Off\nShutdown in %d s", remaining);
+    }
+    lv_label_set_text(g_msg, buf);
+    lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(g_msg);
 }

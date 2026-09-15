@@ -18,6 +18,7 @@ extern "C" {
 
 typedef struct {
     int  position_s;     // 书签位置（秒）
+    int  slot;           // NVS存储槽位(0~9)，删除时需要
 } bookmark_t;
 
 /**

@@ -116,6 +116,7 @@ int bookmark_get_all(int file_idx, bookmark_t *out, int max_count)
         int32_t val = 0;
         if (nvs_get_i32(g_bm_handle, key, &val) == ESP_OK) {
             out[count].position_s = (int)val;
+            out[count].slot = i;
             count++;
         }
     }

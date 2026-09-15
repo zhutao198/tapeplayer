@@ -545,9 +545,14 @@ static void handle_button_events(void)
     for (int i = 0; i < n; i++) {
         btn_event_info_t *e = &events[i];
 
-        /* 璁板綍鐢ㄦ埛娲诲姩锛堝厛浜庨攣瀹氭鏌ワ紝閬垮厤閿佸畾鐘舵€佽瑙﹀彂浼戠湢锛?*/
+        /* 记录用户活动(先于锁定检查,避免锁定状态误触发休眠) */
         if (e->event != BTN_EVENT_NONE) {
             power_mgmt_record_activity();
+            /* R115: 定时关机倒计时期间, 按任意键取消关机并重新计时 */
+            if (power_mgmt_get_shutdown_countdown_type() == SHUTDOWN_COUNTDOWN_AUTO_OFF) {
+                power_mgmt_cancel_shutdown_countdown();
+                ESP_LOGI(TAG, "Auto-off countdown cancelled by user activity, timer reset");
+            }
         }
 
         /* 娴忚妯″紡锛氫笂涓€棣?涓嬩竴棣?鐭寜涓?涓嬩竴鏇诧紱闀挎寜/鎸佺画鎸変綇鍒欏姞閫熻繛缁Щ鍔紱
@@ -1464,13 +1469,15 @@ extern "C" void app_main(void)
 #endif
             ) {
             if (power_mgmt_auto_off_expired()) {
-                ESP_LOGI(TAG, "Auto-off timer expired, stopping playback");
-                audio_player_stop();
-                g_app_state = APP_STATE_STOPPED;
-                power_mgmt_set_auto_off(0);
-                // R034-007锛氳Е鍙戝悗钀界洏娓呴浂 NVS锛岄伩鍏嶉噸鍚?power_mgmt_init 閲嶆柊姝﹁
-                settings_save_auto_off(0);
-                flush_nvs_if_safe();
+                /* R115: 定时关机到时间后启动30秒倒计时, 期间按任意键取消并重新计时 */
+                if (power_mgmt_get_shutdown_countdown_type() == SHUTDOWN_COUNTDOWN_NONE) {
+                    ESP_LOGI(TAG, "Auto-off timer expired, starting 30s shutdown countdown");
+                    audio_player_stop();
+                    g_app_state = APP_STATE_STOPPED;
+                    save_current_position();
+                    flush_nvs_if_safe();
+                    power_mgmt_start_shutdown_countdown(SHUTDOWN_COUNTDOWN_AUTO_OFF, 30);
+                }
             }
         }
 
@@ -1502,22 +1509,48 @@ extern "C" void app_main(void)
                 }
 
                 // 鐢甸噺鏋佷綆鏃朵繚瀛樼姸鎬佸苟杞叧鏈?(鑴夊啿 POW_EN 纭柇鐢?
-                if (power_mgmt_should_shutdown()) {
-                    ESP_LOGE(TAG, "Battery critical, saving state and powering off");
-                    audio_player_stop();
-                    save_current_position();
-                    flush_nvs_if_safe();
-                    // 浠?RTC GPIO 鍙綔鍞ら啋婧? 璁剧疆鎺╃爜渚?power_off 鐨?deep-sleep 鍏滃簳
-                    uint64_t wakeup_mask = build_rtc_wakeup_mask();
-                    if (wakeup_mask) {
-                        esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+                /* R115: 低电量关机改为30秒倒计时, 期间接上充电则取消 */
+                if (power_mgmt_should_shutdown() && !power_mgmt_is_charging()) {
+                    if (power_mgmt_get_shutdown_countdown_type() == SHUTDOWN_COUNTDOWN_NONE) {
+                        ESP_LOGW(TAG, "Battery critical, starting 30s shutdown countdown");
+                        power_mgmt_start_shutdown_countdown(SHUTDOWN_COUNTDOWN_LOW_BATTERY, 30);
                     }
-                    power_mgmt_power_off();   // 鑴夊啿 POW_EN 閲婃斁鐢垫簮閿佸瓨 (鍚?deep-sleep 鍏滃簳)
                 }
+                /* 低电量倒计时期间接上充电, 取消关机 */
+                if (power_mgmt_get_shutdown_countdown_type() == SHUTDOWN_COUNTDOWN_LOW_BATTERY &&
+                    power_mgmt_is_charging()) {
+                    ESP_LOGI(TAG, "Charging connected, cancel low-battery shutdown countdown");
+                    power_mgmt_cancel_shutdown_countdown();
+                }
+
+                /* R115: 更新关机倒计时显示(1Hz刷新) */
+                int cd_remaining = power_mgmt_get_shutdown_countdown_remaining();
+                int cd_type = (int)power_mgmt_get_shutdown_countdown_type();
+                display_show_shutdown_countdown(cd_type, cd_remaining);
             }
         }
 
-        // 7c. 鑷姩浼戠湢锛? 鍒嗛挓鏃犳搷浣滆繘鍏?light sleep锛屾寜閿?GPIO 鍞ら啋锛?
+        /* R115: 关机倒计时到期, 执行关机 */
+        if (power_mgmt_shutdown_countdown_expired()) {
+            shutdown_countdown_type_t ctype = power_mgmt_get_shutdown_countdown_type();
+            ESP_LOGI(TAG, "Shutdown countdown expired (type=%d), powering off", ctype);
+            audio_player_stop();
+            save_current_position();
+            flush_nvs_if_safe();
+            /* 定时关机: 清除定时设置 */
+            if (ctype == SHUTDOWN_COUNTDOWN_AUTO_OFF) {
+                power_mgmt_set_auto_off(0);
+                settings_save_auto_off(0);
+                flush_nvs_if_safe();
+            }
+            uint64_t wakeup_mask = build_rtc_wakeup_mask();
+            if (wakeup_mask) {
+                esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+            }
+            power_mgmt_power_off();
+        }
+
+        // 7c. 自动休眠: 5分钟无操作进入light sleep, 按键GPIO唤醒,
         // S2锛氭挱鏀句腑锛圥LAYING/PAUSED锛変笉浼戠湢锛屽惁鍒欏惉涔︿細琚墦鏂?
         // S3锛歴leep 鍓嶉噴鏀剧甯︾姸鎬佹満锛岄伩鍏嶅敜閱掑悗妗ｄ綅娈嬬暀
         if ((g_app_state == APP_STATE_STOPPED || g_app_state == APP_STATE_IDLE) &&

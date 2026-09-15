@@ -74,14 +74,9 @@ static const char *s_mode_opts[] = {"顺序播放", "列表循环", "单曲循�
 /* ---- TOGGLE 数据: 开关 (R049c) ---- */
 static const char *s_onoff_opts[] = {"关", "开"};
 
-/* ---- TOGGLE 数据: EQ (R049d 桩) ---- */
-static const char *s_eq_opts[] = {"关闭", "流行", "摇滚", "古典", "人声"};
-
-/* ---- 语音播报 / EQ 仅持久化，无效果 (R049d 桩) ---- */
+/* ---- 语音播报 (桩) ---- */
 static int voice_get_idx(void) { return settings_load_voice() ? 1 : 0; }
 static void voice_set_idx(int i) { settings_save_voice(i != 0); }
-static int eq_get_idx(void) { return settings_load_eq(); }
-static void eq_set_idx(int i) { settings_save_eq(i); }
 
 /* ---- R049c 按键提示音开关 ---- */
 static int key_beep_get_idx(void) { return settings_load_key_beep() ? 1 : 0; }
@@ -90,9 +85,8 @@ static void key_beep_set_idx(int i) { settings_save_key_beep(i != 0); }
 /* ============================================================
  * 菜单树（完整：R049a 已落地 + R049b/c 接入 + R049d 桩）
  * ============================================================ */
-static const menu_item_t g_play_sub[] = {
-    { "播放模式", MI_TOGGLE, s_mode_opts, 3, app_get_play_mode, app_set_play_mode, NULL, 0, NULL },
-};
+/* R115: 播放模式改为列表选择式(动态子菜单), 不再用TOGGLE */
+void mode_fill_and_enter(void);  /* 前向声明 */
 
 /* R049c / R049d：系统子菜单（蓝牙音箱在 USE_BT_SPEAKER 时置于此，占原 A-B 复读位置） */
 static const menu_item_t g_system_sub[] = {
@@ -100,10 +94,6 @@ static const menu_item_t g_system_sub[] = {
     { "蓝牙音箱", MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_enter_bt_speaker },
 #endif
     { "固件升级",   MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ota_enter },
-    { "USB 存储",   MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_usb_enter },
-    { "按键提示音", MI_TOGGLE,  s_onoff_opts, 2, key_beep_get_idx, key_beep_set_idx, NULL, 0, NULL },
-    { "语音播报",   MI_TOGGLE,  s_onoff_opts, 2, voice_get_idx,    voice_set_idx,    NULL, 0, NULL },
-    { "EQ",         MI_TOGGLE,  s_eq_opts,    5, eq_get_idx,       eq_set_idx,       NULL, 0, NULL },
     { "关于",       MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_about_enter },
     { "定时关机",   MI_TOGGLE,  s_timer_opts, 5, timer_get_idx,    timer_set_idx,    NULL, 0, NULL },
 };
@@ -111,12 +101,12 @@ static const menu_item_t g_system_sub[] = {
 static const menu_item_t g_root[] = {
     { "浏览文件", MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_enter_browse },
     { "书签",     MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_bookmark_enter },
-    { "播放模式", MI_SUBMENU, NULL, 0, NULL, NULL, g_play_sub,   1, NULL },
+    { "播放模式", MI_ACTION, NULL, 0, NULL, NULL, NULL, 0, mode_fill_and_enter },
     { "系统设置", MI_SUBMENU, NULL, 0, NULL, NULL, g_system_sub,
 #if defined(CONFIG_USE_BT_SPEAKER)
-        8, NULL },
+        4, NULL },
 #else
-        7, NULL },
+        3, NULL },
 #endif
 };
 static const int g_root_count = 4;   // 根菜单顺序：浏览文件/书签/播放模式/系统设置 (R113: 移除A-B复读菜单项, 仅保留快捷键)
@@ -197,6 +187,38 @@ void bookmark_fill_and_enter(void)
     }
 }
 
+/* ============================================================
+ * 播放模式动态子菜单 (R115): 列表选择式
+ * ============================================================ */
+static menu_item_t s_mode_items[3];
+static const char *s_mode_labels[3] = {"顺序播放", "列表循环", "单曲循环"};
+
+void mode_fill_and_enter(void)
+{
+    int cur = app_get_play_mode();
+    for (int i = 0; i < 3; i++) {
+        s_mode_items[i].label = s_mode_labels[i];
+        s_mode_items[i].kind = MI_ACTION;
+        s_mode_items[i].on_enter = NULL;  /* 特殊处理 */
+        s_mode_items[i].options = NULL;
+        s_mode_items[i].option_count = 0;
+        s_mode_items[i].get_idx = NULL;
+        s_mode_items[i].set_idx = NULL;
+        s_mode_items[i].children = NULL;
+        s_mode_items[i].child_count = 0;
+    }
+
+    if (s_depth < MENU_MAX_DEPTH) {
+        s_stack[s_depth].items = s_mode_items;
+        s_stack[s_depth].count = 3;
+        s_stack[s_depth].sel   = (cur >= 0 && cur < 3) ? cur : 0;
+        s_stack[s_depth].title = "播放模式";
+        s_depth++;
+        s_edit = false;
+        menu_render();
+    }
+}
+
 void menu_init(void)
 {
     s_open = false;
@@ -266,7 +288,6 @@ void menu_handle_button(const btn_event_info_t *events, int n)
     for (int k = 0; k < n; k++) {
         const btn_event_info_t *e = &events[k];
         if (e->event == BTN_EVENT_NONE) continue;
-        app_play_beep();   // R049c：菜单内按键提示音（设置开启时）
 
         menu_level_t *lv = &s_stack[s_depth - 1];
         const menu_item_t *it = &lv->items[lv->sel];
@@ -335,6 +356,24 @@ void menu_handle_button(const btn_event_info_t *events, int n)
             break;
 
         case BTN_ID_PLAY_PAUSE:
+            /* R115: 书签子菜单 — 长按PLAY删除当前选中书签 */
+            if (e->event == BTN_EVENT_LONG_PRESS &&
+                lv->items == s_bookmark_items && lv->sel > 0) {
+                int idx = lv->sel - 1;
+                int track = app_get_current_track_idx();
+                bookmark_t bms[BOOKMARK_MAX_PER_FILE];
+                int n = bookmark_get_all(track, bms, BOOKMARK_MAX_PER_FILE);
+                if (idx >= 0 && idx < n) {
+                    bookmark_delete(track, bms[idx].slot);
+                    ESP_LOGI(TAG, "Bookmark deleted: track=%d slot=%d pos=%ds", track, bms[idx].slot, bms[idx].position_s);
+                    bookmark_fill_items();
+                    n = bookmark_get_all(track, bms, BOOKMARK_MAX_PER_FILE);
+                    lv->count = n + 1;
+                    if (lv->sel > n) lv->sel = n;  /* 删除最后一项时调整选中 */
+                    menu_render();
+                }
+                break;
+            }
             if (e->event == BTN_EVENT_SHORT_PRESS) {
                 if (it->kind == MI_SUBMENU) {
                     if (s_depth < MENU_MAX_DEPTH) {
@@ -375,6 +414,16 @@ void menu_handle_button(const btn_event_info_t *events, int n)
                         if (idx >= 0 && idx < n) {
                             app_bookmark_jump(bms[idx].position_s);
                         }
+                    }
+                } else if (it->kind == MI_ACTION && it->on_enter == NULL &&
+                           lv->items == s_mode_items) {
+                    /* R115: 播放模式子菜单 -> 选中确认并返回 */
+                    app_set_play_mode(lv->sel);
+                    ESP_LOGI(TAG, "Play mode set: %d (%s)", lv->sel, s_mode_labels[lv->sel]);
+                    /* 返回上一级 */
+                    if (s_depth > 1) {
+                        s_depth--;
+                        menu_render();
                     }
                 } else if (it->kind == MI_TOGGLE && it->set_idx) {
                     s_edit = true;    // 列表·TOGGLE：PLAY 进入编辑态

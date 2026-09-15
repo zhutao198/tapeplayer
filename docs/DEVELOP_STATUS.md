@@ -318,3 +318,49 @@ PRD V2.0 扩展   ░░░░░░░░░░  规划 (蓝牙方案已出 BT_
 - main/bookmark.cpp - 实现 bookmark_get_all() / bookmark_delete()
 - main/menu.cpp - 书签动态子菜单(bookmark_fill_and_enter) + PLAY键特殊处理
 - main/main.cpp - app_get_current_track_idx() / app_bookmark_add_current() / app_bookmark_jump()
+
+## R115 (2026-09-15) 格式行中文化 + 关机系统完善 + 开机体验优化
+
+### 格式行canvas化（中文播放模式）
+- 格式行从LVGL label改为canvas渲染(s_fmt_canvas, 274x18 at (8,44)), 用cjk_blit_text渲染中文
+- 显示内容: 无A-B时 MP3|顺序播放, 有A-B时 MP3|A01:23 B02:45x3
+- A/B字符用黄色(0xf59e0b)高亮, 其余紫色(0xb8a4dc)
+- 取消原AB橙色徽章(被字体覆盖且意义不大)
+- ASCII字模步进12px(M字符能完整显示)
+
+### 播放模式列表选择
+- 菜单→播放模式→动态子菜单列出 顺序播放/列表循环/单曲循环
+- 当前模式默认选中高亮, 按PLAY确认返回
+- 播放界面格式行显示中文模式名
+
+### 书签删除功能
+- 书签子菜单中: 短按PLAY=跳转播放, 长按PLAY=删除当前选中书签
+- 修复关键bug: bookmark_delete期望NVS的slot编号, 之前传列表索引idx, 书签不连续存储时删错位置
+- bookmark_t新增slot字段, bookmark_get_all填充实际slot, 删除时用bms[idx].slot
+
+### 菜单清理
+- 系统设置菜单移除未实现的桩功能: 按键提示音(已禁用beep)、语音播报(仅NVS持久化)、USB存储(仅提示功能未开放)、EQ(回滚)
+- 系统设置剩余3项: 固件升级、关于、定时关机
+- 修复系统设置child_count bug(原7/8, 实际3/4, 导致数组越界LoadProhibited死机)
+- EQ功能尝试与回滚: ESP-ADF equalizer元件插入管道导致Guru Meditation Error死机, 已完全移除
+
+### 开机体验优化
+- 开机花屏修复: LCD初始化后立即用esp_lcd_panel_draw_bitmap清屏(全黑, 分6块), 不依赖LVGL异步渲染; 背光初始化移到首次渲染之后
+- splash顶部黑条修复: s_splash容器添加bg_opa=LV_OPA_COVER(完全不透明), 避免透出下层player UI; 显示splash时隐藏g_msg/g_player/g_ota并move_foreground
+
+### 关机系统完善
+- 恢复真正硬件关机: TAPEBOOK_POWER_LATCH_BYPASSED从1改为0, power_mgmt_power_off()恢复拉低POW_EN 2秒释放锁存 + deep-sleep兜底
+- 低电量关机倒计时: 电量临界(<5%)且未充电→启动30秒倒计时, 屏幕显示Low Battery / Shutdown in XX s; 倒计时期间接上充电→自动取消; 倒计时结束→保存状态后关机
+- 定时关机改为无动作计时: 任何按键操作→重置计时(持续无操作才到期); 无操作到时间→停止播放+启动30秒关机倒计时, 屏幕显示Auto Off / Shutdown in XX s; 倒计时期间按任意键→取消关机并重新计时; 倒计时结束→清除定时设置后关机
+
+### 变更文件
+- main/display.cpp - 格式行canvas + splash bg_opa修复 + LCD清屏 + 背光延后 + display_show_shutdown_countdown() + AB徽章隐藏
+- main/display.h - display_show_shutdown_countdown()声明
+- main/menu.cpp - 播放模式列表选择 + 书签长按删除 + 移除EQ/语音播报/USB存储/按键提示音 + 系统设置child_count=3/4
+- main/main.cpp - 低电量倒计时逻辑 + 定时关机无动作计时 + 倒计时到期关机 + 按键取消倒计时
+- main/power_mgmt.h - 关机倒计时类型/函数声明 + power_mgmt_reset_auto_off_timer()
+- main/power_mgmt.cpp - 关机倒计时实现 + record_activity重置定时关机计时
+- main/config.h - TAPEBOOK_POWER_LATCH_BYPASSED=0
+- main/bookmark.h - bookmark_t添加slot字段
+- main/bookmark.cpp - bookmark_get_all填充slot字段
+- main/audio_player.cpp/h - EQ回滚(移除equalizer相关代码)

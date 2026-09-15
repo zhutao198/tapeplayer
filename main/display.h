@@ -185,6 +185,13 @@ void display_show_ota_progress(int percent);
 void display_show_ota_done(void);
 void display_show_ota_error(const char *msg);
 
+/**
+ * @brief R115: 显示关机倒计时提示 (居中覆盖)
+ * @param type      0=无, 1=低电量, 2=定时关机
+ * @param remaining 剩余秒数
+ */
+void display_show_shutdown_countdown(int type, int remaining);
+
 #ifdef __cplusplus
 }
 #endif

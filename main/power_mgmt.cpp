@@ -27,6 +27,10 @@ static int      g_auto_off_min = 0;
 static uint64_t g_auto_off_start_us = 0;
 static int      g_tick_count = 0;
 
+/* R115: 关机倒计时 */
+static shutdown_countdown_type_t g_shutdown_countdown_type = SHUTDOWN_COUNTDOWN_NONE;
+static uint64_t g_shutdown_countdown_end_us = 0;
+
 /* 电池电压换算系数。
  * 原理图电池分压 (经 LMV321 电压跟随器送入 IO1/ADC1_CH0):
  *   VBAT → R34(45.3K, 上) → 分压点 → R35(110K, 下) → GND
@@ -159,6 +163,10 @@ bool power_mgmt_should_shutdown(void)
 void power_mgmt_record_activity(void)
 {
     g_last_activity_us = esp_timer_get_time();
+    /* R115: 按键活动重置定时关机计时(无动作计时) */
+    if (g_auto_off_min > 0) {
+        g_auto_off_start_us = esp_timer_get_time();
+    }
 }
 
 bool power_mgmt_should_sleep(void)
@@ -197,4 +205,48 @@ void power_mgmt_power_off(void)
     /* 若锁存未完全切断, 进入深度休眠兜底 */
     esp_deep_sleep_start();
 #endif
+}
+
+/* ============================================================
+ * R115: 关机倒计时
+ * ============================================================ */
+void power_mgmt_start_shutdown_countdown(shutdown_countdown_type_t type, int seconds)
+{
+    g_shutdown_countdown_type = type;
+    g_shutdown_countdown_end_us = esp_timer_get_time() + (uint64_t)seconds * 1000000ULL;
+    ESP_LOGI(TAG, "Shutdown countdown started: type=%d seconds=%d", type, seconds);
+}
+
+void power_mgmt_cancel_shutdown_countdown(void)
+{
+    if (g_shutdown_countdown_type != SHUTDOWN_COUNTDOWN_NONE) {
+        ESP_LOGI(TAG, "Shutdown countdown cancelled: type=%d", g_shutdown_countdown_type);
+    }
+    g_shutdown_countdown_type = SHUTDOWN_COUNTDOWN_NONE;
+    g_shutdown_countdown_end_us = 0;
+}
+
+int power_mgmt_get_shutdown_countdown_remaining(void)
+{
+    if (g_shutdown_countdown_type == SHUTDOWN_COUNTDOWN_NONE) return -1;
+    int64_t remaining = (int64_t)(g_shutdown_countdown_end_us - esp_timer_get_time()) / 1000000;
+    return (remaining < 0) ? 0 : (int)remaining;
+}
+
+shutdown_countdown_type_t power_mgmt_get_shutdown_countdown_type(void)
+{
+    return g_shutdown_countdown_type;
+}
+
+bool power_mgmt_shutdown_countdown_expired(void)
+{
+    if (g_shutdown_countdown_type == SHUTDOWN_COUNTDOWN_NONE) return false;
+    return esp_timer_get_time() >= g_shutdown_countdown_end_us;
+}
+
+void power_mgmt_reset_auto_off_timer(void)
+{
+    if (g_auto_off_min > 0) {
+        g_auto_off_start_us = esp_timer_get_time();
+    }
 }
