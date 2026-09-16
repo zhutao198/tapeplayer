@@ -209,6 +209,23 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps
     return 0;
 }
 
+
+/* R116: WAV sample rate sniff from RIFF/WAVE header */
+static int wav_sniff_sample_rate(const char *path, int *channels_out)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    uint8_t hdr[44];
+    size_t rd = fread(hdr, 1, sizeof(hdr), fp);
+    fclose(fp);
+    if (rd < 44) return 0;
+    if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) return 0;
+    int channels = hdr[22] | (hdr[23] << 8);
+    int rate = hdr[24] | (hdr[25] << 8) | (hdr[26] << 16) | (hdr[27] << 24);
+    if (channels_out) *channels_out = channels;
+    return rate;
+}
+
 static audio_status_cb_t g_status_cb = NULL;
 static void              *g_user_data = NULL;
 
@@ -490,6 +507,19 @@ bool audio_player_play(const char *filepath)
             ESP_LOGW(TAG, "R083: sniff MP3 sample rate failed, fallback %d Hz", file_rate);
         }
         /* R100: 单声道文件由 Helix decoder 上混为立体声, I2S 保持 2 声道 */
+    }
+ else if (strcasecmp(get_file_ext(filepath), ".wav") == 0) {
+        const char *wav_path = strstr(filepath, "://");
+        const char *real_wav = wav_path ? wav_path + 3 : filepath;
+        if (real_wav[0] == '/' && real_wav[1] == '/') real_wav++;
+        int wav_ch = 2;
+        int wav_rate = wav_sniff_sample_rate(real_wav, &wav_ch);
+        if (wav_rate > 0) {
+            file_rate = wav_rate;
+            ESP_LOGI(TAG, "R116: WAV sample rate = %d Hz, channels = %d", wav_rate, wav_ch);
+        } else {
+            ESP_LOGW(TAG, "R116: sniff WAV sample rate failed, fallback %d Hz", file_rate);
+        }
     }
 
     // 7. 设置 I2S 时钟 — R083: 改用文件真实速率(mp3 嗅探)替代固定的 AUDIO_SAMPLE_RATE(48000)，
@@ -824,6 +854,15 @@ static void audio_player_seek_ms_internal(int ms)
 // done 标志(audio_element_on_cmd_resume 仅在 state 非 PAUSED 时 reset，pause 后 state==PAUSED
 // 被跳过)。若不重置，resume 后 decoder 首次 audio_element_input 即拿到 AEL_IO_DONE → 误判曲终跳
 // 下一首。因此在 resume 前显式重置 decoder 的 input(reader→decoder)/output(decoder→i2s) ringbuffer。
+
+/* R116: only MP3(Helix) needs internal reset; WAV/AAC decoders lack this function */
+static void safe_mp3_decoder_reset(void)
+{
+    if (g_seek_path[0] && strcasecmp(get_file_ext(g_seek_path), ".mp3") == 0) {
+        mp3_decoder_libhelix_reset(g_decoder);
+    }
+}
+
 static void audio_player_pause_seek_resume(int ms)
 {
     if (!g_pipeline || !g_is_playing || !g_decoder) return;
@@ -831,7 +870,7 @@ static void audio_player_pause_seek_resume(int ms)
     audio_player_seek_ms_internal(ms);
     audio_element_reset_input_ringbuf(g_decoder);   // 清 reader→decoder 的 done 标志
     audio_element_reset_output_ringbuf(g_decoder);  // 清 decoder→i2s 的 done 标志
-    mp3_decoder_libhelix_reset(g_decoder);          // R094: 清 decoder 内部残留旧位置输入缓冲/坏帧计数，避免与新数据拼接成非法 MP3 误判曲终
+    safe_mp3_decoder_reset();          // R094: 清 decoder 内部残留旧位置输入缓冲/坏帧计数，避免与新数据拼接成非法 MP3 误判曲终
     audio_pipeline_resume(g_pipeline);
 }
 
@@ -847,7 +886,7 @@ void audio_player_seek_ms(int ms)
         if (g_decoder) {
             audio_element_reset_input_ringbuf(g_decoder);
             audio_element_reset_output_ringbuf(g_decoder);
-            mp3_decoder_libhelix_reset(g_decoder);   // R094: 同 pause_seek_resume，避免残留缓冲误判曲终
+            safe_mp3_decoder_reset();   // R094: 同 pause_seek_resume，避免残留缓冲误判曲终
         }
         // R035-020：保持 paused：清掉内部函数的 start_us 赋值，避免 get_position_ms 在暂停态累积。
         g_play_start_us = 0;
@@ -888,7 +927,7 @@ void audio_player_scrub_exit(bool resume)
         if (g_decoder) {
             audio_element_reset_input_ringbuf(g_decoder);
             audio_element_reset_output_ringbuf(g_decoder);
-            mp3_decoder_libhelix_reset(g_decoder);
+            safe_mp3_decoder_reset();
         }
         g_play_start_us = 0;  /* 保持暂停态, 不累积播放时间 */
     }

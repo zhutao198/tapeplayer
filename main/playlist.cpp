@@ -60,7 +60,7 @@ bool playlist_is_audio_file(const char *filename)
     if (*ext == '\0') return false;
 
     const char *supported[] = {
-        ".mp3", ".wav", ".flac", ".aac", ".m4a",
+        ".mp3", ".wav", ".flac", ".aac",
         ".ogg", ".opus", NULL
     };
 

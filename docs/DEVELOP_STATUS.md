@@ -1,7 +1,7 @@
 # TapeBook 开发状态对照 (vs PRD V1.x)
 
 > 本文档对照 PRD (V1.0/V1.1/V1.2/V2.0) 跟踪每个功能模块的实现状态。
-> 最后更新：2026-08-12（R047 评审基线 + R048 已提交 + R049 统一菜单：R049a 框架 / R049b A-B 复读 / R049c 按键提示音 + OTA(SD卡固件升级) 均已完成并通过编译）
+> 最后更新：2026-09-16（R116 多格式支持：WAV/FLAC/AAC(ADTS)/OGG/Opus 播放；非MP3音量待解决）（R047 评审基线 + R048 已提交 + R049 统一菜单：R049a 框架 / R049b A-B 复读 / R049c 按键提示音 + OTA(SD卡固件升级) 均已完成并通过编译）
 
 ## 速查图
 
@@ -364,3 +364,30 @@ PRD V2.0 扩展   ░░░░░░░░░░  规划 (蓝牙方案已出 BT_
 - main/bookmark.h - bookmark_t添加slot字段
 - main/bookmark.cpp - bookmark_get_all填充slot字段
 - main/audio_player.cpp/h - EQ回滚(移除equalizer相关代码)
+
+
+---
+
+## R116 (2026-09-16) 多格式支持 + 蓝牙音箱放弃
+
+### 已完成
+1. **WAV 采样率嗅探**：新增 wav_sniff_sample_rate() 从 RIFF/WAVE 头读取真实采样率/声道数，I2S 时钟匹配文件速率
+2. **非 MP3 decoder reset 保护**：新增 safe_mp3_decoder_reset() 包装，仅 .mp3 调用 mp3_decoder_libhelix_reset，避免 WAV/AAC/FLAC 越界死机
+3. **playlist 移除 .m4a**：M4A 是 MP4 容器，aac_decoder 只支持 ADTS 原始流，播放会 Guru Meditation 死机，暂移除避免误触
+4. **蓝牙音箱功能放弃并回滚**：ESP32-S3 蓝牙控制器只支持 BLE，不支持经典蓝牙(BR/EDR)，A2DP Sink 需要经典蓝牙协议栈，硬件层面无法实现。所有蓝牙代码已回滚
+
+### 已知限制
+- **非 MP3 音量不可调**：WAV/FLAC/AAC/OGG/Opus 音量不能调节。通用软件音量元素(vol_element)方案已验证失败：
+  - CPU 0 上 vol 任务不阻塞一直跑导致 main 饿死看门狗超时
+  - CPU 1 上任务创建超时 2 秒导致 pipeline_resume 失败
+  - 纯透传也无法解决
+  - MP3 音量正常（通过 mp3_decoder_set_volume）
+- **M4A 不支持**：需实现 MP4 demuxer 元素（解析 moov atom 的 stco/stsz，给 AAC sample 加 ADTS 头），ESP-ADF 无此组件
+- **FLAC/OGG/Opus**：框架已支持（create_decoder 有对应分支），但未实测播放/seek/音量
+
+### 已验证做不通（不要再次尝试）
+- ESP32-S3 蓝牙音箱（A2DP Sink）——硬件只支持 BLE
+- i2s ALC 音量——IDF5.x 下 alc_volume_setup_process BREAK 崩溃
+- M4A 直接用 aac_decoder——MP4 容器无法解析导致死机
+- 自定义 vol_element（软件音量缩放元素）——两种核心分配都失败
+- EQ（ESP-ADF equalizer 元件）——插入管道导致 Guru Meditation 死机
