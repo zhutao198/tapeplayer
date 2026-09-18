@@ -113,7 +113,7 @@ void display_set_play_mode(int mode);
  */
 void display_show_volume(int volume);
 
-#define BROWSE_VISIBLE_LINES 6
+#define BROWSE_VISIBLE_LINES 10
 
 /**
  * @brief 文件夹浏览列表

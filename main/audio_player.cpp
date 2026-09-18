@@ -247,6 +247,10 @@ static audio_element_handle_t create_decoder(const char *path)
     flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();
     ogg_decoder_cfg_t  ogg_cfg  = DEFAULT_OGG_DECODER_CONFIG();
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
+    /* R117: FLAC/AAC default out_rb only 2KB (11ms) -> underflow clicking.
+       Bump to 16KB. Keep task on CPU0 (CPU1 is lvgl, would starve decoder prio 5). */
+    aac_cfg.out_rb_size  = 16 * 1024;
+    flac_cfg.out_rb_size = 16 * 1024;
 
     if (strcasecmp(ext, ".mp3") == 0) {
         // R080: 换 Helix MP3 解码器（chmorgan/esp-libhelix-mp3, Apache-2.0）替代闭源 PV-MP3。
@@ -265,8 +269,10 @@ static audio_element_handle_t create_decoder(const char *path)
         ESP_LOGI(TAG, "Using OGG/OPUS decoder");
         return ogg_decoder_init(&ogg_cfg);
     } else if (strcasecmp(ext, ".wav") == 0) {
-        ESP_LOGI(TAG, "Using WAV decoder");
-        return wav_decoder_init(&wav_cfg);
+        /* R117: WAV is uncompressed PCM — skip decoder entirely (file->i2s direct).
+           Eliminates WAV decoder accumulated-bytes false-EOF bug on repeated seeks. */
+        ESP_LOGI(TAG, "WAV PCM passthrough (no decoder)");
+        return NULL;
     }
 
     ESP_LOGW(TAG, "Unknown format %s, trying MP3 decoder", ext);
@@ -339,6 +345,7 @@ bool audio_player_play(const char *filepath)
 
     // 1. 创建 pipeline
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
+    pipeline_cfg.rb_size = 32 * 1024;  /* R117: 8KB->32KB, reduce FLAC/AAC underflow clicking */
     g_pipeline = audio_pipeline_init(&pipeline_cfg);
     if (!g_pipeline) {
         ESP_LOGE(TAG, "Failed to create audio pipeline");
@@ -356,9 +363,10 @@ bool audio_player_play(const char *filepath)
         return false;
     }
 
-    // 3. 创建解码器
+    // 3. 创建解码器（WAV 格式返回 NULL = PCM 直通，不需要解码器）
+    bool is_wav = (strcasecmp(get_file_ext(filepath), ".wav") == 0);
     g_decoder = create_decoder(filepath);
-    if (!g_decoder) {
+    if (!g_decoder && !is_wav) {
         ESP_LOGE(TAG, "Failed to create decoder");
         audio_element_deinit(g_fatfs_reader);
         g_fatfs_reader = NULL;
@@ -379,7 +387,7 @@ bool audio_player_play(const char *filepath)
         g_pipeline = NULL;
         return false;
     }
-    if (audio_pipeline_register(g_pipeline, g_decoder, "decoder") != ESP_OK) {
+    if (g_decoder && audio_pipeline_register(g_pipeline, g_decoder, "decoder") != ESP_OK) {
         ESP_LOGE(TAG, "register decoder failed");
         audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
         audio_element_deinit(g_fatfs_reader);
@@ -402,9 +410,9 @@ bool audio_player_play(const char *filepath)
         if (!g_i2s_writer) {
             ESP_LOGE(TAG, "R068: create_i2s_writer failed");
             audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
-            audio_pipeline_unregister(g_pipeline, g_decoder);
+            if (g_decoder) audio_pipeline_unregister(g_pipeline, g_decoder);
             audio_element_deinit(g_fatfs_reader);
-            audio_element_deinit(g_decoder);
+            if (g_decoder) audio_element_deinit(g_decoder);
             g_fatfs_reader = NULL;
             g_decoder = NULL;
             audio_pipeline_deinit(g_pipeline);
@@ -417,33 +425,38 @@ bool audio_player_play(const char *filepath)
     if (audio_pipeline_register(g_pipeline, g_i2s_writer, "i2s") != ESP_OK) {
         ESP_LOGE(TAG, "register i2s_writer failed");
         audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
-        audio_pipeline_unregister(g_pipeline, g_decoder);
+        if (g_decoder) audio_pipeline_unregister(g_pipeline, g_decoder);
         audio_element_deinit(g_fatfs_reader);
-        audio_element_deinit(g_decoder);
+        if (g_decoder) audio_element_deinit(g_decoder);
         audio_pipeline_unregister(g_pipeline, g_i2s_writer);
-        audio_element_deinit(g_i2s_writer);  // R068：失败也 deinit
+        audio_element_deinit(g_i2s_writer);
         g_fatfs_reader = NULL;
         g_decoder = NULL;
-        g_i2s_writer = NULL;                  // R068：失败置 NULL
+        g_i2s_writer = NULL;
         audio_pipeline_deinit(g_pipeline);
         g_pipeline = NULL;
         return false;
     }
 
-    // 5. 链接管道: file → decoder → i2s
+    // 5. 链接管道: WAV=file→i2s (PCM直通), 其他=file→decoder→i2s
     const char *link_tags[3] = {"file", "decoder", "i2s"};
-    esp_err_t link_err = audio_pipeline_link(g_pipeline, link_tags, 3);
+    int link_count = is_wav ? 2 : 3;
+    if (is_wav) {
+        link_tags[0] = "file";
+        link_tags[1] = "i2s";
+    }
+    esp_err_t link_err = audio_pipeline_link(g_pipeline, link_tags, link_count);
     if (link_err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to link pipeline (0x%x)", link_err);
         audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
-        audio_pipeline_unregister(g_pipeline, g_decoder);
+        if (g_decoder) audio_pipeline_unregister(g_pipeline, g_decoder);
         audio_pipeline_unregister(g_pipeline, g_i2s_writer);
         audio_element_deinit(g_fatfs_reader);
-        audio_element_deinit(g_decoder);
-        audio_element_deinit(g_i2s_writer);  // R068：失败也 deinit
+        if (g_decoder) audio_element_deinit(g_decoder);
+        audio_element_deinit(g_i2s_writer);
         g_fatfs_reader = NULL;
         g_decoder = NULL;
-        g_i2s_writer = NULL;                  // R068：失败置 NULL
+        g_i2s_writer = NULL;
         audio_pipeline_deinit(g_pipeline);
         g_pipeline = NULL;
         return false;
@@ -458,12 +471,19 @@ bool audio_player_play(const char *filepath)
     g_id3_skip_bytes = 0;  // R076-CODEC: 保留用于 seek 修正，但不再手动跳过
     int file_rate = AUDIO_SAMPLE_RATE;  // R083: 默认基准 48000，下述 mp3 会嗅探真实速率
     int bitrate_kbps = 0;               // R085: 嗅探到的真实码率，用于准确估算 duration
-    g_seek_path[0] = '\0';  // R085: 非 MP3 时清空，避免 seek 帧对齐误用上一首的路径
+    /* R117: set g_seek_path for ALL formats (MP3 frame-align, WAV sample-align).
+       Previously only MP3 set it, so WAV 4-byte alignment never triggered -> L/R swap noise. */
+    {
+        const char *rp = strstr(filepath, "://");
+        const char *real_path = rp ? rp + 3 : filepath;
+        if (real_path[0] == '/' && real_path[1] == '/') real_path++;
+        strncpy(g_seek_path, real_path, sizeof(g_seek_path) - 1);
+        g_seek_path[sizeof(g_seek_path) - 1] = '\0';
+    }
     if (strcasecmp(get_file_ext(filepath), ".mp3") == 0) {
         const char *mp3_path = strstr(filepath, "://");
         const char *real_path = mp3_path ? mp3_path + 3 : filepath;
         if (real_path[0] == '/' && real_path[1] == '/') real_path++;
-        strncpy(g_seek_path, real_path, sizeof(g_seek_path) - 1);  // R085: 供 seek 帧对齐扫描
 
         int id3_sz = id3v2_total_size(real_path);
         if (id3_sz > 0) {
@@ -491,10 +511,10 @@ bool audio_player_play(const char *filepath)
                 ESP_LOGE(TAG, "R101 unsupported MPEG layer=%d (need 1=LayerIII), reject: %s",
                          sniff_layer, filepath);
                 audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
-                audio_pipeline_unregister(g_pipeline, g_decoder);
+                if (g_decoder) audio_pipeline_unregister(g_pipeline, g_decoder);
                 audio_pipeline_unregister(g_pipeline, g_i2s_writer);
                 audio_element_deinit(g_fatfs_reader);
-                audio_element_deinit(g_decoder);
+                if (g_decoder) audio_element_deinit(g_decoder);
                 audio_element_deinit(g_i2s_writer);
                 g_fatfs_reader = NULL;
                 g_decoder = NULL;
@@ -532,12 +552,11 @@ bool audio_player_play(const char *filepath)
     // 8. 启动管道（R032-209: 检查返回值，失败即终止，避免进入播放态却无声）
     if (audio_pipeline_run(g_pipeline) != ESP_OK) {
         ESP_LOGE(TAG, "audio_pipeline_run failed");
-        // R034-004：复用 link 失败时的清理路径，避免 pipeline + 元素句柄泄漏
         audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
-        audio_pipeline_unregister(g_pipeline, g_decoder);
+        if (g_decoder) audio_pipeline_unregister(g_pipeline, g_decoder);
         audio_pipeline_unregister(g_pipeline, g_i2s_writer);
         audio_element_deinit(g_fatfs_reader);
-        audio_element_deinit(g_decoder);
+        if (g_decoder) audio_element_deinit(g_decoder);
         g_fatfs_reader = NULL;
         g_decoder = NULL;
         audio_pipeline_deinit(g_pipeline);
@@ -813,7 +832,7 @@ static int mp3_frame_align(const char *path, int byte_pos)
 
 static void audio_player_seek_ms_internal(int ms)
 {
-    if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
+    if (!g_pipeline || !g_is_playing || !g_fatfs_reader) return;
 
     // R100: 钳制 seek 目标在曲目时长内；超时长(损坏/越界恢复点)回退曲首 0，
     // 防止 seek 到文件尾之外 -> FATFS 立即 AEL_IO_DONE -> "播放即结束/不自动播下一首"。
@@ -837,6 +856,11 @@ static void audio_player_seek_ms_internal(int ms)
     // R085: MP3 帧对齐，减少解码器坏帧（叠加 err_cnt 误判曲终）
     if (strcasecmp(get_file_ext(g_seek_path), ".mp3") == 0) {
         byte_pos = mp3_frame_align(g_seek_path, (int)byte_pos);
+    }
+    // R117: WAV PCM sample alignment — 16-bit stereo = 4 bytes/sample.
+    // Seeking to non-4-aligned offset causes L/R channel swap = white noise.
+    if (strcasecmp(get_file_ext(g_seek_path), ".wav") == 0) {
+        byte_pos &= ~(int64_t)3;  /* floor to 4-byte sample boundary */
     }
     audio_element_set_byte_pos(g_fatfs_reader, (int)byte_pos);
 
@@ -865,12 +889,14 @@ static void safe_mp3_decoder_reset(void)
 
 static void audio_player_pause_seek_resume(int ms)
 {
-    if (!g_pipeline || !g_is_playing || !g_decoder) return;
+    if (!g_pipeline || !g_is_playing) return;
     audio_pipeline_pause(g_pipeline);
     audio_player_seek_ms_internal(ms);
-    audio_element_reset_input_ringbuf(g_decoder);   // 清 reader→decoder 的 done 标志
-    audio_element_reset_output_ringbuf(g_decoder);  // 清 decoder→i2s 的 done 标志
-    safe_mp3_decoder_reset();          // R094: 清 decoder 内部残留旧位置输入缓冲/坏帧计数，避免与新数据拼接成非法 MP3 误判曲终
+    if (g_decoder) {
+        audio_element_reset_input_ringbuf(g_decoder);
+        audio_element_reset_output_ringbuf(g_decoder);
+    }
+    safe_mp3_decoder_reset();
     audio_pipeline_resume(g_pipeline);
 }
 
@@ -880,7 +906,16 @@ void audio_player_seek_ms(int ms)
     // S5：保留原暂停态——暂停时 seek 不再静默 resume
     bool was_paused = g_is_paused;
     if (!was_paused) {
-        audio_player_pause_seek_resume(ms);
+            /* R117: pause reader + i2s. WAV has no decoder (PCM passthrough).
+               Keep input rb so compressed-format decoders never see empty. */
+            audio_element_pause(g_fatfs_reader);
+            if (g_i2s_writer) audio_element_pause(g_i2s_writer);
+            audio_player_seek_ms_internal(ms);
+            audio_element_resume(g_fatfs_reader, 0, pdMS_TO_TICKS(100));
+            if (g_decoder) {
+                audio_element_reset_output_ringbuf(g_decoder);
+            }
+            if (g_i2s_writer) audio_element_resume(g_i2s_writer, 0, pdMS_TO_TICKS(100));
     } else {
         audio_player_seek_ms_internal(ms);
         if (g_decoder) {
@@ -895,21 +930,35 @@ void audio_player_seek_ms(int ms)
 
 void audio_player_scrub_seek(int ms)
 {
-    if (!g_pipeline || !g_is_playing || !g_decoder || !g_fatfs_reader) return;
-    /* R098: FF/REW ctrl: seek reader + update position + clear decoder bad-frame
-       counter (prevents err_cnt>=51 -> mistaken end-of-track -> teardown double-free).
-       NO decoder free/realloc, NO pipeline pause/resume (event-queue overflow). */
-    audio_player_seek_ms_internal(ms);
-    mp3_decoder_libhelix_clear_errors(g_decoder);
+    if (!g_pipeline || !g_is_playing || !g_fatfs_reader) return;
+    if (g_decoder) {
+        /* Compressed formats: direct seek, decoder handles frame boundaries */
+        audio_player_seek_ms_internal(ms);
+        mp3_decoder_libhelix_clear_errors(g_decoder);
+    } else {
+        /* R117 WAV PCM passthrough: reader is already paused in scrub_enter.
+           Only update position variables for display — actual seek happens once
+           in scrub_exit. Avoids any pipeline operation during scrub ticks. */
+        g_play_start_us = esp_timer_get_time();
+        g_play_offset_us = (int64_t)ms * 1000;
+    }
 }
+
+static void apply_volume_alc(int volume);
 
 void audio_player_scrub_enter(void)
 {
     if (!g_pipeline) return;
     g_volume_saved = g_volume;
-    mp3_decoder_set_volume(0);
+    apply_volume_alc(0);
     g_scrub_active = true;                    /* R099: 快进/快退期进度不计播放流逝，仅由 seek 推进 */
     g_last_scrub_us = esp_timer_get_time();   /* 重置 tick 计时 */
+    /* R117 WAV PCM passthrough: pause reader during scrub. i2s keeps running and plays
+       silence when rb is empty. This avoids frequent reader/i2s pause/resume during
+       scrub ticks which caused discontinuous PCM = white-noise artifacts. */
+    if (!g_decoder && g_fatfs_reader) {
+        audio_element_pause(g_fatfs_reader);
+    }
 }
 
 void audio_player_scrub_exit(bool resume)
@@ -917,10 +966,28 @@ void audio_player_scrub_exit(bool resume)
     if (!g_pipeline) return;
     int final_ms = audio_player_get_position_ms();   /* 释放时显示位置(最后 seek 目标) */
     g_scrub_active = false;
-    mp3_decoder_set_volume(g_volume_saved);
     /* R111: 暂停态退出scrub不resume, 避免RESUME->PAUSE抖动导致管道状态混乱 */
     if (resume) {
-        audio_player_pause_seek_resume(final_ms);
+        if (g_decoder) {
+            /* Compressed formats: pause reader+i2s, seek, clear decoder rb, resume */
+            audio_element_pause(g_fatfs_reader);
+            if (g_i2s_writer) audio_element_pause(g_i2s_writer);
+            audio_player_seek_ms_internal(final_ms);
+            audio_element_reset_output_ringbuf(g_decoder);
+            audio_element_resume(g_fatfs_reader, 0, pdMS_TO_TICKS(100));
+            if (g_i2s_writer) audio_element_resume(g_i2s_writer, 0, pdMS_TO_TICKS(100));
+        } else {
+            /* R117 WAV PCM passthrough: i2s NEVER paused. Reader was paused in scrub_enter.
+               KEY: set_byte_pos only changes file offset — reader's internal prefetch buffer
+               still holds OLD-position data. Must resume reader first to flush that stale data,
+               THEN clear rb, wait for fresh data, THEN unmute. */
+            audio_player_seek_ms_internal(final_ms);
+            audio_element_resume(g_fatfs_reader, 0, pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(80));  /* let reader flush internal prefetch (stale) */
+            audio_element_reset_output_ringbuf(g_fatfs_reader);  /* discard stale data */
+            vTaskDelay(pdMS_TO_TICKS(50));  /* let reader fill rb with fresh new-position data */
+        }
+        apply_volume_alc(g_volume_saved);
     } else {
         audio_pipeline_pause(g_pipeline);
         audio_player_seek_ms_internal(final_ms);
@@ -930,6 +997,7 @@ void audio_player_scrub_exit(bool resume)
             safe_mp3_decoder_reset();
         }
         g_play_start_us = 0;  /* 保持暂停态, 不累积播放时间 */
+        apply_volume_alc(g_volume_saved);
     }
 }
 
@@ -985,7 +1053,22 @@ void audio_player_set_speed(float speed)
 static void apply_volume_alc(int volume)
 {
     g_volume = volume;
-    mp3_decoder_set_volume(volume);   // 设置全局增益，decoder 每帧输出前缩放
+    /* R117: MP3 uses decoder internal volume; non-MP3 uses i2s software volume scale.
+       Both map level 0..14 to linear gain 0..100%, so perceived loudness is consistent. */
+    bool is_mp3 = false;
+    if (g_seek_path[0]) {
+        is_mp3 = (strcasecmp(get_file_ext(g_seek_path), ".mp3") == 0);
+    }
+    if (is_mp3) {
+        mp3_decoder_set_volume(volume);
+        if (g_i2s_writer) i2s_stream_set_sw_volume(g_i2s_writer, 100);
+    } else {
+        mp3_decoder_set_volume(VOLUME_LEVEL_MAX);  /* decoder at max, avoid double scaling */
+        if (g_i2s_writer) {
+            int percent = volume * 100 / VOLUME_LEVEL_MAX;
+            i2s_stream_set_sw_volume(g_i2s_writer, percent);
+        }
+    }
 }
 
 void audio_player_set_volume(int volume)
@@ -1057,7 +1140,16 @@ void audio_player_tick(void)
         if (cur >= g_ab_b_ms) {
             g_ab_loop_count++;   /* R111: 遍数 +1 */
             ESP_LOGD(TAG, "AB loop #%d: seek back to A (%d ms)", g_ab_loop_count, g_ab_a_ms);
-            audio_player_pause_seek_resume(g_ab_a_ms);
+            /* R117: pause reader + i2s (NOT decoder for compressed formats; WAV has none).
+               Keep input rb so decoder never sees empty. Reader resumes from new position. */
+            audio_element_pause(g_fatfs_reader);
+            if (g_i2s_writer) audio_element_pause(g_i2s_writer);
+            audio_player_seek_ms_internal(g_ab_a_ms);
+            audio_element_resume(g_fatfs_reader, 0, pdMS_TO_TICKS(100));
+            if (g_decoder) {
+                audio_element_reset_output_ringbuf(g_decoder);
+            }
+            if (g_i2s_writer) audio_element_resume(g_i2s_writer, 0, pdMS_TO_TICKS(100));
         }
     }
 

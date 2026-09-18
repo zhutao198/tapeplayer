@@ -60,15 +60,19 @@ static void on_bt_state(bt_speaker_state_t state, const char *name)
     case BT_SPEAKER_STATE_CONNECTED:
         g_bt_connected = true;
         if (name) strncpy(g_bt_device_name, name, sizeof(g_bt_device_name) - 1);
+        ESP_LOGI(TAG, "BT connected: %s", name ? name : "(unknown)");
         break;
     case BT_SPEAKER_STATE_DISCONNECTED:
     case BT_SPEAKER_STATE_STOPPED:
         g_bt_connected = false;
         g_bt_device_name[0] = '\0';
+        ESP_LOGI(TAG, "BT disconnected/stopped");
         break;
     default:
         break;
     }
+    /* R115: 状态变化时触发UI刷新 */
+    display_request_main_tick();
 }
 #endif
 
@@ -1057,7 +1061,8 @@ static bool mount_sd_card(void)
     };
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = SD_SPI_HOST;  // 鏄惧紡纭锛圫DSPI_HOST_DEFAULT 宸茶浣嗕繚鐣欐樉寮忥級
+    host.slot = SD_SPI_HOST;
+    host.max_freq_khz = 10000;  /* R117: 20MHz->10MHz, reduce SD SPI CRC errors */  // 鏄惧紡纭锛圫DSPI_HOST_DEFAULT 宸茶浣嗕繚鐣欐樉寮忥級
 
     sdspi_device_config_t device_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
     device_cfg.host_id = SD_SPI_HOST;
@@ -1334,6 +1339,12 @@ void app_enter_bt_speaker(void)
 
 extern "C" void app_main(void)
 {
+    /* R117: reduce ESP-ADF internal log noise (AUDIO_ELEMENT pause/resume spam,
+       AUDIO_EVT queue-full warnings during seek) */
+    esp_log_level_set("AUDIO_ELEMENT", ESP_LOG_WARN);
+    esp_log_level_set("AUDIO_EVT", ESP_LOG_WARN);
+    esp_log_level_set("AUDIO_PIPELINE", ESP_LOG_WARN);
+
     init_hardware();
     init_storage();
 

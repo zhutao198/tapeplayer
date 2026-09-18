@@ -391,3 +391,65 @@ PRD V2.0 扩展   ░░░░░░░░░░  规划 (蓝牙方案已出 BT_
 - M4A 直接用 aac_decoder——MP4 容器无法解析导致死机
 - 自定义 vol_element（软件音量缩放元素）——两种核心分配都失败
 - EQ（ESP-ADF equalizer 元件）——插入管道导致 Guru Meditation 死机
+
+
+---
+
+## R117 (2026-09-18) 非MP3音量 + WAV PCM直通 + 全格式AB复读/快进快退修复
+
+### 非 MP3 音量调节（i2s 层软件 PCM 缩放）
+- 修改 ESP-ADF i2s_stream_idf5.c：i2s_stream_t 新增 sw_volume 字段（默认100）
+- 新增 i2s_sw_volume_scale() 静态函数：16-bit PCM Q15 增益缩放 + 饱和保护
+- _i2s_process 中 output 前调用缩放
+- 新增公共 API i2s_stream_set_sw_volume()
+- MP3 用 mp3_decoder_set_volume + i2s 设 100；非 MP3（WAV/FLAC/AAC/OGG/Opus）用 i2s 软件缩放
+- 音量 15 档（0-14）线性映射到 0-100%
+
+### FLAC/AAC 咔咔声修复
+- 解码器 out_rb_size 从 2KB 增大到 16KB（FLAC/AAC）
+- pipeline rb_size 从 8KB 增大到 32KB
+- SD 卡 SPI 时钟从 20MHz 降到 10MHz
+
+### 事件队列增大
+- audio_element.c 中 external_queue_size/internal_queue_size 从 5→20→64
+- 避免频繁 AB 复读/快进快退时事件队列满导致 PAUSE/RESUME 事件丢失
+
+### WAV PCM 直通方案（核心重构）
+- 问题根因：ESP-ADF WAV 解码器（预编译库，无源码）内部累积"已处理字节数"计数器，多次 seek 后达到 WAV data chunk size → 误判文件末尾 → DEC_WAV Closed → 切歌。无 reset API。
+- 解决方案：WAV 格式完全跳过解码器，pipeline 只用 file→i2s 两个 element，PCM 数据直通
+- 播放前跳过 44 字节 WAV 头（g_id3_skip_bytes=44）
+- i2s 时钟按 WAV 文件真实采样率设置
+- 所有 g_decoder 操作加 NULL 判空
+
+### WAV AB 复读修复
+- AB 复读 100 次验证正常（之前 5-8 次后无声切歌）
+- 压缩格式（MP3/FLAC/AAC）AB 复读 50 次正常
+
+### WAV 快进/快退噪声修复（关键 bug）
+- 问题现象：WAV 快进/快退后偶尔出现呲呲白噪声
+- 根因 1：WAV 4 字节样本对齐从未生效——g_seek_path 只在 MP3 格式时设置，WAV 时被清空，导致对齐判断永远不成立。seek 到非 4 字节对齐位置时，16-bit 立体声 PCM 左右声道数据错位 → 白噪声
+- 根因 2：reader 内部预读缓冲区残留旧位置数据
+- 修复：
+  1. g_seek_path 对所有格式都设置（之前只 MP3）
+  2. WAV seek 时 byte_pos &= ~3 向下取整到 4 字节边界
+  3. scrub_enter 暂停 reader（i2s 继续运行，ringbuffer 空后阻塞等待）
+  4. scrub_seek 只更新显示进度，不实际 seek
+  5. scrub_exit：seek → 恢复 reader → 等 80ms 吐旧数据 → 清 ringbuffer → 等 50ms 填新数据 → 恢复音量
+  6. i2s 全程不暂停/恢复，避免状态切换
+
+### 其他
+- 浏览文件可见行数 BROWSE_VISIBLE_LINES 从 6 改为 10
+
+### 变更文件
+- main/audio_player.cpp — WAV PCM 直通 + 全格式 seek 判空 + 4字节对齐 + g_seek_path 全格式设置 + scrub 重构
+- main/main.cpp — 日志级别设置 + SD 卡 10MHz
+- main/display.h — BROWSE_VISIBLE_LINES=10
+- esp-adf/components/audio_stream/i2s_stream_idf5.c — i2s 软件音量缩放
+- esp-adf/components/audio_stream/include/i2s_stream.h — i2s_stream_set_sw_volume 声明
+- esp-adf/components/audio_pipeline/audio_element.c — 事件队列 5→64
+
+### 已验证做不通（新增）
+- WAV 解码器 reset——预编译库无 reset API，无源码
+- pipeline pause/resume 让 WAV 解码器关闭重开——时序不可控
+- 解码器任务移到 CPU1——被 lvgl 饿死
+- WAV 快进快退中频繁暂停/恢复 i2s——状态切换导致 PCM 不连续
