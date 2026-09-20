@@ -45,8 +45,22 @@
 
 #include "bookmark.h"
 #include "led_strip.h"
+#include "soc/gpio_reg.h"
+#include "esp_private/startup_internal.h"
 
 static const char *TAG = "main";
+
+/* R118: 开机自锁引脚提前拉高
+ * ESP_SYSTEM_INIT_FN 在系统初始化 CORE 阶段执行(app_main 之前),
+ * 直接操作 GPIO 寄存器拉高 POW_EN (IO40), 比 app_main 第一行再提前 ~100-200ms。
+ * GPIO40 在 GPIO1 寄存器块, bit = 40 - 32 = 8。
+ * app_main 第一行的拉高代码保留作为兜底。 */
+ESP_SYSTEM_INIT_FN(early_pow_en_latch, CORE, BIT(0), 100)
+{
+    REG_WRITE(GPIO_ENABLE1_W1TS_REG, 1 << 8);  // IO40 output enable
+    REG_WRITE(GPIO_OUT1_W1TS_REG, 1 << 8);    // IO40 set high
+    return ESP_OK;
+}
 
 #if defined(CONFIG_USE_BT_SPEAKER)
 static char g_bt_device_name[32] = {0};
