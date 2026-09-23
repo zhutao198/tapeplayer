@@ -23,6 +23,7 @@
 #include "audio_player.h"
 #include "esp_timer.h"
 #include "reel_img.h"
+#include "bolt_img.h"      /* R: 充电闪电图标 (RGB565A8 透明抗锯齿, tools/gen_bolt.py 生成) */
 #include "cassette_bg.h"   /* P1-UI: 盒壳静态背景 */  // R109c: 预烘焙红轮毂位图 (带 6 辐条, 旋转只转 1 个 img 对象)
 
 #include "esp_log.h"
@@ -1142,23 +1143,26 @@ static void ui_create(void)
     lv_obj_set_style_bg_color(batt_nub, lv_color_white(), 0);
     lv_obj_set_style_border_width(batt_nub, 0, 0);
     lv_obj_clear_flag(batt_nub, LV_OBJ_FLAG_CLICKABLE);
-    /* 充电标记: 绿色闪电符号 (矢量线绘制, 不依赖字体字形) */
+    /* 充电标记: 绿色闪电 (canvas 位图, 按用户轮廓比例栅格化 16x20) */
     batt_charge = lv_obj_create(g_player);
-    lv_obj_set_size(batt_charge, 12, 16);
-    lv_obj_align_to(batt_charge, batt_frame, LV_ALIGN_OUT_LEFT_MID, -6, 0);
-    lv_obj_set_style_bg_opa(batt_charge, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(batt_charge, 16, 20);
+    lv_obj_align_to(batt_charge, batt_frame, LV_ALIGN_OUT_LEFT_MID, -4, 0);
+    /* 完全重置样式: 背景=屏幕色, 无边框/阴影/滚动条/内边距/裁剪 */
+    lv_obj_set_style_bg_color(batt_charge, lv_color_hex(0x0a0e17), 0);
+    lv_obj_set_style_bg_opa(batt_charge, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(batt_charge, 0, 0);
+    lv_obj_set_style_shadow_width(batt_charge, 0, 0);
+    lv_obj_set_style_outline_width(batt_charge, 0, 0);
+    lv_obj_set_style_pad_all(batt_charge, 0, 0);
+    lv_obj_set_scrollbar_mode(batt_charge, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(batt_charge, LV_OBJ_FLAG_CLICKABLE);
-    static lv_point_precise_t bolt_pts[] = {
-        {7, 0}, {2, 7}, {5, 7}, {3, 14}, {9, 6}, {6, 6}, {7, 0}
-    };
-    lv_obj_t *bolt = lv_line_create(batt_charge);
-    lv_line_set_points(bolt, bolt_pts, 7);
-    lv_obj_align(bolt, LV_ALIGN_TOP_LEFT, 1, 1);
-    lv_obj_set_style_line_width(bolt, 2, 0);
-    lv_obj_set_style_line_color(bolt, lv_color_hex(0x22c55e), 0); /* 绿色闪电 */
-    lv_obj_set_style_line_rounded(bolt, true, 0);
-    lv_obj_clear_flag(bolt, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(batt_charge, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* 充电标记闪电: RGB565A8 透明抗锯齿位图 (同卷轴帧机制, tools/gen_bolt.py 生成) */
+    lv_obj_t *bolt_img = lv_img_create(batt_charge);
+    lv_img_set_src(bolt_img, &bolt_dsc);
+    lv_obj_align(bolt_img, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_clear_flag(bolt_img, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
 
     /* R111: 音量 OSD 中央浮层 (设计稿风格: 半透明深色背景 + 扬声器 + 横向音量条 + 数字) */
@@ -1912,6 +1916,8 @@ static void display_update_nolock(player_state_t state,
     fp = fp * 31 + (uint32_t)(ab_a >= 0 ? (uint32_t)ab_a : 0xFFFF0001u);
     fp = fp * 31 + (uint32_t)(ab_b >= 0 ? (uint32_t)ab_b : 0xFFFF0002u);
     fp = fp * 31 + (uint32_t)(ab_on ? 1u : 0u);
+    fp = fp * 31 + (uint32_t)(power_mgmt_is_charging() ? 1u : 0u);  // R119: 充电状态变化也触发刷新, 否则暂停/停止时插拔USB充电图标不更新
+    fp = fp * 31 + (uint32_t)power_mgmt_get_battery_percent();      // 电量变化也触发刷新(充电/放电时容量条更新)
     if (fp == g_display_fp) {
         if (!g_display_sleep &&
             (now - g_display_last_update_us) >= SCREEN_SAVER_TIMEOUT_US) {
@@ -1965,36 +1971,53 @@ static void display_update_nolock(player_state_t state,
         case PLAYER_STATE_STOPPED:     active_idx = 3; break;
         default: break;
         }
-        for (int i = 0; i < 6; i++) {
-            key_btn_t *k = &s_keys[i];
-            if (!k->btn) continue;
-            bool act = (i == active_idx);
-            lv_color_t ic = act ? lv_color_hex(0x4ade80) : lv_color_hex(0x9aa3b2);
-            lv_obj_set_style_bg_color(k->btn, act ? lv_color_hex(0x0d3b1e) : lv_color_hex(0x161c2e), 0);
-            lv_obj_set_style_border_color(k->btn, act ? lv_color_hex(0x22c55e) : lv_color_hex(0x232c44), 0);
-            /* 更新图标容器内所有 line 和 obj 的颜色 */
-            if (k->icon) {
-                uint32_t cnt = lv_obj_get_child_cnt(k->icon);
-                for (uint32_t j = 0; j < cnt; j++) {
-                    lv_obj_t *child = lv_obj_get_child(k->icon, j);
-                    if (lv_obj_check_type(child, &lv_line_class)) {
-                        lv_obj_set_style_line_color(child, ic, 0);
-                    } else {
-                        lv_obj_set_style_bg_color(child, ic, 0);
+        /* R119-ui-b: 仅在播放/暂停状态或高亮项(active_idx)切换时才重设 6 个按钮样式。
+           原代码每次 display_update 都全量重设(6 按钮 x N 子对象 set_style),
+           而 display_update 在进度秒变时每秒触发多次 -> 无谓重绘, 拉长渲染帧,
+           加剧磁带卷轴(reel)动画卡顿。 */
+        /* R119-ui-c: 播放/暂停图标表示"按下后将执行的动作"(媒体UI惯例):
+           正在播放(含快进/快退)时显示暂停图标(两竖条 ‖), 暂停/停止时显示播放图标(三角 ▶)。
+           原逻辑基于 paused 显示"当前状态", 导致播放时误显三角、暂停时误显两竖条, 与预期相反。 */
+        bool show_pause_icon = (state == PLAYER_STATE_PLAYING) ||
+                               (state == PLAYER_STATE_FAST_FORWARD) ||
+                               (state == PLAYER_STATE_REWIND);
+        static int  s_last_btn_idx       = -2;
+        static bool s_last_btn_show_pause = false;
+        if (active_idx != s_last_btn_idx || show_pause_icon != s_last_btn_show_pause) {
+            s_last_btn_idx        = active_idx;
+            s_last_btn_show_pause = show_pause_icon;
+            for (int i = 0; i < 6; i++) {
+                key_btn_t *k = &s_keys[i];
+                if (!k->btn) continue;
+                bool act = (i == active_idx);
+                lv_color_t ic = act ? lv_color_hex(0x4ade80) : lv_color_hex(0x9aa3b2);
+                lv_obj_set_style_bg_color(k->btn, act ? lv_color_hex(0x0d3b1e) : lv_color_hex(0x161c2e), 0);
+                lv_obj_set_style_border_color(k->btn, act ? lv_color_hex(0x22c55e) : lv_color_hex(0x232c44), 0);
+                /* 更新图标容器内所有 line 和 obj 的颜色 */
+                if (k->icon) {
+                    uint32_t cnt = lv_obj_get_child_cnt(k->icon);
+                    for (uint32_t j = 0; j < cnt; j++) {
+                        lv_obj_t *child = lv_obj_get_child(k->icon, j);
+                        if (lv_obj_check_type(child, &lv_line_class)) {
+                            lv_obj_set_style_line_color(child, ic, 0);
+                        } else {
+                            lv_obj_set_style_bg_color(child, ic, 0);
+                        }
                     }
                 }
             }
-        }
-        if (s_play_tri && s_pause_l && s_pause_r) {
-            bool paused = (state == PLAYER_STATE_PAUSED);
-            if (paused) {
-                lv_obj_add_flag(s_play_tri, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(s_pause_l, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(s_pause_r, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_clear_flag(s_play_tri, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(s_pause_l, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(s_pause_r, LV_OBJ_FLAG_HIDDEN);
+            if (s_play_tri && s_pause_l && s_pause_r) {
+                if (show_pause_icon) {
+                    /* 正在播放 -> 显示暂停图标(两竖条) */
+                    lv_obj_add_flag(s_play_tri, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_clear_flag(s_pause_l, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_clear_flag(s_pause_r, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    /* 暂停/停止 -> 显示播放图标(三角) */
+                    lv_obj_clear_flag(s_play_tri, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_add_flag(s_pause_l, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_add_flag(s_pause_r, LV_OBJ_FLAG_HIDDEN);
+                }
             }
         }
     }
@@ -2021,9 +2044,18 @@ static void display_update_nolock(player_state_t state,
                                   (s_play_mode == 2) ? "单曲循环" : "顺序播放";
             snprintf(fmt_buf, sizeof(fmt_buf), "MP3|%s", mode_cn);
         }
-        cjk_fmt_clear();
-        cjk_fmt_text_ab(fmt_buf);
-        if (s_fmt_canvas) lv_obj_invalidate(s_fmt_canvas);
+        /* R119-ui-a: 格式行内容未变时跳过整屏点阵重绘(写~115KB PSRAM)。
+           原代码每次 display_update 都 clear+text+invalidate, 即使内容固定("MP3|顺序播放")
+           也整屏重绘, 形成每 200ms 一次的渲染尖峰, 拉长 lvgl_task 单帧,
+           导致磁带卷轴(reel)动画在该帧卡顿。与曲名 canvas 已有的"内容未变跳过"对齐。 */
+        static char s_last_fmt[128] = "";
+        if (strcmp(s_last_fmt, fmt_buf) != 0) {
+            strncpy(s_last_fmt, fmt_buf, sizeof(s_last_fmt) - 1);
+            s_last_fmt[sizeof(s_last_fmt) - 1] = '\0';
+            cjk_fmt_clear();
+            cjk_fmt_text_ab(fmt_buf);
+            if (s_fmt_canvas) lv_obj_invalidate(s_fmt_canvas);
+        }
     }
 
     /* 图形电量: 外框填充宽度 + 低电量变红 + 充电标记 */
@@ -2035,6 +2067,16 @@ static void display_update_nolock(player_state_t state,
     lv_obj_set_style_bg_color(batt_fill, bp < 20 ? lv_color_hex(0xef4444) : lv_color_hex(0x2dd4bf), 0);
     if (power_mgmt_is_charging()) lv_obj_clear_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
     else                          lv_obj_add_flag(batt_charge, LV_OBJ_FLAG_HIDDEN);
+    /* DBG-CHG: 临时诊断充电图标是否真正显示及其坐标 (定位后删除) */
+    {
+        static uint32_t s_chg_dbg = 0;
+        if (power_mgmt_is_charging() && (s_chg_dbg++ < 40 || (s_chg_dbg % 600) == 0)) {
+            ESP_LOGI(TAG, "CHG-ICON hidden=%d x=%d y=%d w=%d h=%d",
+                     (int)lv_obj_has_flag(batt_charge, LV_OBJ_FLAG_HIDDEN),
+                     (int)lv_obj_get_x(batt_charge), (int)lv_obj_get_y(batt_charge),
+                     (int)lv_obj_get_width(batt_charge), (int)lv_obj_get_height(batt_charge));
+        }
+    }
 
     /* R111: 音量 OSD: 横向音量条 + 数字 */
     int vol_clamped = volume < 0 ? 0 : (volume > VOLUME_LEVEL_MAX ? VOLUME_LEVEL_MAX : volume);

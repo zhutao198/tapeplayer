@@ -46,19 +46,28 @@
 #include "bookmark.h"
 #include "led_strip.h"
 #include "soc/gpio_reg.h"
+#include "soc/gpio_struct.h"
+#include "soc/gpio_sig_map.h"
+#include "hal/gpio_ll.h"
 #include "esp_private/startup_internal.h"
 
 static const char *TAG = "main";
 
 /* R118: 开机自锁引脚提前拉高
- * ESP_SYSTEM_INIT_FN 在系统初始化 CORE 阶段执行(app_main 之前),
- * 直接操作 GPIO 寄存器拉高 POW_EN (IO40), 比 app_main 第一行再提前 ~100-200ms。
- * GPIO40 在 GPIO1 寄存器块, bit = 40 - 32 = 8。
- * app_main 第一行的拉高代码保留作为兜底。 */
+ * ESP_SYSTEM_INIT_FN 在系统初始化 CORE 阶段执行(app_main 之前), 用 gpio_ll 拉高
+ * POW_EN (IO40)。gpio_ll 只写寄存器、不依赖驱动初始化, 且会正确配置 IO_MUX 与
+ * GPIO 矩阵输出, 因此能真正让 pad 输出高电平(早期的裸寄存器写法缺 IO_MUX 配置,
+ * 等效于没拉高, 自锁退到 app_main 才建立)。
+ * 这是 bootloader_after_init 钩子之外的兜底: 即便 bootloader 钩子未生效, app 早期
+ * 也能在此先锁住电源(早于 init_hardware 的 ~1s 工作)。 */
 ESP_SYSTEM_INIT_FN(early_pow_en_latch, CORE, BIT(0), 100)
 {
-    REG_WRITE(GPIO_ENABLE1_W1TS_REG, 1 << 8);  // IO40 output enable
-    REG_WRITE(GPIO_OUT1_W1TS_REG, 1 << 8);    // IO40 set high
+    gpio_dev_t *const hw = &GPIO;
+    const int pin = 40;
+    gpio_ll_func_sel(hw, pin, PIN_FUNC_GPIO);     /* IO_MUX -> GPIO 功能 */
+    gpio_ll_output_enable(hw, pin);               /* GPIO_ENABLE1 bit8 */
+    gpio_ll_matrix_out_default(hw, pin);           /* 路由 GPIO 矩阵输出到 pad */
+    gpio_ll_set_level(hw, pin, 1);                /* GPIO_OUT1 bit8 = 高, 建自锁 */
     return ESP_OK;
 }
 
@@ -1353,6 +1362,19 @@ void app_enter_bt_speaker(void)
 
 extern "C" void app_main(void)
 {
+    /* 开机自锁: app_main 第一行立即拉高 POW_EN(IO40), 早于任何外设/屏幕初始化,
+       确保电源在屏幕亮起前就已自锁(双保险, 配合 R118 的 SECONDARY 阶段 early fn)。 */
+    {
+        gpio_config_t pow_io = {};
+        pow_io.pin_bit_mask = (1ULL << POW_EN_IO);
+        pow_io.mode = GPIO_MODE_OUTPUT;
+        pow_io.pull_up_en = GPIO_PULLUP_DISABLE;
+        pow_io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        pow_io.intr_type = GPIO_INTR_DISABLE;
+        gpio_config(&pow_io);
+        gpio_set_level(POW_EN_IO, 1);
+    }
+
     /* R117: reduce ESP-ADF internal log noise (AUDIO_ELEMENT pause/resume spam,
        AUDIO_EVT queue-full warnings during seek) */
     esp_log_level_set("AUDIO_ELEMENT", ESP_LOG_WARN);
