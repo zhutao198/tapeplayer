@@ -1,0 +1,62 @@
+# sdkconfig.defaults template: ESP32-S3-WROOM-1 N16R8 (PRODUCTION)
+# Flash : 16 MB Quad SPI (4-line)
+# PSRAM :  8 MB Octal SPI (8-line)
+# V_SPI :  3.3 V
+# Pairs with partitions_ota.csv (each app slot = 2 MB).
+# Used by configure.bat when BOARD_MODULE_WROOM_1_N16R8 is selected.
+# See HARDWARE_MODULE_MIGRATION.md for details.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# Flash (Quad SPI, 16 MB)
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# CONFIG_ESPTOOLPY_FLASHMODE_QIO is not set
+# CONFIG_ESPTOOLPY_FLASHMODE_QOUT is not set
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+# CONFIG_ESPTOOLPY_FLASHMODE_DOUT is not set
+# CONFIG_ESPTOOLPY_OCT_FLASH is not set
+
+# PSRAM (Octal SPI, 8 MB)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+
+# Partition table (OTA-capable, see partitions_ota.csv)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_ota.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# File system
+CONFIG_FATFS_LFN_STACK=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_FATFS_CODEPAGE=437
+
+# Bus config
+CONFIG_SPI_MASTER_IN_IRAM=y
+CONFIG_I2C_ISR_IRAM_SAFE=y
+
+# CPU
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Logging
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# FreeRTOS backward compatibility for ESP-ADF
+# ESP-ADF 组件 (audio_pipeline / audio_element) 仍使用旧 FreeRTOS API
+# (xSemaphoreHandle, portTICK_RATE_MS, mutex_* 等)，在 IDF v5.x 中需显式开启向后兼容
+CONFIG_FREERTOS_ENABLE_BACKWARD_COMPATIBILITY=y
+
+# ADF audio_board selection
+# 本项目为自定义 tapebook 硬件，audio_board_init() 实际未被调用（I2S/LCD/SD 均由自写驱动接管），
+# 但 ADF 的 audio_stream 组件 REQUIRES audio_board，故需选定一个板型。
+# 现改为项目内 components/audio_board 覆盖 ADF 自带版本，提供自定义 tapebook 板（桩实现），
+# 不再依赖任何现成开发板（ESP_SD_PIN_* 宏在 tapebook/board_def.h 中定义，值仅用于编译）。
+CONFIG_ESP_TAPEBOOK_BOARD=y
+
+# OTA 启动回滚：新固件启动成功后需 app_main 标记有效，否则自动回退上一分区
+# （防 boot loop 假死砖, R049c 真实化）
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

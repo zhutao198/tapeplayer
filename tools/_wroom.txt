@@ -1,0 +1,587 @@
+===== WROOM-1 =====
+
+--- WROOM-1 Page 2 ---
+1ඍ
+1ඍ
+ඪૼğ
+ğ
+https://www.espressif.com/documentation/esp32-s3-wroom-1_wroom-1u_datasheet_cn.pdf
+1. 1 หྟ
+CPUோഈթԥఖ
+• ଽᇂ ESP32-S3 ༢ਙྉோđXtensa®ނ32 ໊
+LX7 ັԩ৘ఖ (ᄎෘֆჭ)đᆦӻ
+ղ 240 MHzൈᇒ௔ੱ
+• 384 KB ROM
+• 512 KB SRAM
+• 16 KB RTC SRAM
+• ቋն 16 MB PSRAM
+Wi-Fi
+• 802.11b/g/n
+• 802.11nղ 150 Mbps
+•ކTX/RX A-MPDU, TX/RX A-MSDU)
+• 0.4 µsۯࡗ޹
+•ຶğ2412 ~ 2484 MHz
+ড࿩
+•ড࿩ (Bluetooth LE)ğBluetooth 5a
+Bluetooth mesh
+• ෎ੱᆦӻ 125 Kbpsa500 Kbpsa1 Mbpsa2
+Mbps
+•Ѭঔᅚ (Advertising Extensions)
+•Ѭ (Multiple Advertisement Sets)
+•࿊ᄴ (Channel Selection Algorithm #2)
+• Wi-Fi฿ཌ
+ຓഡ
+• 36۱GPIO
+– 4ቔູ strapping࢖ܵ
+•SPIaLCDaCamera१aUARTaI2CaI2Sޣ
+ඔఖaLED PWMaಆ෎ USB 2.0
+OTGaUSB Ա१/JT AG॥ᇅఖaMCPWMaSD/
+MMC॥ᇅఖaGDMAaTWAI®ಸ
+ISO 11898-1Ď aADCఖa
+ܐ
+ࡱ
+•40 MHzᆒ
+• ቋն 16 MB Quad SPI flash
+฿ཌ࿊྘
+• ESP32-S3-WROOM-1ğϰᄛ PCB ฿ཌ
+• ESP32-S3-WROOM-1Uຓ҆฿
+ཌ
+ࡱ
+•࿢/࿢ğ3.0 ~ 3.6 V
+•ğ
+– 65 °C ϱଆቆğ ⚶40 ~ 65 °C
+– 85 °C ϱଆቆğ ⚶40 ~ 85 °C
+– 105 °C ϱଆቆğ ⚶40 ~ 105 °C
+ಪᆣ
+• RF࡮ᆣ඀
+•ЌಪᆣğRoHS/REACH
+ҩ൫
+• HTOL/HTSL/uHAST /TCT /ESD
+࠯2
+࡮
+ESP32-S3-WROOM-1 & WROOM-1U඀ v1.8
+--- WROOM-1 Page 7 ---
+۬
+۬
+1-1 ESP32-S3-WROOM-1б1 3
+1-2 ESP32-S3-WROOM-1Uб 3
+3-1ၬ 11
+4-1 Strappingଏಪ஥ᇂ 13
+4-2 Strappingൈ྽ҕඔඪૼ 14
+4-3ଆൔ॥ᇅ 14
+4-4 VDD_SPI࿢॥ᇅ 15
+4-5 JT AGჷ॥ᇅ 15
+4-6໊ൈ྽ҕඔඪૼ 16
+6-1ᆴ 26
+6-2ࡱ26
+6-3గหྟ (3.3 V , 25 °C) 26
+6-4 Active ଆൔ༯ Wi-Fi (2.4 GHz)หྟ 27
+6-5 Activeหྟ 27
+6-6 Modem-sleepݻۿ֥28
+6-7ݻۿ֥28
+6-8 Flash۬ܿ29
+6-9 PSRAM۬ܿ29
+7-1 Wi-Fi۬ܿ30
+7-2ބEVMކژ802.11ੱ 30
+7-3ഝ EVM ҩ൫1 30
+7-4؇31
+7-5௜ 32
+7-6ၝᇅ 32
+7-7۬ܿ32
+7-8ড࿩ -ഝఖหྟ - 1 Mbps 32
+7-9ড࿩ -ഝఖหྟ - 2 Mbps 33
+7-10ড࿩ -ഝఖหྟ - 125 Kbps 33
+7-11ড࿩ -ഝఖหྟ - 500 Kbps 33
+7-12ড࿩ -൬ఖหྟ - 1 Mbps 34
+7-13ড࿩ -൬ఖหྟ - 2 Mbps 34
+7-14ড࿩ -൬ఖหྟ - 125 Kbps 35
+7-15ড࿩ -൬ఖหྟ - 500 Kbps 35
+࠯7
+࡮
+ESP32-S3-WROOM-1 & WROOM-1U඀ v1.8
+--- WROOM-1 Page 8 ---
+Ҭ๭
+Ҭ๭
+2-1 ESP32-S3-WROOM-1ିॿ๭ 9
+2-2 ESP32-S3-WROOM-1Uିॿ๭ 9
+3-1൪๭Ď 10
+4-1 Strappingൈ྽ҕඔ๭ 14
+4-2໊ൈ྽ҕඔ๭ 16
+8-1 ESP32-S3-WROOM-1 ჰ৘๭ 37
+8-2 ESP32-S3-WROOM-1U ჰ৘๭ 38
+9-1ჰ৘๭ 39
+10-1 ESP32-S3-WROOM-1 ଆቆԄժ 40
+10-2 ESP32-S3-WROOM-1U ଆቆԄժ 40
+10-3ఖԄժ๭ 41
+11-1 ESP32-S3-WROOM-1ࡩPCBል๭ 43
+11-2 ESP32-S3-WROOM-1UࡩPCBል๭ 44
+12-1౷ཌ 45
+࠯8
+࡮
+ESP32-S3-WROOM-1 & WROOM-1U඀ v1.8
+--- WROOM-1 Page 11 ---
+3ၬ
+3.2૭ඍ
+Ⴕ 41і 3-1ၬb
+஥౨ҕॉ uESP32-S3඀vb
+і 3-1.ၬ
+଀ӫݼো྘ aି
+GND 1 Pֹࢤ
+3V3 2 P׈܂
+EN 3 I
+௜ğྉோ൐ିĠ
+оĠ
+ᇿၩ҂ିಞ ENॢb
+IO4 4 I/O/T RTC_GPIO4, GPIO4, TOUCH4, ADC1_CH3
+IO5 5 I/O/T RTC_GPIO5, GPIO5, TOUCH5, ADC1_CH4
+IO6 6 I/O/T RTC_GPIO6, GPIO6, TOUCH6, ADC1_CH5
+IO7 7 I/O/T RTC_GPIO7 ,GPIO7, TOUCH7 , ADC1_CH6
+IO15 8 I/O/T RTC_GPIO15, GPIO15, U0RTS, ADC2_CH4, XT AL_32K_P
+IO16 9 I/O/T RTC_GPIO16, GPIO16, U0CTS, ADC2_CH5, XT AL_32K_N
+IO17 10 I/O/T RTC_GPIO17 ,GPIO17, U1TXD, ADC2_CH6
+IO18 11 I/O/T RTC_GPIO18, GPIO18, U1RXD, ADC2_CH7 , CLK_OUT3
+IO8 12 I/O/T RTC_GPIO8, GPIO8, TOUCH8, ADC1_CH7 , SUBSPICS1
+IO19 13 I/O/T RTC_GPIO19, GPIO19, U1RTS, ADC2_CH8, CLK_OUT2, USB_D-
+IO20 14 I/O/T RTC_GPIO20, GPIO20, U1CTS, ADC2_CH9, CLK_OUT1,USB_D+
+IO3 15 I/O/T RTC_GPIO3, GPIO3, TOUCH3, ADC1_CH2
+IO46 16 I/O/T GPIO46
+IO9 17 I/O/T RTC_GPIO9, GPIO9, TOUCH9, ADC1_CH8, FSPIHD, SUBSPIHD
+IO10 18 I/O/T RTC_GPIO10, GPIO10, TOUCH10, ADC1_CH9, FSPICS0, FSPIIO4,
+SUBSPICS0
+IO11 19 I/O/T RTC_GPIO11, GPIO11, TOUCH11, ADC2_CH0, FSPID, FSPIIO5, SUBSPID
+IO12 20 I/O/T RTC_GPIO12, GPIO12, TOUCH12, ADC2_CH1, FSPICLK, FSPIIO6,
+SUBSPICLK
+IO13 21 I/O/T RTC_GPIO13, GPIO13, TOUCH13, ADC2_CH2, FSPIQ, FSPIIO7 , SUBSPIQ
+IO14 22 I/O/T RTC_GPIO14, GPIO14, TOUCH14, ADC2_CH3, FSPIWP , FSPIDQS,
+SUBSPIWP
+IO21 23 I/O/T RTC_GPIO21, GPIO21
+IO47 c 24 I/O/T SPICLK_P_DIFF ,GPIO47, SUBSPICLK_P_DIFF
+IO48 c 25 I/O/T SPICLK_N_DIFF ,GPIO48, SUBSPICLK_N_DIFF
+IO45 26 I/O/T GPIO45
+IO0 27 I/O/T RTC_GPIO0, GPIO0
+IO35 b 28 I/O/T SPIIO6, GPIO35, FSPID, SUBSPID
+IO36 b 29 I/O/T SPIIO7 ,GPIO36, FSPICLK, SUBSPICLK
+IO37 b 30 I/O/T SPIDQS, GPIO37, FSPIQ, SUBSPIQ
+IO38 31 I/O/T GPIO38, FSPIWP , SUBSPIWP
+༯်
+࠯11
+࡮
+ESP32-S3-WROOM-1 & WROOM-1U඀ v1.8
+--- WROOM-1 Page 12 ---
+3ၬ
+і 3-1 –ഈ်
+଀ӫݼো྘ aି
+IO39 32 I/O/T MTCK, GPIO39, CLK_OUT3, SUBSPICS1
+IO40 33 I/O/T MTDO, GPIO40, CLK_OUT2
+IO41 34 I/O/T MTDI, GPIO41, CLK_OUT1
+IO42 35 I/O/T MTMS, GPIO42
+RXD0 36 I/O/T U0RXD, GPIO44, CLK_OUT2
+TXD0 37 I/O/T U0TXD, GPIO43, CLK_OUT1
+IO2 38 I/O/T RTC_GPIO2, GPIO2, TOUCH2, ADC1_CH1
+IO1 39 I/O/T RTC_GPIO1, GPIO1, TOUCH1, ADC1_CH0
+GND 40 Pֹࢤ
+EPAD 41 Pֹࢤ
+a PჷĠIğൻೆĠOğൻԛĠT࢖ܵ28 ∼ 30ଏ
+ିႮ eFuseb
+bӮ Octal SPI PSRAMଽᇂྉோູ ESP32-S3R8ࠇESP32-S3R16V࢖ܵIO35a
+IO36aIO37֥Octal SPI PSRAMିb
+c ᄝଽᇂྉோູ ESP32-S3R16VଆቆᇏđႮႿ ESP32-S3R16V֥VDD_SPI࿢ၘഡᇂູ 1.8
+Vđ෮ၛđ҂๝Ⴟః෰ GPIOđVDD_SPI֥GPIO47ބGPIO48࿢္ູ 1.8 Vb
+࠯12
+࡮
+ESP32-S3-WROOM-1 & WROOM-1U඀ v1.8
+--- WROOM-1 Page 13 ---
+4஥ᇂཛ
+4஥ᇂཛ
+ඪૼğ
+ၛ༯ଽಸᅋሱ uESP32-S3඀v >ࢫ஥ᇂཛb ྉோStrapping༢đ ॖ
+ࢫ8 ଆቆჰ৘๭b
+ݖStrappingބ࢖ܵeFuseҕ
+აğ
+•ଆൔ
+– StrappingğGPIO0ބGPIO46
+• VDD_SPI࿢
+– StrappingğGPIO45
+– eFuse ҕඔğEFUSE_ VDD_SPI_FORCEބEFUSE_ VDD_SPI_ TIEH
+• ROM ರᆽյႆ
+– StrappingğGPIO46
+– eFuse ҕඔğEFUSE_UART_PRINT_CONTROLބEFUSE_DIS_USB_SERIAL_JT AG_ROM_PRINT
+• JT AGჷ
+– StrappingğGPIO3
+– eFuse ҕඔğEFUSE_DIS_PAD_JT AGaEFUSE_DIS_USB_JT AGބEFUSE_STRAP_JT AG_SEL
+ഈඍ eFuseଏಪᆴनູ 0beFuse ᆺିഎཿ၂Ցđ၂֊എཿູ 1ູ
+0എཿ eFuseྐ༏đ౨ҕॉ uESP32-S3ඌҕॉ൭Ҩv >ࢫeFuse ॥ᇅఖb
+ഈඍ strapping௜ᆴĎ౼थႿ
+ଽ҆೐ഈঘ/ሑ෿b
+і 4-1. Strappingଏಪ஥ᇂ
+Strapping࢖ܵଏಪ஥ᇂ ᆴ
+GPIO0 ೐ഈঘ 1
+GPIO3ॢ –
+GPIO45 ೐༯ঘ 0
+GPIO46 ೐༯ঘ 0
+э strappingຓ҆༯ঘ/ݔESP32-S3ࠏMCUՖഡСđ
+strappingࠏMCU ॥ᇅb
+෮Ⴕ strapping໊ൈđ෭թఖҐဢѩթԥཌྷႋ strappingו
+bၹՎđstrapping౼đstrapping
+ቔູ௴๙ IO൐Ⴈb
+Strappingൈ྽ླ቎࿖і 4-2๭ 4-1֥ࡗބࡗb
+࠯13
+࡮
+ESP32-S3-WROOM-1 & WROOM-1U඀ v1.8
+--- WROOM-1 Page 14 ---
+4஥ᇂཛ
+і 4-2. Strappingൈ྽ҕඔඪૼ
+ҕඔ ඪૼ ቋཬᆴ (ms)
+tSUࡗۚENࡗ0
+tH
+ࡗࠧENastrappingэູ௴๙ IO۽
+౼ strappingࡗ3
+Strapping pin
+VIL_nRST
+VIH
+tSU tH
+EN
+๭ 4-1. Strappingൈ྽ҕඔ๭
+4. 1ଆൔ॥ᇅ
+đGPIO0ބGPIO46і 4-3ଆൔ॥ᇅb
+і 4-3.ଆൔ॥ᇅ
+ଆൔ GPIO0 GPIO46
+SPI Boot 1 ಩ၩᆴ
+Joint Download Boot 2 0 0
+1ՙଏಪ஥ᇂb
+2 Joint Download Boot ଆൔ༯ᆦӻၛ༯༯ᄛ
+ൔğ
+• USB Download Boot ğ
+– USB-Serial-JT AG Download Boot
+– USB-OTG Download Boot
+• UART Download Boot
+ᄝ SPI Boot ଆൔ༯đROMՖ SPI flash༢๤b
+ᄝ Joint Download BootݖUSBࠇUART0༯ᄛᇀ flashࡱ
+༯ᄛᇀ SRAM ѩᄎྛ SRAMӱ྽b
+Ԣਔ SPI BootބJoint Download Boot ଆൔđESP32-S3ᆦӻ SPI Download Boot࡮
+uESP32-S3ඌҕॉ൭Ҩv >ࢫྉோ Boot ॥ᇅb
+࠯14
+࡮
+ESP32-S3-WROOM-1 & WROOM-1U඀ v1.8
+--- WROOM-1 Page 15 ---
+4஥ᇂཛ
+4.2 VDD_SPI࿢॥ᇅ
+ൔđऎุ౼थႿ EFUSE_ VDD_SPI_FORCEᆴb
+і 4-4. VDD_SPI࿢॥ᇅ
+VDD_SPIჷ 2࿢ EFUSE_ VDD_SPI_FORCE GPIO45 EFUSE_ VDD_SPI_ TIEH
+VDD3P3_RTCݖRSP I׈܂3.3 V 0 0੻Flash ໗࿢ఖ 1.8 V 1
+Flash ໗࿢ఖ 1.8 V 1੻ 0
+VDD3P3_RTCݖRSP I׈܂3.3 V 1
+1ՙଏಪ஥ᇂb
+2ࢫuESP32-S3඀v >ࢫ৘b
+4.3 ROM ರᆽյႆ॥ᇅ
+ӱᇏđROM ս઒ರᆽॖյႆᇀğ
+•čଏಪĎUART0ބUSB Ա१/JT AG॥ᇅఖ
+• USB Ա१/JT AG॥ᇅఖ
+• UART0
+ބeFuseо UARTބUSB Ա१/JT AG֥ROMିbབྷ༥ྐ༏౨
+ҕॉ uESP32-S3ඌҕॉ൭Ҩv >ࢫྉோ Boot ॥ᇅb
+4.4 JT AGჷ॥ᇅ
+đGPIO3 ॖႨႿ॥ᇅ JT AGቅđstrappingᆴсྶႮ҂
+ਫ਼॥ᇅb
+ೂі 4-5 ෮ൕđGPIO3 ა EFUSE_DIS_PAD_JT AGaEFUSE_DIS_USB_JT AGބEFUSE_STRAP_JT AG_SEL๝
+॥ᇅ JT AGჷb
+і 4-5. JT AGჷ॥ᇅ
+JT AGჷ EFUSE_DIS_PAD_JT AG EFUSE_DIS_USB_JT AG EFUSE_STRAP_JT AG_SEL GPIO3
+USB Ա१/ JT AG॥ᇅఖ
+0 0 0੻
+0 0 1 1
+1 0੻੻
+JT AG࢖ܵ2 0 0 1 0
+0 1੻੻
+JT AGо 1 1੻੻
+1ՙଏಪ஥ᇂb
+2ࠧMTDIaMTCKaMTMSބMTDOb
+࠯15
+࡮
+ESP32-S3-WROOM-1 & WROOM-1U඀ v1.8
+
+===== WROOM-2 =====
+
+--- WROOM-2 Page 2 ---
+1ඍ
+1ඍ
+ඪૼğ
+ğ
+https://www.espressif.com/documentation/esp32-s3-wroom-2_datasheet_cn.pdf
+1. 1 หྟ
+CPUோഈթԥఖ
+• ଽᇂ ESP32-S3 ྉோđXtensa®ނ32 ໊ LX7
+ۚ
+ղ 240 MHzൈᇒ௔ੱ
+• 384 KB ROM
+• 512 KB SRAM
+• 16 KB RTC SRAM
+• ቋն 16 MB PSRAM
+Wi-Fi
+• 802.11b/g/n
+• 802.11nղ 150 Mbps
+•ކTX/RX A-MPDU, TX/RX A-MSDU)
+• 0.4 µsۯࡗ޹
+•ຶğ2412 ~ 2484 MHz
+ড࿩
+•ড࿩ (Bluetooth LE)ğBluetooth 5a
+Bluetooth mesh
+• ෎ੱᆦӻ 125 Kbpsa500 Kbpsa1 Mbpsa2
+Mbps
+•Ѭঔᅚ (Advertising Extensions)
+•Ѭ (Multiple Advertisement Sets)
+•࿊ᄴ (Channel Selection Algorithm #2)
+• Wi-Fi฿ཌ
+ຓഡ
+• 33۱GPIO
+– 4ቔູ strapping࢖ܵ
+•SPIaLCD१aCamera१aUARTaI2Ca
+I2SඔఖaLED PWMaಆ෎
+USB 2.0 OTGaUSB Ա१/JT AG॥ᇅఖa
+MCPWMaSD/MMC॥ᇅఖaGDMAa
+TWAI®ಸ ISO 11898-1Ď aADCaԨଃ
+ܐ
+ࡱ
+•40 MHzᆒ
+• ቋն 32 MB Octal SPI flash
+฿ཌ࿊྘
+• ϰᄛ PCB ฿ཌ
+ࡱ
+•࿢/࿢ğ3.0 ~ 3.6 V
+•ğ ⚶40 ~ 65 °C
+ಪᆣ
+• RF࡮ᆣ඀
+•ЌಪᆣğRoHS/REACH
+ҩ൫
+• HTOL/HTSL/uHAST /TCT /ESD
+࠯2
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+--- WROOM-2 Page 6 ---
+۬
+۬
+1-1 ESP32-S3-WROOM-2б 3
+3-1ၬ 10
+4-1 Strappingଏಪ஥ᇂ 12
+4-2 Strappingൈ྽ҕඔඪૼ 13
+4-3ଆൔ॥ᇅ 13
+4-4 VDD_SPI࿢॥ᇅ 14
+4-5 JT AGჷ॥ᇅ 14
+4-6໊ൈ྽ҕඔඪૼ 15
+6-1ᆴ 25
+6-2ࡱ25
+6-3గหྟ (3.3 V , 25 °C) 25
+6-4 Activeݻۿ26
+6-5 Modem-sleepݻۿ֥27
+6-6ݻۿ֥27
+6-7 Flash۬ܿ28
+6-8 PSRAM۬ܿ28
+7-1 Wi-Fi۬ܿ29
+7-2ބEVMކژ802.11ੱ 29
+7-3ഝ EVM ҩ൫1 29
+7-4؇30
+7-5௜ 31
+7-6ၝᇅ 31
+7-7۬ܿ31
+7-8ড࿩ -ഝఖหྟ - 1 Mbps 31
+7-9ড࿩ -ഝఖหྟ - 2 Mbps 32
+7-10ড࿩ -ഝఖหྟ - 125 Kbps 32
+7-11ড࿩ -ഝఖหྟ - 500 Kbps 32
+7-12ড࿩ -൬ఖหྟ - 1 Mbps 33
+7-13ড࿩ -൬ఖหྟ - 2 Mbps 33
+7-14ড࿩ -൬ఖหྟ - 125 Kbps 34
+7-15ড࿩ -൬ఖหྟ - 500 Kbps 34
+࠯6
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+--- WROOM-2 Page 7 ---
+Ҭ๭
+Ҭ๭
+2-1ିॿ๭ 8
+3-1൪๭Ď 9
+4-1 Strappingൈ྽ҕඔ๭ 13
+4-2໊ൈ྽ҕඔ๭ 15
+8-1 ჰ৘๭ 36
+9-1ჰ৘๭ 37
+10-1 ଆቆԄժ 38
+11-1ࡩPCBል๭ 39
+12-1౷ཌ 41
+࠯7
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+--- WROOM-2 Page 10 ---
+3ၬ
+і 3-1.ၬ
+଀ӫݼো྘ 1ି
+GND 1 Pֹࢤ
+3V3 2 P׈܂
+EN 3 I
+௜ğྉோ൐ିĠ
+оĠ
+ᇿၩ҂ିಞ ENॢb
+IO4 4 I/O/T RTC_GPIO4, GPIO4, TOUCH4, ADC1_CH3
+IO5 5 I/O/T RTC_GPIO5, GPIO5, TOUCH5, ADC1_CH4
+IO6 6 I/O/T RTC_GPIO6, GPIO6, TOUCH6, ADC1_CH5
+IO7 7 I/O/T RTC_GPIO7 ,GPIO7, TOUCH7 , ADC1_CH6
+IO15 8 I/O/T RTC_GPIO15, GPIO15, U0RTS, ADC2_CH4, XT AL_32K_P
+IO16 9 I/O/T RTC_GPIO16, GPIO16, U0CTS, ADC2_CH5, XT AL_32K_N
+IO17 10 I/O/T RTC_GPIO17 ,GPIO17, U1TXD, ADC2_CH6
+IO18 11 I/O/T RTC_GPIO18, GPIO18, U1RXD, ADC2_CH7 , CLK_OUT3
+IO8 12 I/O/T RTC_GPIO8, GPIO8, TOUCH8, ADC1_CH7 , SUBSPICS1
+IO19 13 I/O/T RTC_GPIO19, GPIO19, U1RTS, ADC2_CH8, CLK_OUT2, USB_D-
+IO20 14 I/O/T RTC_GPIO20, GPIO20, U1CTS, ADC2_CH9, CLK_OUT1,USB_D+
+IO3 15 I/O/T RTC_GPIO3, GPIO3, TOUCH3, ADC1_CH2
+IO46 16 I/O/T GPIO46
+IO9 17 I/O/T RTC_GPIO9, GPIO9, TOUCH9, ADC1_CH8, FSPIHD, SUBSPIHD
+IO10 18 I/O/T RTC_GPIO10, GPIO10, TOUCH10, ADC1_CH9, FSPICS0, FSPIIO4,
+SUBSPICS0
+IO11 19 I/O/T RTC_GPIO11, GPIO11, TOUCH11, ADC2_CH0, FSPID, FSPIIO5, SUBSPID
+IO12 20 I/O/T RTC_GPIO12, GPIO12, TOUCH12, ADC2_CH1, FSPICLK, FSPIIO6,
+SUBSPICLK
+IO13 21 I/O/T RTC_GPIO13, GPIO13, TOUCH13, ADC2_CH2, FSPIQ, FSPIIO7 , SUBSPIQ
+IO14 22 I/O/T RTC_GPIO14, GPIO14, TOUCH14, ADC2_CH3, FSPIWP , FSPIDQS,
+SUBSPIWP
+IO21 23 I/O/T RTC_GPIO21, GPIO21
+IO47 24 I/O/T SPICLK_P_DIFF ,GPIO472, SUBSPICLK_P_DIFF
+IO48 25 I/O/T SPICLK_N_DIFF ,GPIO482, SUBSPICLK_N_DIFF
+IO45 26 I/O/T GPIO45
+IO0 27 I/O/T RTC_GPIO0, GPIO0
+NC 28 i࢖ܵ
+NC 29 i࢖ܵ
+NC 30 i࢖ܵ
+IO38 31 I/O/T GPIO38, FSPIWP , SUBSPIWP
+IO39 32 I/O/T MTCK, GPIO39, CLK_OUT3, SUBSPICS1
+IO40 33 I/O/T MTDO, GPIO40, CLK_OUT2
+IO41 34 I/O/T MTDI, GPIO41, CLK_OUT1
+IO42 35 I/O/T MTMS, GPIO42
+RXD0 36 I/O/T U0RXD, GPIO44, CLK_OUT2
+༯်
+࠯10
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+--- WROOM-2 Page 11 ---
+3ၬ
+і 3-1 –ഈ်
+଀ӫݼো྘ 1ି
+TXD0 37 I/O/T U0TXD, GPIO43, CLK_OUT1
+IO2 38 I/O/T RTC_GPIO2, GPIO2, TOUCH2, ADC1_CH1
+IO1 39 I/O/T RTC_GPIO1, GPIO1, TOUCH1, ADC1_CH0
+GND 40 Pֹࢤ
+EPAD 41 Pֹࢤ
+1 PჷĠIğൻೆĠOğൻԛĠTିb
+2 ႮႿ ESP32-S3R8VބESP32-S3R16V֥VDD_SPI࿢ၘഡᇂູ 1.8 Vđ෮ၛđ҂๝Ⴟః෰
+GPIOđᄝ VDD_SPI֥GPIO47ބGPIO48࿢္ູ 1.8 Vb
+࠯11
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+--- WROOM-2 Page 12 ---
+4஥ᇂཛ
+4஥ᇂཛ
+ඪૼğ
+ၛ༯ଽಸᅋሱ uESP32-S3඀v >ࢫ஥ᇂཛb ྉோStrapping༢đ ॖ
+ࢫ8 ଆቆჰ৘๭b
+ݖStrappingބ࢖ܵeFuseҕ
+აğ
+•ଆൔ
+– StrappingğGPIO0ބGPIO46
+• VDD_SPI࿢
+– StrappingğGPIO45
+– eFuse ҕඔğEFUSE_ VDD_SPI_FORCEބEFUSE_ VDD_SPI_ TIEH
+• ROM ರᆽյႆ
+– StrappingğGPIO46
+– eFuse ҕඔğEFUSE_UART_PRINT_CONTROLބEFUSE_DIS_USB_SERIAL_JT AG_ROM_PRINT
+• JT AGჷ
+– StrappingğGPIO3
+– eFuse ҕඔğEFUSE_DIS_PAD_JT AGaEFUSE_DIS_USB_JT AGބEFUSE_STRAP_JT AG_SEL
+ഈඍ eFuseଏಪᆴनູ 0beFuse ᆺିഎཿ၂Ցđ၂֊എཿູ 1ູ
+0എཿ eFuseྐ༏đ౨ҕॉ uESP32-S3ඌҕॉ൭Ҩv >ࢫeFuse ॥ᇅఖb
+ഈඍ strapping௜ᆴĎ౼थႿ
+ଽ҆೐ഈঘ/ሑ෿b
+і 4-1. Strappingଏಪ஥ᇂ
+Strapping࢖ܵଏಪ஥ᇂ ᆴ
+GPIO0 ೐ഈঘ 1
+GPIO3ॢ –
+GPIO45 ೐༯ঘ 0
+GPIO46 ೐༯ঘ 0
+э strappingຓ҆༯ঘ/ݔESP32-S3ࠏMCUՖഡСđ
+strappingࠏMCU ॥ᇅb
+෮Ⴕ strapping໊ൈđ෭թఖҐဢѩթԥཌྷႋ strappingו
+bၹՎđstrapping౼đstrapping
+ቔູ௴๙ IO൐Ⴈb
+Strappingൈ྽ླ቎࿖і 4-2๭ 4-1֥ࡗބࡗb
+࠯12
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+--- WROOM-2 Page 13 ---
+4஥ᇂཛ
+і 4-2. Strappingൈ྽ҕඔඪૼ
+ҕඔ ඪૼ ቋཬᆴ (ms)
+tSUࡗۚENࡗ0
+tH
+ࡗࠧENastrappingэູ௴๙ IO۽
+౼ strappingࡗ3
+Strapping pin
+VIL_nRST
+VIH
+tSU tH
+EN
+๭ 4-1. Strappingൈ྽ҕඔ๭
+4. 1ଆൔ॥ᇅ
+đGPIO0ބGPIO46і 4-3ଆൔ॥ᇅb
+і 4-3.ଆൔ॥ᇅ
+ଆൔ GPIO0 GPIO46
+SPI Boot 1 ಩ၩᆴ
+Joint Download Boot 2 0 0
+1ՙଏಪ஥ᇂb
+2 Joint Download Boot ଆൔ༯ᆦӻၛ༯༯ᄛ
+ൔğ
+• USB Download Boot ğ
+– USB-Serial-JT AG Download Boot
+– USB-OTG Download Boot
+• UART Download Boot
+ᄝ SPI Boot ଆൔ༯đROMՖ SPI flash༢๤b
+ᄝ Joint Download BootݖUSBࠇUART0༯ᄛᇀ flashࡱ
+༯ᄛᇀ SRAM ѩᄎྛ SRAMӱ྽b
+Ԣਔ SPI BootބJoint Download Boot ଆൔđESP32-S3ᆦӻ SPI Download Boot࡮
+uESP32-S3ඌҕॉ൭Ҩv >ࢫྉோ Boot ॥ᇅb
+࠯13
+࡮
+ESP32-S3-WROOM-2඀ v1.7
+--- WROOM-2 Page 14 ---
+4஥ᇂཛ
+4.2 VDD_SPI࿢॥ᇅ
+ൔđऎุ౼थႿ EFUSE_ VDD_SPI_FORCEᆴb
+і 4-4. VDD_SPI࿢॥ᇅ
+VDD_SPIჷ 2࿢ EFUSE_ VDD_SPI_FORCE GPIO45 EFUSE_ VDD_SPI_ TIEH
+VDD3P3_RTCݖRSP I׈܂3.3 V 0 0੻Flash ໗࿢ఖ 1.8 V 1
+Flash ໗࿢ఖ 1.8 V 1੻ 0
+VDD3P3_RTCݖRSP I׈܂3.3 V 1
+1ՙଏಪ஥ᇂb
+2ࢫuESP32-S3඀v >ࢫ৘b
+4.3 ROM ರᆽյႆ॥ᇅ
+ӱᇏđROM ս઒ರᆽॖյႆᇀğ
+•čଏಪĎUART0ބUSB Ա१/JT AG॥ᇅఖ
+• USB Ա१/JT AG॥ᇅఖ
+• UART0
+ބeFuseо UARTބUSB Ա१/JT AG֥ROMିbབྷ༥ྐ༏౨
+ҕॉ uESP32-S3ඌҕॉ൭Ҩv >ࢫྉோ Boot ॥ᇅb
+4.4 JT AGჷ॥ᇅ
+đGPIO3 ॖႨႿ॥ᇅ JT AGቅđstrappingᆴсྶႮ҂
+ਫ਼॥ᇅb
+ೂі 4-5 ෮ൕđGPIO3 ა EFUSE_DIS_PAD_JT AGaEFUSE_DIS_USB_JT AGބEFUSE_STRAP_JT AG_SEL๝
+॥ᇅ JT AGჷb
+і 4-5. JT AGჷ॥ᇅ
+JT AGჷ EFUSE_DIS_PAD_JT AG EFUSE_DIS_USB_JT AG EFUSE_STRAP_JT AG_SEL GPIO3
+USB Ա१/ JT AG॥ᇅఖ
+0 0 0੻
+0 0 1 1
+1 0੻੻
+JT AG࢖ܵ2 0 0 1 0
+0 1੻੻
+JT AGо 1 1੻੻
+1ՙଏಪ஥ᇂb
+2ࠧMTDIaMTCKaMTMSބMTDOb
+࠯14
+࡮
+ESP32-S3-WROOM-2඀ v1.7

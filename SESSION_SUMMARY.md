@@ -1,0 +1,530 @@
+# SESSION_SUMMARY.md — TapeBook 关键决策与经验
+
+> **最后更新**：2026-08-31（R097 **里程碑** — 拔卡死机根治（display_set_sd_present 改标志位由 lvgl_task 消费，main_task 完全不碰 LVGL）+ 单声道 MP3 语速 2x 修复（Helix decoder mono→stereo 上混，I2S 保持 2 声道）+ 嗅探加固按帧长验证下一帧拒绝假同步字 + 短按步长 5s→2s（SEEK_STEP_SEC 常量，FF/REW 短按与长按初始基准同步）。已更新 3 类文件）
+
+---
+
+## 1. 会话主线（按时间）
+
+| 时间 | 主题 | 结果 |
+|---|---|---|
+| 2026-07-03 上午 | 阅读 README + DEVELOP_STATUS + HARDWARE_MIGRATION | 摸清项目状态：V1.0 MVP 8/10，3 个 P0 阻塞 |
+| 2026-07-03 中午 | 用户确认方向：先解 P0 阻塞 + 初始化 git | 创建 5 个任务 |
+| 2026-07-03 中午 | 用户补充 GitHub 仓库地址 | 调整计划：本地 → GitHub `zhutao198/tapeplayer` |
+| 2026-07-03 下午 | git init + .gitignore + 3 类文件 + 首次 commit | ✅ baseline commit `938abbe` |
+| 2026-07-03 下午 | R001 启用 ESP-ADF（追认 sdkconfig 已配） | ✅ commit `c0c67e4` |
+| 2026-07-03 下午 | R002 启用 u8g2（删 334M 手动源码 + 备份 + idf component 路径） | ✅ commit `d773f05` |
+| 2026-07-03 下午-晚上 | R003 build 验证（多次失败 + 修 4 个子模块 + 暴露 ADF 5.5 引用方式变化） | ⚠️ commit `333e44e`（build 未通过） |
+| 2026-07-03 傍晚-凌晨 | R004+R007 build 全线修复（custom board / audio_player API / u8g2_hal 兼容性） | ✅ 首次成功构建！`.bin` 718KB，分区 77% 剩余 |
+| 2026-07-06 | R009-R010 代码审查全部 38 项清零 | ✅ 审查完成，代码稳定 |
+| 2026-07-06 | R008 代码审查修复（核实 38 条发现，修 33 项） | ✅ 构建通过，二进制 0xaf9c0 |
+| 2026-07-06 | R009 审查剩余 9 项修复（SD 热插拔/脏区/屏保/light sleep/锁定态/button/采样率） | ✅ 构建通过，二进制 0xb26b0 |
+| 2026-07-06 | R010 审查剩余 8 项清零（bookmark NVS/voice_prompt/M-2 timeout/M-3 init/设计确认） | ✅ 构建通过，二进制 0xb2660 |
+| 2026-07-07 | R011 修复 R010 引入的 6 个 bug（SD 检测/light sleep/pause-resume/截断/溢出/命名歧义）+ H-8 ADC 桩 + L-1 bookmark 集成 | ✅ 构建通过，二进制 0xb2660 |
+| 2026-07-07 | R012 实现文件夹浏览（滚动列表 + Prev/Next/Play/STOP 导航）— **V1.0 MVP 全部 11 项完成！** | ✅ 构建通过，二进制 0xb2a40 |
+| 2026-07-07 | R013 R012 review 修复（scroll clamp + API cleanup） | ✅ 构建通过 |
+| 2026-07-09 | R014 PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计 | ✅ 构建通过，二进制 0xb9b70 |
+| 2026-07-10 | R015 硬件设计修复（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档 | ✅ 全部闭环；新建 BT_AUDIO_PLAN.md |
+| 2026-07-11 | 用户要求代码审计（仅汇总，不改动） | ✅ 报告 docs/CODE_AUDIT_R018.md（6C+7H+11M+15L） |
+| 2026-07-11 | 用户授权"帮我修复" → R018 节点框架已存在，按其 19 项清单实施 | ✅ commit `8a90513`；19 项全部落地 |
+| 2026-07-11 | 用户指出本机已配 ESP-IDF/ESP-ADF → 跑本地 build 验证，发现 3 个编译错误，R019 修复闭环 | ✅ commit `06f9be9`；`audiobook_player.bin` 762KB（0xb9f50），分区 76% 空闲 |
+| 2026-07-17 | Batch 1（R021）深度评审修复 10 项（独立项：C2/C3/H1/H2/H3/M4/M5/L1/L3/L4）| ✅ commit `1d03d03`；build 通过 0 错误 |
+| 2026-07-17 | Batch 2（R022）深度评审修复 5 项（依赖项：C1/C3跳帧/M1/M2/M6）| ✅ commit `584cf67`；build 通过 0 错误 |
+| 2026-07-11 | 用户评审 R018 发现 H-3 实际修复失败（截断 vs 四舍五入）；按建议方案 C 采纳整数四舍五入 trick；评审报告入仓 | ✅ commit `06bb8d0`；R018 修复成功率 100%（19/19） |
+| 2026-07-17 | R021 深度评审 Batch 1 修复 10 项（C2/C3/H1/H2/H3/M4/M5/L1/L3/L4） | ✅ build 通过，bin 0xba080，76% 空闲 |
+| 2026-07-17 | Claude 审核 R021/R022 发现 3 处文档问题 + 1 项 M3 缺失；R023 补正 + 同步 3 类 | ✅ commit `3655ff3`；修复 + 文档同步 |
+| 2026-07-17 | 用户深度审核 R023 后代码（CODE_REVIEW_R023，8 项）；Claude 独立审核对照发现补充 4 项遗漏（H3/M3/M4/M5）| ✅ commit `907923b`；docs/CODE_REVIEW_R023.md 合并双方意见（保留原章节，追加 Claude 对照章节） |
+| 2026-07-17 | 用户要求完整全项目代码审计；Claude 完成 26 文件全覆盖（R025），新发现 16 项（H1 是 P0 修复项）| ✅ commit `22f1540`；docs/CODE_AUDIT_R025.md（645 行，2H+6M+8L+4I） |
+| 2026-07-17 | 用户指出 R025 报告独立成文件未合并到 CODE_REVIEW_R023.md；R026 合并为三阶段报告 | ✅ commit `110c238`；docs/CODE_REVIEW_R023.md 追加"阶段三"（540 行，累计 31 项） |
+| 2026-07-17 | 用户提交团队反馈：M4 不成立（u8g2 官方顺序）+ M5 部分属实（源码实际有 #ifdef 守卫）；R027 修正 | ✅ commit `3242c60`；撤回 M4/M5，保留核实记录 |
+| 2026-07-17 | 用户授权"修复所有问题"；R028 实施 H1/M1/L1/L6 共 4 项 + build 通过 | ✅ commit `e64c6d6`；binary 0xba190（762KB），76% 空闲 |
+| 2026-07-17 | 用户对 R028 评审，H1 有显示一致性瑕疵；R029 微调 g_app_state 同步 | ✅ commit `f15ec83`；binary 0xba1a0（762KB），build 通过 |
+| 2026-07-20 | 用户要求将两份独立深度评审（R029 深审 + R030 全审）交叉核对，输出统一合并报告；经 7 项争议代码证据仲裁，生成 17 项修复计划 | ✅ `docs/CODE_REVIEW_CONSOLIDATED_R030.md` + `.opencode/plans/FIX_PLAN_R030.md` |
+| 2026-07-20 | S1（6 项）+ S2（4 项）+ S3（5 项含 C08 u8g2 错误上报）全部落地；build 通过 0 error | ✅ commit `a75219f`（后 amend 为 `f17d6b5`）；tag `R030`；binary 0xba680（762KB）|
+| 2026-08-20 | R049–R051 统一设置菜单框架 + A-B 复读 + 按键提示音 + OTA/USB 入口 + TF 卡(SD) 固件 OTA；R052/55/56/58 TWDT/屏保/音量键/按键响应修复 | ✅ 多项 commit（`02db091` `4ded1fb` `2ee61b9` `4c11716`）|
+| 2026-08-21 | R061 IDF freertos patch（ADF MP3 decoder 可编入）；R062 播放无限重启修复；R063 LVGL 死锁修复 + 无声诊断；R065 **首次开机无声根因（I2S 引脚 -1 覆盖）修复**；R066 暂停切歌野指针；R067 应用层 ID3v2 skip；R068 terminate + i2s 重建 | ✅ commit `59e746f` `3ee8208`（fix-r053-audio 分支）|
+| 2026-08-22 | R069–R075 崩溃攻坚：定位 ESP-ADF 静态库 MP3 decoder 内崩（项目代码无法修）；R072 清理无效修复保留 R067+R068+R071；R073 splash UX；R075 **double-free 根因**（stop 二次 deinit）定位 | ✅ commit `dd3e93e` |
+| 2026-08-22~24 | R076 **MP3 解码器崩溃根除**：coredump 反解确认 PV-MP3 闭源库崩 → 切换开源 esp_audio_codec（esp_mp3_dec / simple_dec，mpeg_parser 切帧）；同时引入蓝牙音箱(A2DP Sink) + 中文 TTF 字体分区(freetype) + 统一菜单 | 🚧 commit `c53662e`（R076-CODEC-* 系列）；待烧录验证 |
+| 2026-08-31 | **R097 里程碑**：拔卡死机（display_set_sd_present 标志位化）+ 单声道语速 2x（decoder 上混）+ 短按 5s→2s + 嗅探按帧长加固 | | ⏳（commit R097 + tag 待提交） |
+
+---
+
+## 2. 关键决策
+
+### 决策 D001：本地项目上传为 GitHub 新仓库
+- **背景**：本地 `D:\zhutao\audio_player` 无 .git；用户指向 `https://github.com/zhutao198/tapeplayer`
+- **决定**：本地是主源，GitHub 为新仓库
+- **实施**：git init → 首次 commit (baseline) → R001-R003 → （待 push）
+
+### 决策 D002：3 类核心文件立即建
+- **背景**：全局 CLAUDE.md 9.2 强制要求；项目根原本缺失
+- **决定**：在首次 commit 前建好 CONTEXT/SESSION_SUMMARY/开发日志
+- **理由**：避免 R 节点机制空转
+
+### 决策 D003：.gitignore 屏蔽 build 日志 + 第三方源码
+- **背景**：根目录有大量 `*.log` / `*.err` / `*.out`（编译产物）+ 334M `components/u8g2/`（手动 clone）
+- **决定**：全部忽略；`sdkconfig` 忽略但 `sdkconfig.defaults` 保留
+- **理由**：仓库只留源码 + 文档 + 模板
+
+### 决策 D004：R002 删 334M components/u8g2 + 走 idf component
+- **背景**：手动 clone 的 334M 源码难维护
+- **决定**：备份后删 + 改用 `idf.py add-dependency lfengineering/u8g2_esp32`
+- **结果**：R002 commit 后发现 `lfengineering/u8g2_esp32` 在 registry **不存在** → R003 暂禁用
+
+### 决策 D005：R003 暂禁用 u8g2 + 保留 ADF 修复
+- **背景**：R002 用了错的 u8g2 component 名 → build fail；同时发现 R001 漏 ADF REQUIRES → 4 文件修复
+- **决定**：u8g2 暂禁用，ADF 修复 + 子模块 fix 走 R003 commit（即使 build 仍 fail）
+- **理由**：保留进度，避免代码丢失
+
+### 决策 D006：ESP-IDF 子模块 4 个修复不入仓
+- **背景**：micro-ecc / lib_esp32 / lib_esp32c2 / lib_esp32c3_family 都坏（HEAD bad object）
+- **决定**：直接修复 ESP-IDF 仓库子模块（环境维护），不入 audio_player 仓
+- **记录**：在开发日志 R003 节点留 T-003 教训 + 修复命令模式
+
+### 决策 D007：评审文档归档不建 R 节点
+- **背景**：用户要求评审 `docs/HARDWARE_PIN_WIRING.md`
+- **决定**：输出 `docs/HARDWARE_PIN_WIRING_REVIEW.md`（V1.0），**不**建 R 节点（评审是调研/审计，不是代码修改）
+- **理由**：按规范 8.1"触发时机"严格性，评审归档不属于 R 节点触发范围；用普通 commit 保留 git history
+
+### 决策 D008：蓝牙音频走 A2DP Sink（非 LE Audio）
+- **背景**：早期 BT_AUDIO_PLAN.md 规划 LE Audio（ESP32-S3 仅 BLE）；用户实际要"手机推流到设备出声"
+- **决定**：改用 Bluedroid + BT Classic 的 A2DP Sink（`bt_speaker.cpp`），`configure.bat <target>-bt` 专用构建
+- **理由**：A2DP Sink 是 Bluedroid 直接支持的能力，比 LE Audio 实现成本低、成熟；ESP32-S3 虽有 BLE 但 Bluedroid 栈可跑 A2DP Sink
+
+### 决策 D009：MP3 解码器弃用闭源 PV-MP3，最终采用 libhelix（Helix MP3）
+- **背景**：R061–R075 反复崩在特定 MP3 上（DoubleException @ 0x403743c0），coredump 反解确认崩在 PV-MP3 闭源库 `mp3_decoder_open`；R076 试 esp_audio_codec 开源 `esp_mp3_dec_*`/`simple_dec`（mpeg_parser 切帧）仍崩在必崩 3 首
+- **决定**：R080 新增 `main/mp3_decoder_libhelix.c/.h`，用 **Helix MP3 解码器**（`chmorgan/esp-libhelix-mp3`，Apache-2.0，ESP 组件 registry 直接引入），`create_decoder` 的 .mp3 分支改用 `mp3_decoder_libhelix_init`
+- **理由**：PV-MP3 完全闭源（本地只有 `.a`，无源码），无法 patch；esp_audio_codec 在该项目仍崩；Helix 健壮性著称，坏帧返回负错误码而非崩溃，可由应用层 `MP3FindSyncWord` 跳过 + 超阈值返回 AEL_IO_DONE 触发跳曲保护。选 libhelix 而非 libmad：libmad 为 GPL，libhelix Apache-2.0 且有现成组件
+- **备选**：`mp3_decoder_esp_codec.c`（esp_audio_codec 路径）保留为可切换 wrapper，但默认 .mp3 走 libhelix
+
+### 决策 D010：中文显示用 TTF 字体分区 + freetype
+- **背景**：LVGL 默认无中文字库
+- **决定**：把 `cjk.ttf` 烧到独立 font 分区（@0x620000），`font_partition.cpp` 注册 newlib VFS `/font` + `lv_freetype_init` 渲染
+- **理由**：矢量 TTF 任意字号清晰，比点阵字库省空间、易扩展
+
+### 决策 D011：固件升级用 TF 卡(SD) OTA
+- **背景**：量产设备不方便联机烧录
+- **决定**：`ota_sd.cpp` 从 SD 卡读固件做 `esp_ota` 升级，菜单入口触发
+- **理由**：用户插卡即升，无需电脑/串口
+
+### 决策 D012：构建统一走 `tools/_run_in_clean_cmd.py`
+- **背景**：`cmd /c "call export.bat ... && idf.py build" | Select-String` 频繁误报 exitCode=2 / "canceled by user"
+- **决定**：所有 IDF 编译/烧录/coredump 走 `_run_in_clean_cmd.py`（剥 MSYSTEM、干净环境、输出重定向文件）
+- **理由**：用户明确"从未主动取消过任何命令"——误报源于 cmd/c 包裹 + PS 管道，run_in_clean_cmd 根除
+
+---
+
+## 3. 关键成就
+
+- ✅ **仓库基线建立**（baseline commit + tag，172 文件入仓）
+- ✅ **3 类核心文件齐备**（CONTEXT.md / SESSION_SUMMARY.md / 开发日志.md）
+- ✅ **R001 完成**（ESP-ADF 启用，已在 sdkconfig 配 + 注释追认）
+- ✅ **R002 完成**（u8g2 改用 idf component 路径 + 删 334M 手动源码 + 备份到 D 盘）
+- ✅ **R003 完成**（commit `333e44e` 含 5 文件修复 + sdkconfig 清理；build 验证未通过但发现关键阻塞点）
+- ✅ **ESP-IDF 4 子模块修复**（micro-ecc / lib_esp32 / lib_esp32c2 / lib_esp32c3_family）
+- ✅ **R004 完成**（CMakeLists.txt 启用 ADF：EXTRA_COMPONENT_DIRS 移到项目根）
+- ✅ **R005 完成**（修 HARDWARE_PIN_WIRING.md 5 处错误 + 补 MAX98357A 规格书）
+- ✅ **R006 完成**（修 HARDWARE_PIN_WIRING.md 5 处错误：SD_MODE 公式/GPIO47-48 拆分 R8V-R16V/GPIO19-20 D+/D- 标反/GPIO45 strapping + 补 SSD1315 规格书 + pdf_search 提取脚本）
+- ✅ **R007 完成——首次成功构建！**（`audiobook_player.bin` 生成，718KB，分区 77% 剩余）
+  - 新建 `components/tapebook_board/` 组件（ADF 自定义板级支持）
+  - 修复 `audio_player.cpp` 6 处无效 ADF API 调用
+  - 修复 `u8g2_esp32_hal` 编译兼容性（REQUIRES + ets_delay_us → esp_rom_delay_us）
+- ✅ **R008 完成——代码审查 33 项修复！**（核实 38 条发现，3 条不属实）
+  - CRITICAL：seek 字节换算、position 时间戳、NULL 检查、WDT 增大 + 回调异步化
+  - HIGH：PSRAM 分配、NVS 返回值检查 + 降低 commit 频率、auto_off 集成到主循环
+  - MEDIUM：删 unused 变量、stop_playback 语义修正、playlist_set_index 补缺
+- ✅ **R009 完成——代码审查剩余 9 项修复！**
+  - HIGH：SD 热插拔 stat() 轮询、display 脏区 + 屏保、锁定态 activity 记录、power_mgmt tick + light sleep
+  - MEDIUM：DBL_DEBOUNCE 去抖、GPIO 返回值检查、删 I2S_MCLK_IO、button 配置/状态分离
+  - LOW：采样率缓存、g_count 类型（已在 R008 修）
+- ✅ **R010 完成——代码审查全部 38 项清零！**
+  - MEDIUM：wait_for_stop 超时保护、sdspi mount init 警告修复
+  - LOW：bookmark NVS 书签实现、voice_prompt V1.2 预备
+  - 设计确认：M-9/M-10/M-15/L-3/L-8 单任务安全，加注释说明
+- ✅ **R011 完成——修复 R010 引入的 6 个 bug + 补 H-8/L-1**
+- ✅ **R012 完成——文件夹浏览实现，V1.0 MVP 11/11 全部完工！**
+  - 长按 STOP 进入浏览模式
+  - Prev/Next 滚动，Play 选中播放，STOP 退出
+  - OLED 滚动列表（5×8 字体，6 条可见，`>` 标记选中行）
+- ✅ **R013 完成——R012 review 修复：scroll overflow clamp + API cleanup**
+- ✅ **R014 完成——PRD 审查 5 项修复（OLED/音量/书签/电源/休眠）+ 原理图设计**
+  - OLED：根因分析 3 层（Kconfig 符号缺失 → CMake 无 REQUIRES → C++ name mangling）
+  - 音量：ADF 的 `audio_element_set_volume()` 不存在，改用 `i2s_alc_volume_set()`
+  - Bookmark：满 10 时环形覆盖（slot 0 丢弃，前移，新值写末尾）
+  - 定时关机：`power_mgmt_tick()` 内轮询 `power_mgmt_should_shutdown()`
+  - Light sleep：唤醒后统一 `APP_STATE_STOPPED`
+  - 原理图：6 页规格书 + Protel 网表 + CSV BOM（30 种物料）
+  - H-8: ADC 电池检测桩代码（换算公式注释）
+  - L-1: bookmark 接入 STOP 双击事件
+- ✅ **R015 完成——硬件设计修复 6 项闭环（B2/N1/N2/N3/N4/N5）+ LE Audio 方案文档**
+  - B2：ASCII 引脚图重画为 WROOM-1 物理编号（消除 Pin 22-27 冲突）
+  - N1：ME6211C33 SOT-89→SOT-23-5（M5G-N，带 CE 使能引脚）
+  - N2：泄放电阻 1kΩ→100kΩ
+  - N3：GPIO45/46/47/48 ≥5mm PCB 净空注释
+  - N4：HARDWARE_PIN_WIRING.md 电源树同步（AMS1117→ME6211C33 + BAT直供）
+  - N5：附录 A AMS1117→ME6211C33M5G-N
+  - I3：§3.4 "A2DP"→"LE Audio"
+  - BOM/网表同步更新
+  - 新建 `docs/BT_AUDIO_PLAN.md`——LE Audio 蓝牙耳机方案（11 节，含 IDF 升级前提/API 流程/12 步实施计划）
+- ✅ **R018 完成——代码审计修复 19 项（6 Critical + 7 High + 5 Medium + 1 Low）**
+  - **新增交付物**：`docs/CODE_AUDIT_R018.md`（审计报告，145 行）
+  - **Critical（6/6）**：C-1 deep_sleep 加 EXT1 wakeup mask / C-2 pause-resume offset 累加语义 / C-3 书签环形覆盖重写（erase + shift）/ C-4 u8g2_esp32_hal 独立化组件 / C-5 display HAL 形参改 static 全局 / C-6 board_pins_config MCLK=GPIO_NUM_NC（避 Strapping Pin 冲突）
+  - **High（7/7）**：H-1 fingerprint 加 speed 维度 / H-2 init_hardware 加 esp_sleep_is_valid_wakeup_gpio 断言 / H-3 音量映射改浮点除法 / H-4 settings 失败即 return / H-5 主循环 vTaskDelay 改绝对时间对齐 / H-6 playlist DT_REG/DIR 加 stat() 回退 / H-7 power_mgmt_init 从 NVS 恢复 auto_off
+  - **Medium（5/11）**：M-2 LONG_PRESS→IDLE 发 RELEASE 补全 / M-4 i2s_stream_init NULL 检查 / M-8 settings_flush 仅在 PLAYING/PAUSED 执行 / M-9 on_track_finished 回调 NVS 写异步化 / M-10 bookmark_add 失败 ESP_LOGW
+  - **Low（1/15）**：L-8 playlist 加 `$RECYCLE.BIN` 目录过滤
+  - **未修（含理由）**：C-5 HAL 实现核实后风险低（静态结构体已 OK）/ M-1 全局 `-Wno-error` 待精确 ADF target / M-3/M-6/M-7 影响有限 / L-1~L-15 大多为性能优化 / dead code，留待 V1.1
+  - **影响**：12 文件 +608 / -45；2026-07-11 commit `8a90513` + tag `R018`（annotated）
+- ✅ **R019 完成——R018 build 验证 + 修复 3 个编译副作用**
+  - fix-1：`audio_player.cpp` 删除 R018 遗留的 `g_pause_start_us` 未用变量（dead code）
+  - fix-2：`main.cpp` H-2 断言数组 `int[]` → `gpio_num_t[]`（适配 `esp_sleep_is_valid_wakeup_gpio` 签名）
+  - fix-3：`u8g2_esp32_hal/CMakeLists.txt` `PRIV_REQUIRES driver`（C-4 自含组件化时漏）
+  - **build 验证通过**：`audiobook_player.bin` 762KB（0xb9f50）；分区 76% 空闲
+  - 2026-07-11 commit `06f9be9` + tag `R019`（annotated）
+- ✅ **R020 完成——R018 评审闭环 + H-3 用户重做（整数四舍五入 trick）**
+  - H-3 用户评审发现：我用 `(int)((x*12.0f)/50)` 是**截断**而非四舍五入，结果与原整数除法相同
+  - **用户修复（采纳方案 C）**：纯整数 + `+25` 四舍五入
+    ```cpp
+    alc_vol = ((volume - 50) * 12 + 25) / 50;  // 低音量段
+    alc_vol = ((volume - 50) * 48 + 25) / 50;  // 高音量段
+    ```
+  - **对比验证**：vol=54 原 0dB → 新 1dB（贴近真实 0.96）；vol=58 原 1dB → 新 2dB（贴近 1.92）
+  - **附加优势**：无 FPU 调用，code size 更小，嵌入式友好
+  - **已知 quirk**：`+25/50` 对负数不对称向 0 偏向 +1dB；vol=1..49 极低音量档听感无差异
+  - 评审报告入仓：`docs/CODE_REVIEW_R018.md`（644 行，综合 4.3/5，4 项新发现 N1-N4）
+  - **总体 100% 闭环**：R018+R019+R020 累计修复 19/19、build 通过、可投板
+  - 2026-07-11 commit `06bb8d0` + tag `R020`（annotated）
+- ✅ **R021 完成——Batch 1 深度评审修复 10 项（build 通过）**
+  - C2：`g_total_duration_ms` 从恒为 0 改为文件大小回退估计（128kbps）
+  - C3：I2S sample rate clamp 96000→176400；档位重设计 1.5/2.0/3.0/4.0x（原 1.5/2.5/4.0/8.0）
+  - H1：u8g2 I2C byte_cb 分段发送（每 128B flush），根治 1024B 帧溢出
+  - H2：stop() wait retries 100→20（超时 1000ms→200ms）
+  - H3：`audio_player_seek_ms()` 加 NULL guard
+  - M4：`save_position()` 移除 `nvs_commit()`，由 `settings_flush()` 统一提交
+  - M5：SD mount `disk_status_check_enable = true`（VFS 层自动检测）
+  - L1：`audio_board_deinit()` 参数 NULL 检查
+  - L3：`playlist_get_name()` 返回值检查 + "Track N" 回退
+  - L4：light sleep 唤醒从 NVS 恢复断点位置（saved_track 一致性检查）
+  - **学习**：`audio_element_get_duration()` 在 ESP-ADF v2.7 中**不存在**（仅 `set_duration`），只能用文件大小估计
+  - 2026-07-17 commit `ec7be8d` + tag `R021`（annotated）
+- ✅ **R022 完成——Batch 2 深度评审修复 5 项（C1/C3 跳帧/M1/M2/M6）**
+  - **C1**：seek 改对 `g_fatfs_reader` 设 byte_pos（非 decoder），并把 `g_decoder` byte_pos 重置为 0 — 让 reader 的 seek 真正生效
+  - **C3 跳帧档**：Gear 4 走"正常 I2S 44100 + tick 每 50ms seek 350ms"（跳 7/8 音频），替代原 8x 不可达的高 I2S 采样率
+  - **M1**：`g_last_scrub_us` 从函数 static 改为模块级全局，play/stop 时清零
+  - **M2**：tick seek 路径包裹 `audio_pipeline_pause`/`resume`，避免运行中改 decoder byte_pos
+  - **M6**：play() 内立即用文件大小估算 duration（128kbps：`file_bytes / 16`），seek 走精确分支
+  - build 通过：`audiobook_player.bin` 0xba120（+160B vs R021）
+  - 2026-07-17 commit `584cf67` + tag `R022`（annotated）
+- ✅ **R023 完成——R021/R022 文档补正 + M3 ALC 注释落地**
+  - **doc-fix-1**：开发日志 R021 修改记录填 commit hash `1d03d03`
+  - **doc-fix-2**：删除 R021 修改记录矛盾行（"10 个" vs "8 个"）
+  - **code-fix-1**：`audio_player_set_volume` 加 ALC 范围说明注释（M3 文档化）— vol=51..58 实测合并到 alc_vol=0..2 dB 是 ALC 硬件限制
+  - 同步 3 类核心文件：CONTEXT.md / SESSION_SUMMARY.md / 开发日志.md
+  - 2026-07-17 commit `3655ff3` + tag `R023`（annotated）
+- ✅ **R049–R051 完成——统一设置菜单框架 + A-B 复读 + 按键提示音 + OTA/USB 入口 + TF 卡(SD) 固件 OTA 升级**
+- ✅ **R061 完成——给 IDF 打 `idf_v5.5_freertos.patch`**，让 ADF MP3 decoder 的 `xTaskCreateRestrictedPinnedToCore` 编入（否则播放失败 / 无声音）
+- ✅ **R063 完成——P0 LVGL 死锁根治**：main 只设标志、`lvgl_task` 持锁消费异步渲染，禁 main 直接调 LVGL（覆盖 SD CRC / 无卡 / 无文件三场景）
+- ✅ **R065 完成——首次开机无声根因修复**：`components/audio_board` 的 `get_i2s_pins()` 原返回 -1 被 ADF `memcpy` 覆盖 → IO6/7/5 从未配成 I2S → 改为返回真实引脚 → 出声
+- ✅ **R067 完成——应用层 ID3v2 skip**：heldec 混合流崩的绕行 + seek 公式按音频字节修正
+- ✅ **R068 完成——stop 改用 `terminate` + i2s_writer 每首重建**（放弃 R036 跨曲目复用，消除野指针）
+- ✅ **R073 完成——splash 卡住 UX 修复**（boot 后强制 main tick 进 player 界面）
+- ✅ **R075 完成——double-free 根因定位与修复**：`audio_player_stop` 手动 deinit 三个 element + `audio_pipeline_deinit` 二次 deinit → 改只调一次 `pipeline_deinit`
+- ✅ **R076 完成（进行中）——MP3 解码器崩溃根除尝试**：coredump 反解确认崩在闭源 PV-MP3 `mp3_decoder_open` → 新增 `mp3_decoder_esp_codec.cpp` 用开源 esp_audio_codec（mpeg_parser 切帧）；但实测必崩 3 首（白桦树/相反的我/躲避的爱）仍崩，R080 改用 libhelix 才根除
+- ✅ **R076 新增模块——蓝牙音箱(A2DP Sink)** `bt_speaker.cpp` + 菜单入口 + `configure.bat -bt` 构建变体
+- ✅ **R076 新增模块——中文 TTF 字体分区** `font_partition.cpp`（freetype + VFS `/font`，font 分区 @0x620000）
+- ✅ **R076 新增模块——统一设置菜单** `menu.cpp`（A-B 复读 / 按键音 / 蓝牙 / OTA 等统一入口）
+- ✅ **R078 完成——清理解码器 UB 死链**：删 `decoder_event_cb`（误把 i2s_writer 当 rsp_filter 句柄踩内存）+ 删 `g_rsp_filter` 死链（崩未根除，R076 开源库路径随后证伪）
+- ✅ **R079 完成（进行中）——.mp3 回退 PV-MP3 恢复声音+噪音消除**：栈 internal 32K+out_rb 16K；但崩溃根因后证为 PV-MP3 对特定合法 MP3 确定性崩溃（转码 128k/320k 均复现），转码不能根治 → 引 R080
+- ✅ **R080 完成——.mp3 解码器换 Helix MP3(libhelix) 根治崩溃**：新增 `mp3_decoder_libhelix.c/.h`，`create_decoder` 的 .mp3 分支改用 `mp3_decoder_libhelix_init`（彻底绕开闭源 PV-MP3）；坏帧/连续错误>50→返回 AEL_IO_DONE，由 `audio_player_tick` 监测 FINISHED 触发 `on_track_finished` 自动播下一首（跳曲保护）；**2026-08-25 真机验证全部 MP3 正常播放不崩（🏁 里程碑 `v1.0-stable`，基于 `e234fc5`）**
+- ✅ **R081 完成——修复首帧误报采样率**：解码器上报逻辑由"首帧一次"改为"每帧比对采样率/声道/位宽变化才 `audio_element_set_music_info` 重配 i2s"，纠正 Helix 首帧误报高采样率；构建通过，真机验证 `相反的我` 正常（🏁 里程碑 `v1.0-stable` 暂挂 R081）
+- ✅ **R082 完成——修复低采样率 MP3 变快变尖**：用户指出真正异常是 `躲避的爱.mp3`（ffmpeg 确认 24000Hz），Helix 对其**每帧持续误报 ~44100** → R081 逐帧比对无效；改为**每帧自行解析 MPEG 帧头**取真实采样率/声道上报 i2s，绕过 Helix 误报；构建通过，待真机验证（🏁 里程碑 `v1.0-stable` 移到 R082）
+- ⚠️ **R083 真因修复但引入回归**：R083 改 `play()` 在打开 I2S 前用真实文件采样率设时钟（新增 `mp3_sniff_sample_rate` 嗅探帧头），根因是 `play()` 此前用固定 `AUDIO_SAMPLE_RATE`(48000) 硬锁 I2S，且 `i2s_stream.c` 无 REPORT_MUSIC_INFO 回调→解码器上报无效；但 `mp3_sniff_sample_rate` 在 main 任务栈开 8KB 缓冲导致**播放任意歌曲即栈溢出崩**，用户实测全崩 → 引 R084
+- ✅ **R084 完成——修复栈溢出崩溃**：`mp3_sniff_sample_rate` 栈缓冲 8192→1024（仅扫首帧 4 字节，1KB 足够），消除 main 任务栈溢出；全新 `build/` 构建通过，待真机验证（🏁 里程碑 `v1.0-stable` 移到 R084）
+- ⏳ **R085 进行——修复 3 项交互/UI 回归（两轮）**：第一轮误判 FF/REW 跳曲为 decoder `set_byte_pos(0)`，删后仍跳曲。真因：① Helix decoder `err_cnt` 成功帧后从不复位，跨曲累积>50→误判曲终跳下一首（任何坏帧场景都会触发，含开头 ID3 未跳过）；② seek 非帧对齐落点吃垃圾。修复：`mp3_decoder_libhelix.c` 成功帧 `err_cnt=0`；`audio_player.cpp` 新增 `mp3_frame_align` 帧对齐 + `g_seek_path`；进度条改真实码率算时长；`display.cpp` 计时标签 y=122→130。已构建+烧录第二轮（b2eeb9b），待真机验证（🏁 里程碑 `v1.0-stable` 在 R085）
+
+---
+
+## 4. 经验教训
+
+### L001：WebFetch / WebSearch 网络受限
+- **现象**：WebFetch github.com / components.espressif.com / WebSearch 多个域失败
+- **应对**：依赖本地目录 + git ls-remote 探测 + 询问用户澄清意图
+- **未来**：涉及网络查询时，**直接 `git ls-remote`** 或让用户提供信息
+
+### L002：项目名"audio_player"（本地）/ "tapeplayer"（GitHub）/ "TapeBook"（README）三者不同
+- **现象**：路径 / 仓库名 / 文档项目名 3 个不同
+- **建议**：所有引用统一用"TapeBook"或"tapeplayer"
+
+### L003：tar 备份 + rm -rf 必须分两步 + 验证（教训 T-001）
+- **现象**：第一次 `tar czf D:/u8g2_backup.tar.gz components/u8g2/` 失败（Git Bash 把 D:/ 当 host），但 `rm -rf` 仍执行
+- **正确用法**：
+  ```bash
+  # 错误：tar czf D:/backup.tar.gz src/    ← D:/ 被 Git Bash 当 host
+  # 正确：tar czf /d/backup.tar.gz src/    ← POSIX 路径 /d/ = D:\
+  # 验证：tar tzf /d/backup.tar.gz | head -3
+  # 再删：rm -rf src/   （验证成功后再删）
+  ```
+- **教训**：删前必须先验证 tar 成功；两命令分开跑，不要 `&&` 链式
+
+### L004：ESP-IDF build 在 Git Bash 下跑不通（教训 T-002）
+- **现象**：./build.bat 不被 bash 解释；cmd /c 开新窗口；cmd //c 路径转换失败
+- **正确用法**：
+  ```bash
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue; & 'D:\esp\v5.5.3\esp-idf\export.ps1' | Out-Null; \$env:ADF_PATH='D:\esp\esp-adf'; idf.py build"
+  ```
+- **关键点**：
+  1. 必须在 **PowerShell 内部** `Remove-Item Env:MSYSTEM`（bash 子 shell `unset` 不传给 PowerShell）
+  2. `export.ps1` 通过 `&` dot-source 调，保留环境变量
+  3. 不要用 cmd /c "build.bat" 跑 build.bat（开新窗口）
+
+### L005：ESP-IDF 子模块 fix 模式（教训 T-003）
+- **现象**：ESP-IDF 5.5.3 install 时多个子模块只 clone 元数据没 fetch objects
+- **修复 3 步**：
+  1. `cd <submodule_path>`
+  2. `git fetch origin`
+  3. `git reset --hard <ESP-IDF 锁定的 commit>`（从 `.gitmodules` sbom-hash 或 `HEAD` 文件读）
+- **建议**：建立 `tools/fix_idf_submodules.sh` 一键修复
+
+### L006：ADF 5.5 组件引用方式变化（教训 T-004）
+- **现象**：`main/CMakeLists.txt REQUIRES audio_pipeline` 被弃用
+- **正确**：`main/idf_component.yml dependencies: espressif/audio_pipeline: "*"`
+- **教训**：遇到 "The component X could not be found" + 提示"moved to IDF component manager" 时，**改用 idf_component.yml 引用**
+
+### L007：idf_component.yml YAML 空 dict 也报错
+- **现象**：`dependencies:` 后只有 `# 注释` → "Input should be a valid dictionary"
+- **解决**：整个 `dependencies:` 块注释掉（包括 key）
+
+### L008：删 334M 前必须先备份 + 验证
+- 见 L003（备份失败的教训）
+- **未来**：所有"先备份后删"操作必须分两步：① tar + `tar tzf` 验证 ② 再 rm
+
+### L009：评审报告也可能有误，必须经 datasheet 核实
+- **现象**：评审报告误说 GPIO17/18 是 USB-JTAG（实为 GPIO19/20）、GPIO1/2 是 UART0（实为 GPIO43/44）
+- **教训**：所有评审发现必须经官方 datasheet 核实后才可采纳，不盲信评审结论
+
+### L010：MAX98357 SD_MODE 是四级电压阈值，非二值 GND/VDD
+
+### L011：评审必须基于规格书，不凭经验
+- **现象**：V1.0 评审凭经验误判 GPIO17/18 为 USB-JTAG、GPIO1/2 为 UART0；V2.0 基于规格书核实全部正确
+- **教训**：评审质量取决于数据来源。**必须有规格书原文支撑**，经验性评审只能作初步筛选
+
+### L012：WROOM-1 和 WROOM-2 的 GPIO47/48 引出规则不同
+- WROOM-1：仅 R16V 芯片有 GPIO47/48（脚注 c）
+- WROOM-2：R8V 和 R16V 都有 GPIO47/48（脚注 2）
+- **教训**：同一模组系列不同封装/型号可能引脚不同，必须逐型号看规格书脚注
+- **现象**：SD_MODE 不是简单的 GND/VDD 二值，而是 **Shutdown(0V) / Mono(0.16-0.77V) / Right(0.77-1.4V) / Left(>1.4V)** 四级
+- **教训**：必须用电阻分压获得 Mono 模式，直连 VDD 只输出 Left channel
+
+### L013：ADF 自定义 board 必须手动创建 INTERFACE_LINK_LIBRARIES 组件
+- **现象**：`CONFIG_AUDIO_BOARD_CUSTOM=y` 时 ADF 的 `esp_peripherals` 无条件 include `<board.h>`，但 ADF 不提供默认 board
+- **解决**：创建 `components/tapebook_board/`，通过 CMake `INTERFACE_LINK_LIBRARIES` 将包含路径注入到 `audio_board` 库
+- **模板**：参考 ADF 示例 `examples/player/pipeline_bt_player/` 中的 `my_board` 目录结构
+- **教训**：ADF 自定义板级支持不是通过 menuconfig 配置完成，而是通过 CMake 组件注入
+
+### L014：audio_player.cpp 6 处 API 从未被编译过
+- **现象**：该文件包含 `audio_element_set_volume()`、`audio_element_set_pos()`、`audio_pipeline_get_state()` 等不存在于 ADF 的 API
+- **原因**：文件基于 ADF 文档手册编写，但实际 API 不同；从未构建验证过
+- **教训**：`audio_element_set_volume` → 直接调 `i2s_set_sample_rate`（无音量控制 API）
+- **教训**：`audio_element_set_pos/get_pos` → 用 `audio_element_get_byte_pos` 近似
+- **教训**：`audio_pipeline_state_t`/`get_state` → 换 `audio_element_get_state`
+- **教训**：所有新加调用的文件必须编译验证，不能仅靠文档审查
+
+### L015：ets_delay_us → esp_rom_delay_us（IDF 5.x 弃用）
+
+### L016：`stat()` 在 FATFS VFS 挂载点永远返回 0
+- **现象**：`stat("/sdcard", &st)` 即使卡被拔掉也返回 0（VFS 伪目录持久存在）
+- **正确做法**：用 `sdmmc_read_sectors(g_sd_card, buf, 0, 1)` 读 MBR 扇区，卡移除返回 `ESP_ERR_TIMEOUT`
+- **教训**：VFS 层函数不能用于物理设备存在性检测
+
+### L017：FF/RW 高速跳帧中 pause/resume 是反模式
+- **现象**：FF 8x 每 50ms 跳 400ms + 每次 pause/resume 引起 I2S underrun 杂音
+- **正确做法**：抽出 `audio_player_seek_ms_internal()` 跳过 pipeline lifecycle，跳帧 tick 直接调用
+- **教训**：高速重复调用中有副作用的函数前必须考虑累积效应
+
+### L018：`"%.21s"` 比手动分支更安全简洁
+- **现象**：手动 `if (len <= 21) { %-21s } else { %s }` 的 else 分支遗忘截断
+- **教训**：snprintf 的 `%.*s` 或 `"%.21s"` 格式字符串比手动分支更不容易出错
+- **现象**：`components/u8g2_esp32_hal/u8g2_esp32_hal.c` 使用 `ets_delay_us()`，IDF 5.5 报错"implicit declaration"
+- **解决**：替换为 `esp_rom_delay_us()`（来自 `<esp_rom_sys.h>`）
+- **教训**：IDF 从 v5.0 起逐步弃用 `ets_*` ROM 函数，推荐使用 `esp_rom_*` 替代
+- WROOM-1：仅 R16V 芯片有 GPIO47/48（脚注 c）
+- WROOM-2：R8V 和 R16V 都有 GPIO47/48（脚注 2）
+- **教训**：同一模组系列不同封装/型号可能引脚不同，必须逐型号看规格书脚注
+- **现象**：SD_MODE 不是简单的 GND/VDD 二值，而是 **Shutdown(0V) / Mono(0.16-0.77V) / Right(0.77-1.4V) / Left(>1.4V)** 四级
+- **教训**：必须用电阻分压获得 Mono 模式，直连 VDD 只输出 Left channel
+
+### L019：C++ 代码调用 C 函数必须加 extern "C"（R014 关键教训）
+- **现象**：`display.cpp`（C++）调用 `u8g2_esp32_hal_init()`（C 实现），链接器报 undefined reference
+- **根因**：C++ name mangling 使编译器寻找 `_Z19u8g2_esp32_hal_init...`（mangled），但 C 编译产生 `u8g2_esp32_hal_init`（unmangled）
+- **修复**：`u8g2_esp32_hal.h` 加 `extern "C" { }` 包裹
+- **教训**：所有可能被 C++ 引用的 C 头文件必须加 `extern "C"` 守卫（即使现在不用，将来可能被 C++ 调用）
+
+### L020：ESP32-S3 仅支持 BLE 5.0（无 BT Classic），LE Audio 是唯一蓝牙音频方案
+- **现象**：用户期望 A2DP 蓝牙耳机，但 ESP32-S3 硬件不支持 BT Classic（无 BR/EDR 控制器）
+- **解决**：LE Audio（LC3 编解码，BLE ISO 等时通道），通过 `esp-ble-audio` 组件实现
+- **教训**：ESP32 系列双模（BT Classic + BLE）仅限 ESP32、ESP32-C3；ESP32-S3、C6、H2 只有 BLE 5.0
+
+### L021：ME6211C33 实际封装为 SOT-23-5（非 SOT-89）
+- **现象**：早期设计假定 SOT-89，但实际采购 ME6211C33M5G-N 为 SOT-23-5（带 CE 使能引脚）
+- **引脚**：1=VIN, 2=CE, 3=VOUT, 4=NC, 5=GND
+- **教训**：相同型号不同后缀封装不同，必须根据实际采购后缀确定封装
+
+### L022：静态库链接顺序——依赖库必须出现在使用者之后
+- **现象**：`libu8g2_esp32_hal.a` 定义了符号，`libmain.a` 引用这些符号，但链接失败
+- **根因**：GNU ld 从左到右处理静态库；如果库在前面，且前面没有对象引用其符号，库里的 .o 被丢弃
+- **解决**：把 `u8g2_esp32_hal.c` 源码直接编入 `main` 组件，避免静态库链接
+- **教训**：ESP-IDF 中组件 `REQUIRES` 不一定保证正确链接顺序；把强依赖源的源码直接放到使用组件是最确定的做法
+
+### L023：Kconfig 符号必须配套 CMake 条件才生效
+- **现象**：`sdkconfig.defaults` 中有 `CONFIG_USE_U8G2=y`，但 cmake 未`#ifdef`使用，实际被静默忽略
+- **修复**：在 `Kconfig.projbuild` 中定义 `config USE_U8G2` + `main/CMakeLists.txt REQUIRES u8g2`
+- **教训**：menuconfig 符号要生效需要 3 步：① Kconfig 定义 ② CMake 引用 ③ C 代码 `#ifdef`
+
+---
+
+### L024：void 函数改 esp_err_t 要同步头文件 + 调用方
+- **现象**：`u8g2_esp32_hal_init()` 原为 `void`，I2C 失败时仅 `ESP_LOGE` 不通知调用方
+- **教训**：嵌入式 HAL 层函数不应把错误吞在内部，必须通过返回值向调用方传播
+
+### L025：解码器 task 栈必须放 internal RAM（Harvard 架构冲突）
+- **现象**：R075 把 MP3 decoder `task_stack` 5K→16K → 强制走 PSRAM 栈；特定 MP3 播放即 `BREAK` / DoubleException @ 0x403743c0。
+- **根因**：ESP32-S3 哈佛架构，栈在 PSRAM 时 CPU 处于外部执行模式，期间访问 Flash（如 `fread` 读 MP3 数据）被硬件挂起 → ROM 异常 → 双异常死循环。
+- **教训**：解码器/音频 element 的 `stack_in_ext` 必须 `false`（栈放片内）；ringbuffer（数据）可放 PSRAM 无冲突。
+
+### L026：ESP32-S3 开发板 RTS 引脚未接 → 任何 hard_reset 无效
+- **现象**：esptool/espcoredump 跑完操作发 `Hard resetting via RTS pin`，板子被踢出下载模式、后续重连 `No serial data received`。
+- **教训**：本项目板子 RTS 没接。所有烧录/抓取须 `esptool --before no_reset --after no_reset`，手动进下载模式。
+
+### L027：`cmd /c` 包裹 + PowerShell 管道误报"用户取消"
+- **现象**：`cmd /c "call export.bat ... && idf.py build" | Select-String` 频繁 exitCode=2 / "canceled by the user"。
+- **根因**：Select-String 是 PS cmdlet，在 cmd 里不认识 → 整条命令失败，非用户中断。用户明确"从未主动取消过任何命令"。
+- **教训**：所有 IDF 编译/烧录走 `tools/_run_in_clean_cmd.py`（剥 MSYSTEM、输出重定向文件）。
+
+### L028：`reserve data 2 is 0x0` 是正常启动日志，非崩因
+- **现象**：R076 长期把它当崩溃标志。
+- **教训**：ADF 每个 example 都有此打印且后续正常播放；真崩点是它之后的 `Guru Meditation Error`。不要被信息性 log 误导。
+
+### L029：解码崩溃与文件内容（ID3v2/声道/采样率）无关
+- **现象**：R067(假设 ID3v2)、R070(假设 stereo)、R076-XCODE(转码 mono/16k) 多次假设被推翻——最干净的文件（相反的我，ffmpeg 0 错误）最崩。
+- **教训**：闭源解码器库内部 assert/BREAK 无法靠应用层规避；必须用 coredump 反解拿第一现场，而非猜文件特征。
+
+### L030：coredump 反解是定位闭源库崩点的唯一可靠手段
+- **现象**：HALT/GDBSTUB 都拿不到第一现场 PC（DoubleException 掩盖 backtrace）。
+- **做法**：`esptool read_flash` 直读 coredump 分区 raw bin → `ESPCoreDumpFileLoader` 转标准 ELF core → `xtensa-esp32s3-elf-gdb target core` → `bt` 拿到 PV-MP3 `mp3_decoder_open` 真实崩点。
+- **教训**：面对预编译闭源库崩溃，离线 coredump + gdb 比任何日志猜测都准。
+
+### L031：audio_element 内部事件回调的 ctx 必须是对应的元素句柄，死链也要删
+- **现象**：R078 前 `decoder_event_cb` 把 `g_i2s_writer`（i2s_stream 元素）当 rsp_filter 句柄调 `rsp_filter_set_src_info`，向 i2s_stream 内部结构非法写字段（UB）；该回调由 element 内部事件每首 MP3 open 时必触发，成为"部分 MP3 必崩"的强候选真凶。
+- **教训**：(1) `audio_element_set_event_callback` 的 ctx 必须是回调内真正使用的元素，切勿把不相关的 writer 当 filter 传；(2) 创建了却未 link 进 pipeline 的元素（如 `g_rsp_filter`）+ 空转的事件监听任务（`g_evt`/`audio_event_task`）是死链，既浪费资源又埋踩内存坑，应随半成品一起清理，不要"先留着"。
+
+### L032：转码（任何码率/去 ID3）无法修复闭源库崩溃；Helix 是稳妥替代
+- **现象**：白桦树/相反的我 经 ffmpeg 干净重编码（128k 保留 ID3、320k 去 ID3，ffmpeg 对该文件 0 错误解码）仍崩在 0x403743c0（同一 PC）——证明崩因是 PV-MP3 闭源库对特定合法 MP3 的确定性 bug，与文件损坏/码率/ID3 无关。
+- **教训**：(1) 闭源解码库内部 BREAK 无法靠应用层规避（转码、跳帧、改采样率均无效），必须用 coredump 反解拿第一现场；(2) 替代解码器选 Helix MP3（Apache-2.0，有 registry 组件 `chmorgan/esp-libhelix-mp3`）而非 libmad（GPL）；Helix `MP3Decode` 坏帧返回负码、`MP3FindSyncWord` 可定位同步字跳过，配合 AEL_IO_DONE 实现跳曲保护。
+- **坑位**：ADF `audio_element` 为不透明结构，存每元素上下文须用 `audio_element_setdata/getdata`（非 `codec_lib_specific_data`）；`MP3Decode` 真实签名 `unsigned char **inbuf, int *bytesLeft`（非 const/size_t）；`audio_element_report_info(self)` 单参读 `self->info`，改用 `audio_element_set_music_info(self, rate, ch, bits)` 上报。
+
+## 5. 性能指标
+
+| 指标 | R013 (MVP) | R014 (PRD fix + OLED) | R076 (崩溃根除 + BT + 字体) |
+|---|---|---|---|
+| Build 错误 | 0 | 0 | 0 |
+| Binary 大小 | 0xb2a40 | 0xb9b70 | ~0x1151d0（约 1.13MB，46% 空闲）|
+| 分区空闲 | 77% | 76% | 46% |
+| OLED 驱动 | ❌ 黑屏 | ✅ u8g2 + I2C | ✅ ST7789 + LVGL（原生 esp_lcd）|
+| 音量控制 | ⚠️ 存值无效 | ✅ i2s_alc_volume_set | ✅ 15 档逻辑音量 |
+| MP3 崩溃 | — | — | ✅ libhelix 根除（R080，坏帧跳曲保护）|
+| 蓝牙音箱 | — | — | ✅ A2DP Sink（需 -bt 构建）|
+| 中文显示 | — | — | ✅ TTF 字体分区 + freetype |
+
+---
+
+## 6. 未来方向
+
+### 下次会话
+1. ✅ **R084 已烧录并真机验证（🏁 里程碑 v1.0-stable 基于 R084）**：libhelix 根治崩溃 + 跳曲保护 + I2S 时钟按文件真实采样率设置（修复 24000Hz 等低采样率文件变快变尖）+ R084 修复 R083 栈溢出崩溃（任何歌曲播放即崩）；**✅ 2026-08-26 验证 `躲避的爱`(24000Hz) 语速/音调恢复正常、播放不崩**；下一步回归其他歌曲（相反的我 等）不崩、速率正常
+2. **V1.1 打磨**：定时关机（ADC 实装）、A-B 复读 UX、按键提示音、屏幕保护
+3. **蓝牙音箱真机测试**：手机 A2DP 配对推流、AVRCP 播放/暂停/音量透传、断线回退喇叭
+4. **字体/显示验收**：中文字体清晰度、多字号、font 分区烧录流程固化
+
+### 短期
+- V1.1 体验增强：定时关机、按键音、屏幕保护、A-B 复读
+- 蓝牙音箱 A2DP Sink 实机联调（当前代码已实现，待真机验证）
+- 中文 TTF 字体效果验证 + font 分区烧录脚本固化
+
+### 中期
+- 量产前：OTA 接收代码（HTTP/HTTPS）；TF 卡 SD-OTA 已具备基础能力
+- V1.2 进阶：书签、语音、电量、设置菜单（统一菜单框架已建）
+- LE Audio（耳机）仍可选评估，但 A2DP Sink（音箱）已优先落地
+
+### 长期
+- V2.0 远期：EQ、速度微调、LE Audio 耳机支持
+
+---
+
+## 7. 持久化资源
+
+| 资源 | 路径 / 链接 |
+|---|---|
+| GitHub 仓库 | https://github.com/zhutao198/tapeplayer（待 push）|
+| 本地仓库 | D:\zhutao\audio_player |
+| ESP-IDF v5.5.3 | D:\esp\v5.5.3\esp-idf（**4 子模块已修复**）|
+| ESP-ADF v2.7 | D:\esp\esp-adf |
+| u8g2 备份 | D:\u8g2_backup_20260703.tar.gz（282 MB）|
+| ESP-IDF v5.3 离线安装器 | https://dl.espressif.com/dl/esp-idf/ |
+| ESP-ADF v2.7 | https://github.com/espressif/esp-adf |
+| WROOM-1 datasheet | hardware/esp32-s3-wroom-1_wroom-1u_datasheet_cn.pdf |
+| WROOM-2 datasheet | hardware/esp32-s3-wroom-2_datasheet_cn.pdf |
+| MAX98357A 规格书 | hardware/C910544_MAX98357A...PDF |
+| SSD1315 OLED 规格书 | hardware/OLED_SSD1315.pdf |
+| PDF 搜索脚本 | tools/pdf_search.py |
+| MAX98357A 提取文本 | tools/_max98357a.txt |
+| WROOM 提取文本 | tools/_wroom.txt |
+
+---
+
+## 8. R 节点 Git 状态
+
+```
+e234fc5 R080: .mp3 换 libhelix 根治 PV-MP3 崩溃 + 跳曲保护 (annotated tag R080)
+c53662e R076-CODEC-17c: 加回 ESP_AUDIO_ERR_DATA_LACK 处理 (silent 修复)
+8624548 R076-CODEC-17b: 加大 decoder task_stack 到 32K (v2.6.2 simple_dec 路径)
+22be546 R076-CODEC-17: 单路径用 espressif/esp_audio_codec v2.6.2 (component manager)
+b910786 R076-CODEC-14: 回退到 ADF release/v2.x 官方 PV-MP3 闭源方案 (mp3_decoder_init)
+dd3e93e R075: stop() double-free 根因修复
+59e746f fix-r053-audio: 首次无声根因(I2S引脚) + R065 硬件修正
+3ee8208 R049-R073 合并: 菜单/AB复读/OTA + 崩溃系列修复
+f17d6b5 R030: 批量修复合并评审 15 项（S1+S2+S3+C08）
+```
+
+**R 节点现状（2026-08-25）**：
+- 历史 R001–R048 大多已建 annotated tag；R030/R048/R059-stage-end/R076-CODEC-* 有 tag。
+- R049–R075 多数节点**仅在开发日志记录、未逐一建 tag**（历史偏差），但代码已随 `fix-r053-audio` 分支合入（最新稳定 `3ee8208` / `dd3e93e`）。
+- R076 系列已建 `R076-CODEC-*` annotated tag；当前工作区有大量未提交临时文件待清理。
+
+---
+
+**作者**：Claude  
+**更新规则**：每次 R 节点 commit 后同步更新
+
+
+### R095 会话要点（2026-08-28）
+- 重大根因：播放崩溃不是"并发 Flash 操作"，而是 seek 落点在伪帧头（Layer I/free-format）-> Helix nSlots 巨大 -> mp3dec.c:380 memcpy 越界。
+- 教训：decoder 重建（free/realloc）绝不能在解码任务运行时调用（tlsf 双释放）；ADF pause/resume 每 tick 高频调用会爆 event 队列。
+- 方案：FF/REW 用"静音 + 仅 seek(命中 g_scrub_active 不计播放流逝) + 释放时一次暂停式 seek"，进度锁定=seek 目标，线性准确且无队列压力。
+- 经验：ADF fatfs_stream 的 set_byte_pos 仅在元素重开(open)时生效，运行中 set_byte_pos 不物理 seek。
+
+
+### R096 会话要点（2026-08-28）
+- MP3 帧头 layer 字段取值 01=Layer III、10=II、11=I；bitrate 表按 L1/L2/L3 排布，
+  索引须显式映射，勿用 layer-1（Layer III 会错查 L1 表造成码率读大 2-3 倍 -> 时长偏小）。
+- FATFS set_byte_pos 越过文件尾会立即 AEL_IO_DONE；断点/seek 必须钳制在曲长内，
+  越界恢复点回退曲首 0。
+
+### R097 会话要点（2026-08-31）
+- 跨任务 LVGL 死锁不能靠 lv_lock() 修：曾试加锁仍卡 lv_inv_area（lvgl_task 持内部结构）。
+  正确做法是 main_task **完全不碰 LVGL**，全用标志位由 lvgl_task 消费
+  （参考 display_show_no_card / s_vol_pending 模式）。显示状态机收敛到单一拥有者。
+- 单声道 MP3 2x 快：嗅探得 44100/128k 正确，Helix decoder 上报 ch=1 暴露真相。
+  I2S 硬编码 2 声道会把 mono PCM 当 stereo 消耗 -> 每帧取 2 个 mono 样本 -> 2x 速度。
+  修复选 decoder 原地反向 mono→stereo 上混（I2S 配置不动，MAX98357A 双声道均有信号）；
+  比改 I2S 单声道更稳，避免驱动 slot 不重配风险。
+- 嗅探加固：按帧长验证下一帧拒绝假同步字（ID3 巨大如 228KB 时偶有假 44100 同步字）。
+- 短按步长统一为 SEEK_STEP_SEC 常量，长按初始基准同步同值，保持原"长按初始=短按"一致设计避免断层。

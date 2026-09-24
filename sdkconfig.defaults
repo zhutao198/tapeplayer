@@ -1,0 +1,68 @@
+# sdkconfig.defaults template: ESP32-S3-WROOM-1 N16R8 (PRODUCTION)
+# Flash : 16 MB Quad SPI (4-line)
+# PSRAM :  8 MB Octal SPI (8-line)
+# V_SPI :  3.3 V
+# Pairs with partitions_ota.csv (each app slot = 2 MB).
+# Used by configure.bat when BOARD_MODULE_WROOM_1_N16R8 is selected.
+# See HARDWARE_MODULE_MIGRATION.md for details.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# Flash (Quad SPI, 16 MB)
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# CONFIG_ESPTOOLPY_FLASHMODE_QIO is not set
+# CONFIG_ESPTOOLPY_FLASHMODE_QOUT is not set
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+# CONFIG_ESPTOOLPY_FLASHMODE_DOUT is not set
+# CONFIG_ESPTOOLPY_OCT_FLASH is not set
+
+# PSRAM (Octal SPI, 8 MB)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+# 让 malloc() 也能分配 PSRAM（SPIRAM_USE_MALLOC 隐含 caps 分配能力），
+# 并将小分配阈值设为 0，使 LVGL 控件/对象与 freetype 字形缓存优先落 PSRAM。
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+
+# Partition table (OTA-capable, see partitions_ota.csv)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_ota.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# File system
+CONFIG_FATFS_LFN_STACK=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_FATFS_CODEPAGE=437
+# R106: 文件名 API 改用 UTF-8 编码。
+# 原为 ANSI_OEM(CP437), f_readdir 返回的文件名字节不是 UTF-8, 点阵层按 UTF-8
+# 解码得到错误 unicode -> 查不到字形 -> 中文曲名/文件名全部显示为空心方框。
+# 改 UTF-8 后 FATFS 直接将磁盘 LFN(UTF-16) 转成 UTF-8 返回, 点阵可正确解码。
+# 注意: 只改 API 编码, CODEPAGE 仍保留 437 —— UTF-8 模式不走 OEM 转换,
+# 避免引入 cc936 转换表(约 180KB) 撑爆 2MB app 分区。
+CONFIG_FATFS_API_ENCODING_UTF_8=y
+
+# Bus config
+CONFIG_SPI_MASTER_IN_IRAM=y
+CONFIG_I2C_ISR_IRAM_SAFE=y
+
+# CPU
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Logging
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# FreeRTOS backward compatibility for ESP-ADF
+# ESP-ADF 组件 (audio_pipeline / audio_element) 仍使用旧 FreeRTOS API
+# (xSemaphoreHandle, portTICK_RATE_MS, mutex_* 等)，在 IDF v5.x 中需显式开启向后兼容
+CONFIG_FREERTOS_ENABLE_BACKWARD_COMPATIBILITY=y
+
+# ADF audio_board selection
+# 本项目为自定义 tapebook 硬件，audio_board_init() 实际未被调用（I2S/LCD/SD 均由自写驱动接管），
+# 但 ADF 的 audio_stream 组件 REQUIRES audio_board，故需选定一个板型。
+# 现改为项目内 components/audio_board 覆盖 ADF 自带版本，提供自定义 tapebook 板（桩实现），
+# 不再依赖任何现成开发板（ESP_SD_PIN_* 宏在 tapebook/board_def.h 中定义，值仅用于编译）。
+CONFIG_ESP_TAPEBOOK_BOARD=y

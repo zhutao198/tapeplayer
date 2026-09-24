@@ -1,0 +1,21 @@
+# BT Speaker build flavor (configure.bat <target>-bt)
+# 启用 Bluetooth Classic / A2DP Sink，并关闭 Wi-Fi 以规避 2.4GHz 共存干扰。
+# 用于蓝牙音箱产品（设备作 A2DP Sink，手机推流到 I2S/MAX98357）。
+
+CONFIG_BT_ENABLED=y
+CONFIG_BLUEDROID_ENABLED=y
+CONFIG_BTDM_CTRL_MODE_BR_EDR_BLE=y
+CONFIG_BT_BLE_ENABLED=y
+CONFIG_BT_CLASSIC_ENABLED=y
+CONFIG_A2DP_ENABLE=y
+CONFIG_AVRC_ENABLE=y
+CONFIG_CLASSIC_PAIRING_ENABLED=y
+
+# 应用层功能开关：决定 main/CMakeLists.txt 是否追加 bluetooth_service 依赖，
+# 以及 bt_speaker.cpp（A2DP Sink）是否被编译进固件。
+# 仅开 BT 协议栈而不开此项 => BT 栈编入但蓝牙音箱功能本体不会进固件（旧缺口）。
+CONFIG_USE_BT_SPEAKER=y
+
+# 关闭 Wi-Fi：与 BT 同处 2.4GHz，关闭可消除共存干扰并省出 DRAM/Flash。
+# CONFIG_ESP_WIFI_ENABLED is not set
+# CONFIG_ESP32_WIFI_ENABLED is not set

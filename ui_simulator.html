@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audio_player · R049b/c 统一菜单 UI 模拟器（完整树 + A-B/提示音/OTA）</title>
+<style>
+  :root{
+    --bg:#0a0e17; --cyan:#2dd4bf; --white:#ffffff; --gray:#8a93a6;
+    --orange:#f5a623; --panel:#1a1d23; --line:#2a2e36; --green:#34d399;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--panel);color:var(--white);
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    margin:0;padding:18px;display:flex;gap:28px;flex-wrap:wrap;justify-content:center}
+  h1{width:100%;text-align:center;font-size:17px;color:var(--cyan);margin:0 0 2px}
+  .sub{width:100%;text-align:center;color:var(--gray);font-size:12px;margin-bottom:10px}
+  .device{background:var(--bg);border:12px solid #20242c;border-radius:16px;
+    width:320px;height:240px;position:relative;overflow:hidden;
+    box-shadow:0 0 40px rgba(0,0,0,.55);flex:0 0 auto}
+  /* 通用屏幕 */
+  .scr{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;padding:12px 8px}
+  .scr .title{color:var(--cyan);font-size:16px;font-weight:600;margin-bottom:6px;letter-spacing:1px}
+  .scr .body{white-space:pre-wrap;text-align:center;color:var(--white);font-size:12px;line-height:1.7}
+  .scr .items{width:100%;display:flex;flex-direction:column;gap:3px;margin-top:2px}
+  .scr .item{font-size:15px;line-height:19px;color:var(--white);white-space:pre;padding-left:6px;border-radius:3px}
+  .scr .item.sel{color:var(--cyan);background:rgba(45,212,191,.12)}
+  .scr .item.act{color:var(--gray)}
+  .scr .item.on{color:var(--green)}
+  .scr .hint{position:absolute;bottom:6px;left:0;right:0;text-align:center;
+    color:var(--gray);font-size:10px;padding:0 8px}
+  .scr .abstat{position:absolute;top:6px;left:0;right:0;text-align:center;color:var(--orange);font-size:10px}
+  /* 播放主界面 */
+  .scr-play{position:absolute;inset:0;display:flex;flex-direction:column;padding:8px 10px;font-size:12px}
+  .scr-play .top{display:flex;justify-content:space-between;align-items:center;color:var(--gray);font-size:12px}
+  .batt-ic{width:22px;height:11px;border:1.5px solid var(--gray);border-radius:2px;position:relative;padding:1px;display:inline-block}
+  .batt-ic::after{content:"";position:absolute;right:-3px;top:3px;width:2px;height:5px;background:var(--gray);border-radius:0 1px 1px 0}
+  .batt-fill{height:100%;background:var(--cyan);border-radius:1px;display:block}
+  .scr-play .reel{margin:12px auto 6px;width:120px;height:80px;border:2px dashed var(--line);
+    border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--line);font-size:11px}
+  .scr-play .abbadge{color:var(--green);font-size:11px;text-align:center;margin-top:2px}
+  .scr-play .tc{text-align:center;color:var(--white);font-size:14px;margin-top:2px}
+  .scr-play .bar{height:5px;background:var(--line);border-radius:3px;margin:10px 6px 4px;overflow:hidden}
+  .scr-play .bar>i{display:block;height:100%;width:28%;background:var(--cyan);border-radius:3px}
+  .scr-play .bar>i.ab{background:var(--green)}
+  .scr-play .pct{text-align:center;color:var(--gray);font-size:11px}
+  .scr-play .hint2{position:absolute;bottom:6px;left:0;right:0;text-align:center;color:var(--gray);font-size:10px;padding:0 8px}
+  /* 浏览占位 */
+  .scr-browse{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--white);font-size:13px;gap:6px}
+  .scr-browse .h{color:var(--cyan);font-size:15px}
+  /* 控制面板 */
+  .panel{background:#15181e;border:1px solid var(--line);border-radius:12px;padding:16px;width:380px;flex:0 0 auto}
+  .panel h2{margin:0 0 10px;font-size:14px;color:var(--cyan)}
+  .keys{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .keys button{background:#222732;color:var(--white);border:1px solid var(--line);
+    border-radius:8px;padding:12px 6px;font-size:13px;cursor:pointer;transition:.12s}
+  .keys button:hover{background:#2c3340;border-color:var(--cyan)}
+  .keys button:active{transform:scale(.96)}
+  .keys .wide{grid-column:span 3}
+  .row{display:flex;gap:8px;margin-top:12px}
+  .row button{flex:1;background:#1f2530;color:var(--cyan);border:1px solid var(--line);
+    border-radius:8px;padding:9px;font-size:12px;cursor:pointer}
+  .state{margin-top:12px;font-size:12px;color:var(--gray);line-height:1.7}
+  .state b{color:var(--white)}
+  .tag{display:inline-block;background:rgba(45,212,191,.12);color:var(--cyan);
+    border-radius:4px;padding:1px 6px;font-size:11px;margin-left:4px}
+  .tree{margin-top:14px;border-top:1px solid var(--line);padding-top:10px;font-size:11.5px;color:var(--gray);line-height:1.6;white-space:pre}
+  .tree .c{color:var(--cyan)}
+  .tree .o{color:var(--orange)}
+  .tree .g{color:var(--green)}
+  .legend{font-size:11px;color:var(--gray);margin-top:8px}
+  .legend b{color:var(--white)}
+</style>
+</head>
+<body>
+  <h1>audio_player · R049b/c 统一菜单 UI 模拟器</h1>
+  <div class="sub">320×240 ST7789 横屏 · 完整菜单树 · R049a/b/c 已接入固件（A-B 复读 / 按键提示音 / OTA·USB 入口）</div>
+
+  <div class="device" id="screen"></div>
+
+  <div class="panel">
+    <h2>实体键 (点击模拟)</h2>
+    <div class="keys">
+      <button onclick="key('PREV')">◀ PREV</button>
+      <button onclick="key('PLAY')">▶ 播放/确认</button>
+      <button onclick="key('NEXT')">NEXT ▶</button>
+      <button onclick="key('VOLDN')">VOL −</button>
+      <button onclick="key('STOP')">■ 停止/返回</button>
+      <button onclick="key('VOLUP')">VOL +</button>
+      <button class="wide" onclick="openMenu()">长按 STOP · 打开菜单</button>
+    </div>
+    <div class="row">
+      <button onclick="goPlay()">切到播放主界面</button>
+      <button onclick="togglePlay()">▶/⏸ 播放/暂停</button>
+      <button onclick="reset()">重置</button>
+    </div>
+    <div class="state" id="state"></div>
+
+    <div class="tree" id="tree"></div>
+    <div class="legend">
+      图例：<b>青色</b>=子菜单 <span class="c">▸</span> · <b>橙色</b>=动作 · <b>绿色</b>=已开启 toggle
+      <span class="g">●</span><br>
+      点击菜单项（播放/标记A/标记B/OTA/USB/关于/书签）会触发真实动作逻辑（A-B 标记当前播放位置、OTA/USB 显示信息屏、提示音 toggle 落盘）。
+    </div>
+  </div>
+
+<script>
+/* ============ 数据模型：完整菜单树 ============ */
+const modeOpts  = ["顺序播放","列表循环","单曲循环"];
+const timerOpts = ["关","15 分钟","30 分钟","60 分钟","90 分钟"];
+const onOff     = ["关","开"];
+const eqOpts    = ["关闭","流行","摇滚","古典","人声"];
+
+let playMode=0, timerIdx=0, keyTone=0, voice=0, eq=0;
+let playing=false, pos=83, duration=296;            // 模拟播放位置(秒)
+let abA=-1, abB=-1, abOn=false;                      // A-B 复读状态(秒)
+
+function fmt(s){ s=Math.max(0,s|0); const m=(s/60|0); const ss=s%60; return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss; }
+
+/* A-B 复读子菜单 */
+const AB = [
+  {label:"标记 A 点", kind:"action", note:"标记当前播放位置为 A"},
+  {label:"标记 B 点", kind:"action", note:"标记当前播放位置为 B（需先标 A）"},
+  {label:"复读开关",   kind:"toggle", opts:onOff, get:()=>abOn?1:0, set:v=>{ if(v&&abA>=0&&abB>abA) abOn=true; else if(!v) abOn=false; }},
+  {label:"清除",       kind:"action", note:"清除 A/B 并关闭复读"},
+];
+
+/* 系统子菜单 */
+const SYS = [
+  {label:"A-B 复读",   kind:"submenu", children:()=>AB},
+  {label:"固件升级",   kind:"action", note:"OTA 升级需联网\n本机无 WiFi\n功能未开放"},
+  {label:"USB 存储",   kind:"action", note:"大容量存储模式\n需 USB OTG\n功能未开放"},
+  {label:"按键提示音", kind:"toggle", opts:onOff, get:()=>keyTone, set:v=>keyTone=v},
+  {label:"语音播报",   kind:"toggle", opts:onOff, get:()=>voice,   set:v=>voice=v},
+  {label:"EQ",         kind:"toggle", opts:eqOpts, get:()=>eq,     set:v=>eq=v},
+  {label:"关于",       kind:"action", note:"有声书播放器\nESP32-S3\nV1.1 · R049b/c"},
+];
+
+/* 播放子菜单 */
+const PLAY = [
+  {label:"播放模式", kind:"toggle", opts:modeOpts,  get:()=>playMode, set:v=>playMode=v},
+  {label:"定时关机", kind:"toggle", opts:timerOpts, get:()=>timerIdx, set:v=>timerIdx=v},
+];
+
+/* 根菜单 */
+const ROOT = [
+  {label:"浏览文件", kind:"action", onEnter:()=>browse("浏览文件")},
+  {label:"播放",     kind:"submenu", children:()=>PLAY},
+  {label:"书签",     kind:"action", onEnter:()=>browse("书签")},
+  {label:"系统",     kind:"submenu", children:()=>SYS},
+];
+
+let screen = "play";     // play | menu | browse | info
+let menuOpen = false;
+let stack = [];
+let infoReturn="play", infoTitle="", infoText="";
+let infoTimer=null;
+
+function openMenu(){
+  stack=[{items:ROOT,count:ROOT.length,sel:0,title:"菜单"}];
+  menuOpen=true; screen="menu"; render();
+}
+function exitMenu(){ menuOpen=false; screen="play"; render(); }
+function goPlay(){ menuOpen=false; screen="play"; render(); }
+function togglePlay(){ playing=!playing; render(); }
+function reset(){ playMode=0;timerIdx=0;keyTone=0;voice=0;eq=0;abA=-1;abB=-1;abOn=false;pos=83;playing=false;screen="play";menuOpen=false;stack=[];render(); }
+function browse(name){ menuOpen=false; screen="browse"; lastBrowse=name; render(); }
+let lastBrowse="";
+
+function showInfo(title,text){
+  infoTitle=title; infoText=text; infoReturn=(menuOpen?"menu":"play");
+  screen="info"; render();
+  clearTimeout(infoTimer);
+  infoTimer=setTimeout(()=>{ screen=infoReturn; render(); }, 1600);
+}
+
+/* ============ 渲染 ============ */
+function render(){
+  const s=document.getElementById("screen");
+  if(screen==="menu"&&menuOpen) renderMenu(s);
+  else if(screen==="browse") renderBrowse(s);
+  else if(screen==="info") renderInfo(s);
+  else renderPlay(s);
+  renderState(); renderTree();
+}
+
+function renderMenu(s){
+  const lv=stack[stack.length-1];
+  let items=lv.items.map((it,i)=>{
+    let txt=(i===lv.sel?"> ":"  ")+it.label;
+    if(it.kind==="toggle") txt+=": "+it.opts[it.get()];
+    const on = it.kind==="toggle" && it.get()>0;
+    const cls="item"+(i===lv.sel?" sel":"")+(it.kind==="action"?" act":"")+(on?" on":"");
+    return `<div class="${cls}">${txt}</div>`;
+  }).join("");
+  let abLine="";
+  if(lv.items===AB){
+    abLine=`<div class="abstat">A:${abA<0?"--":fmt(abA)}  B:${abB<0?"--":fmt(abB)}  状态:${abOn?"开":"关"}</div>`;
+  }
+  s.innerHTML=`<div class="scr">
+      ${abLine}
+      <div class="title">${lv.title}</div>
+      <div class="items">${items}</div>
+      <div class="hint">PREV/NEXT 移动  VOL 调值  播放 进入  停止 返回</div>
+    </div>`;
+}
+
+function renderBrowse(s){
+  s.innerHTML=`<div class="scr-browse">
+      <div class="h">${lastBrowse}</div>
+      <div>已通过「${lastBrowse}」进入 (app_enter_browse)</div>
+      <div style="color:var(--gray);font-size:11px">菜单已关闭，回到浏览态</div>
+    </div>`;
+}
+
+function renderInfo(s){
+  s.innerHTML=`<div class="scr">
+      <div class="title">${infoTitle}</div>
+      <div class="body">${infoText.replace(/\n/g,"\n")}</div>
+      <div class="hint">（1.5 秒后自动返回）</div>
+    </div>`;
+}
+
+function renderPlay(s){
+  const mode=modeOpts[playMode];
+  const abActive = abOn && abA>=0 && abB>abA;
+  const pct = Math.min(100, pos/duration*100);
+  let barInner = abActive
+    ? `<i class="ab" style="width:${pct}%"></i>`
+    : `<i style="width:${pct}%"></i>`;
+  let abBadge = abActive ? `<div class="abbadge">⟳ A-B 复读中 (${fmt(abA)}→${fmt(abB)})</div>` : "";
+  s.innerHTML=`<div class="scr-play">
+      <div class="top">
+        <span>14:32</span>
+        <span>♪ 012/156 ${mode}</span>
+        <span class="batt"><span class="batt-ic"><span class="batt-fill" style="width:80%"></span></span>80%</span>
+      </div>
+      <div class="reel">磁带动画区 (reel)${playing?" ●REC":""}</div>
+      ${abBadge}
+      <div class="tc">${fmt(pos)} / ${fmt(duration)}</div>
+      <div class="bar">${barInner}</div>
+      <div class="pct">${pct.toFixed(0)}%</div>
+      <div class="hint2">上一首/下一首 切换  播放 暂停  停止 退出  长按 STOP 菜单</div>
+    </div>`;
+}
+
+function renderState(){
+  const lv = menuOpen ? stack[stack.length-1].title+" · 深度"+stack.length : (screen==="info"?"信息屏":screen);
+  document.getElementById("state").innerHTML=
+    `当前: <b>${lv}</b><span class="tag">R049b/c</span><br>
+     播放模式=<b>${modeOpts[playMode]}</b> · 定时关机=<b>${timerOpts[timerIdx]}</b><br>
+     按键提示音=<b>${onOff[keyTone]}</b> · 语音播报=<b>${onOff[voice]}</b> · EQ=<b>${eqOpts[eq]}</b><br>
+     A-B: A=<b>${abA<0?"--":fmt(abA)}</b> B=<b>${abB<0?"--":fmt(abB)}</b> 复读=<b>${abOn?"开":"关"}</b>`;
+}
+
+function renderTree(){
+  const t=document.getElementById("tree");
+  t.innerHTML=
+`<span class="c">菜单</span>
+├─ 浏览文件  ●动作
+├─ <span class="c">播放</span>
+│   ├─ 播放模式   [toggle]
+│   └─ 定时关机   [toggle]
+├─ 书签  ●动作
+└─ <span class="c">系统</span>
+    ├─ <span class="c">A-B 复读</span>  <span class="g">[已实现 R049b]</span>
+    │   ├─ 标记 A 点   ●动作
+    │   ├─ 标记 B 点   ●动作
+    │   ├─ 复读开关    [toggle]
+    │   └─ 清除        ●动作
+    ├─ 固件升级   ●动作 <span class="o">[桩 R049c]</span>
+    ├─ USB 存储   ●动作 <span class="o">[桩 R049c]</span>
+    ├─ 按键提示音 [toggle] <span class="g">[已实现 R049c]</span>
+    ├─ 语音播报   [toggle] <span class="o">[桩 R049d]</span>
+    ├─ EQ         [toggle] <span class="o">[桩 R049d]</span>
+    └─ 关于       ●动作`;
+}
+
+/* ============ 按键处理（与 menu_handle_button 一致） ============ */
+let flashT;
+function flash(msg){
+  const el=document.getElementById("state");
+  el.innerHTML=`<b style="color:var(--orange)">${msg}</b>`;
+  clearTimeout(flashT); flashT=setTimeout(renderState,1100);
+}
+
+function key(id){
+  if(screen==="info"){ return; }  // 信息屏期间忽略
+  if(!(screen==="menu"&&menuOpen)){ flash("非菜单态按键（播放界面直控）"); return; }
+  const lv=stack[stack.length-1];
+  const it=lv.items[lv.sel];
+
+  if(id==="PREV")            lv.sel=(lv.sel-1+lv.count)%lv.count;
+  else if(id==="NEXT")       lv.sel=(lv.sel+1)%lv.count;
+  else if(id==="VOLDN"){ if(it.kind==="toggle"){let i=it.get();i=(i-1+it.opts.length)%it.opts.length;it.set(i);} }
+  else if(id==="VOLUP"){ if(it.kind==="toggle"){let i=it.get();i=(i+1)%it.opts.length;it.set(i);} }
+  else if(id==="PLAY"){
+    if(it.kind==="submenu")        stack.push({items:it.children(),count:it.children().length,sel:0,title:it.label});
+    else if(it.kind==="action")    doAction(it);
+    else if(it.kind==="toggle"){   let i=it.get();i=(i+1)%it.opts.length;it.set(i); }
+  }
+  else if(id==="STOP"){
+    if(stack.length>1) stack.pop();
+    else exitMenu();
+  }
+  render();
+}
+
+function doAction(it){
+  switch(it.label){
+    case "标记 A 点":
+      if(!playing){ flash("⚠ 需先播放才能标记 A"); return; }
+      abA=pos; abB=-1; flash("已标记 A 点 @ "+fmt(abA));
+      break;
+    case "标记 B 点":
+      if(abA<0){ flash("⚠ 请先标 A"); return; }
+      abB=pos; if(abB<=abA) abB=abA+5; flash("已标记 B 点 @ "+fmt(abB)+"（跨度 "+fmt(abB-abA)+"）");
+      break;
+    case "清除":
+      abA=-1; abB=-1; abOn=false; flash("已清除 A-B");
+      break;
+    case "固件升级": showInfo("固件升级","OTA 升级需联网\n本机无 WiFi\n功能未开放"); break;
+    case "USB 存储": showInfo("USB 存储","大容量存储模式\n需 USB OTG\n功能未开放"); break;
+    case "关于":     showInfo("关于","有声书播放器\nESP32-S3\nV1.1 · R049b/c"); break;
+    case "浏览文件": browse("浏览文件"); break;
+    case "书签":     browse("书签"); break;
+    default: flash("执行动作：" + (it.note||it.label));
+  }
+}
+
+/* 模拟播放时钟 */
+setInterval(()=>{
+  if(playing && screen!=="info"){
+    pos+=1; if(pos>=duration){ pos=0; }
+    // A-B 循环（模拟 audio_player tick）
+    if(abOn && abA>=0 && abB>abA && pos>=abB) pos=abA;
+    if(screen==="play") render();
+  }
+},1000);
+
+render();
+</script>
+</body>
+</html>
