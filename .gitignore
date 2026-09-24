@@ -114,3 +114,32 @@ hardware/V1/硬件清单1.xlsx
 tools/cjk.ttf
 tools/_dbg1_err.txt
 ui_preview.html
+
+# R108-R119 调试垃圾（AI 整理，禁止误提交）
+package.json
+0x620000
+hardware/V1/audio_player - *.sch
+hardware/V1/*.xlsx
+docs/SD*.webp
+docs/UI*.jpg
+docs/*.txt
+tools/LVGL_Pro_Editor-2.0.3-windows.zip
+tools/LVGL_Pro_Editor-2.0.3-windows/
+
+# R108-R119 一次性调试脚本/中间产物（AI 整理，非破坏性忽略；如需彻底删除可 git clean -fdx）
+fix_*.py
+revert_*.py
+add_early_pow_en.py
+append_r117_log.py
+gen_font_clean.py
+gen_punct.py
+bolt_gen.py
+bolt_preview.png
+ascii_glyphs.txt
+build_r117.log*
+main/bolt_img.h
+tools/gen_bolt.py
+tools/gen_cjk_font.py
+tools/gen_cjk_font_mixed.py
+tools/tmp_check_font.py
+_merge_stash/
