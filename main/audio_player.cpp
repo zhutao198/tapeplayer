@@ -238,6 +238,33 @@ static const char *get_file_ext(const char *path)
     return dot ? dot : "";
 }
 
+/* R122-AAC: 嗅探 .aac/.m4a 真实封装，避免把 MP4 容器当 ADTS 喂给解码器导致 BREAK 崩机。
+   返回 true=ADTS 裸流(可解)；false=MP4 容器/未知封装(不支持，应拒绝)。 */
+static bool aac_probe_is_adts(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return false;
+    uint8_t buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    if (n < 4) return false;
+    /* 1) 扫描 ADTS 同步字 0xFFF (MPEG-4, layer=0) */
+    for (size_t i = 0; i + 1 < n; i++) {
+        if (buf[i] == 0xFF && (buf[i + 1] & 0xF0) == 0xF0 && (buf[i + 1] & 0x06) == 0x00) {
+            return true;
+        }
+    }
+    /* 2) 无 ADTS 同步字：检查是否为 MP4 容器（穿 .aac 马甲的 mp4/aac_02） */
+    for (size_t i = 0; i + 4 <= n; i++) {
+        if (memcmp(buf + i, "ftyp", 4) == 0) {
+            ESP_LOGE(TAG, "R122-AAC: %s is MP4 container, AAC decoder only supports ADTS; reject", path);
+            return false;
+        }
+    }
+    ESP_LOGE(TAG, "R122-AAC: %s has no ADTS sync and is not MP4; unsupported AAC encapsulation", path);
+    return false;
+}
+
 static audio_element_handle_t create_decoder(const char *path)
 {
     const char *ext = get_file_ext(path);
@@ -260,6 +287,10 @@ static audio_element_handle_t create_decoder(const char *path)
         ESP_LOGI(TAG, "Using Helix MP3 decoder (R080, replace PV-MP3)");
         return mp3_decoder_libhelix_init(NULL);
     } else if (strcasecmp(ext, ".aac") == 0 || strcasecmp(ext, ".m4a") == 0) {
+        if (!aac_probe_is_adts(path)) {
+            ESP_LOGE(TAG, "Using AAC decoder: rejected (unsupported encapsulation)");
+            return NULL;
+        }
         ESP_LOGI(TAG, "Using AAC decoder");
         return aac_decoder_init(&aac_cfg);
     } else if (strcasecmp(ext, ".flac") == 0) {
@@ -721,9 +752,6 @@ void audio_player_stop(void)
         if (g_decoder) {
             audio_element_abort_input_ringbuf(g_decoder);        /* 解除 decoder 的读阻塞 */
             audio_element_abort_output_ringbuf(g_decoder);       /* 解除 decoder 的写阻塞 */
-        }
-        if (g_i2s_writer) {
-            audio_element_abort_input_ringbuf(g_i2s_writer);     /* 解除 i2s 的读阻塞 */
         }
         /* 给 element task 时间从阻塞中返回并执行 close 关闭 fd */
         vTaskDelay(pdMS_TO_TICKS(100));
