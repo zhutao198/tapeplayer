@@ -1018,7 +1018,7 @@ static void update_display(void)
         if (max_scroll < 0) max_scroll = 0;
         if (scroll > max_scroll) scroll = max_scroll;
 
-        char lines[BROWSE_VISIBLE_LINES][24];
+        char lines[BROWSE_VISIBLE_LINES][64];
         int count = total - scroll;
         if (count > BROWSE_VISIBLE_LINES) count = BROWSE_VISIBLE_LINES;
 
@@ -1026,8 +1026,15 @@ static void update_display(void)
             int idx = scroll + i;
             char name[FILENAME_MAX_LEN];
             playlist_get_name(idx, name, sizeof(name));
-            snprintf(lines[i], sizeof(lines[i]), "%s%.21s",
-                     (idx == g_browse_index) ? ">" : " ", name);
+            /* 安全截断: 拷贝到缓冲(预留1字节前缀+1字节\0), 且回退到多字节字符边界,
+               绝不把 UTF-8 多字节字符拦腰切断(否则残首字节会被解码成错误字形)。 */
+            int cap = (int)sizeof(lines[i]) - 2;   /* 预留前缀 + '\0' */
+            int len = 0;
+            while (name[len] && len < cap) len++;
+            while (len > 0 && (name[len] & 0xC0) == 0x80) len--;  /* 丢弃不完整的尾随续字节 */
+            lines[i][0] = (idx == g_browse_index) ? '>' : ' ';
+            memcpy(lines[i] + 1, name, (size_t)len);
+            lines[i][len + 1] = '\0';
         }
         display_show_browse(g_browse_index, total, lines, count);
         return;

@@ -122,7 +122,7 @@ void display_show_volume(int volume);
  * @param lines      预格式化的显示行数组（每行含标记+文件名，如 "> song.mp3"）
  * @param count      行数
  */
-void display_show_browse(int selected, int total, char lines[][24], int count);
+void display_show_browse(int selected, int total, char lines[][64], int count);
 
 /**
  * @brief 统一设置菜单显示 (R049)

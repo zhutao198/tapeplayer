@@ -138,13 +138,13 @@ static uint16_t *s_fmt_canvas_buf   = NULL;
 #define TRACK_CANVAS_X  (8)
 #define TRACK_CANVAS_Y  (24)
 #define TRACK_CANVAS_W  (DISPLAY_WIDTH - 2 * 8)   /* 304 */
-#define TRACK_CANVAS_H  (18)
+#define TRACK_CANVAS_H  (20)   /* vshift=3 后 ASCII 下伸部到 py17, 18px 不够 */
 
 /* R115: 格式行 canvas (支持中文播放模式) */
 #define FMT_CANVAS_X    (8)
 #define FMT_CANVAS_Y    (44)
 #define FMT_CANVAS_W    (274)  /* R115: AB徽章取消, 到x=282, 给SQ徽章留空间 */
-#define FMT_CANVAS_H    (18)
+#define FMT_CANVAS_H    (20)   /* 同上; 44+20=64 恰好贴磁带图上沿, 不重叠 */
 
 /* LVGL UI 对象 */
 static lv_obj_t *g_player = NULL;   // 播放界面容器
@@ -634,49 +634,93 @@ static void cjk_canvas_clear(void)
     for (size_t i = 0; i < n; i++) s_cjk_canvas_buf[i] = bg;
 }
 
+/* 计算 16x16 字形墨迹的水平/底部范围, 供 ASCII 基线对齐与紧凑排布。 */
+static void cjk_glyph_ink_bounds(const uint8_t *src, int *min_c, int *max_c, int *max_r)
+{
+    int mc = 16, xc = -1, mr = -1;
+    for (int r = 0; r < cjk_font_h; r++) {
+        uint8_t b0 = src[r * 2], b1 = src[r * 2 + 1];
+        for (int c = 0; c < 8; c++) if (b0 & (0x80 >> c)) { if (c < mc) mc = c; if (c > xc) xc = c; mr = r; }
+        for (int c = 0; c < 8; c++) if (b1 & (0x80 >> c)) { int cc = 8 + c; if (cc < mc) mc = cc; if (cc > xc) xc = cc; mr = r; }
+    }
+    *min_c = mc; *max_c = xc; *max_r = mr;
+}
+
+/* 在帧缓冲画单个字形:
+   - ASCII(u<0x80): 基线对齐(底部对齐到格底) + 按墨迹宽度紧凑排布(避免重叠/裁切);
+   - CJK: 保持原样(满格 16px)。
+   返回该字形后的 pen x。背景仅在字形槽位内重绘, 不与相邻字形重叠。
+   调用方须先用背景色清场(画布/背景一致)。 */
+static int cjk_draw_glyph(uint16_t *fb, int fb_w, int fb_h, int pen, int y0,
+                          int idx, uint32_t u, uint16_t fg, uint16_t bg)
+{
+    int min_c = 0, max_c = 15, max_r = cjk_font_h - 1;
+    int vshift = 0, left = 0;
+    const uint8_t *src = NULL;
+    if (idx >= 0) {
+        src = cjk_font_raw + (size_t)idx * cjk_font_glyph_bytes;
+        cjk_glyph_ink_bounds(src, &min_c, &max_c, &max_r);
+        /* ASCII: 字库基线烤在 row 12(字身底 row11), 固定 vshift=3 使 ASCII 底(11)+3 == CJK 底(14),
+           任意 y0 下都精确对齐; g/y/p 下伸部(row12-14)+3 落在 py<=y0+17, 不溢出 20px 行画布。
+           不用 (H-1)-max_r 贴底, 否则 g 字身会被顶高、与 a/x 错位。 */
+        if (u < 0x80) { vshift = 3; left = min_c; }
+    }
+    int adv = (u < 0x80) ? ((max_c < min_c) ? 8 : (max_c - min_c + 2)) : cjk_font_w;
+    /* 背景槽(与相邻字形不重叠) */
+    for (int i = 0; i < cjk_font_h; i++) {
+        int py = y0 + i + vshift;
+        if (py < 0 || py >= fb_h) continue;
+        uint16_t *row = fb + (size_t)py * fb_w;
+        for (int px = pen; px < pen + adv; px++)
+            if (px >= 0 && px < fb_w) row[px] = bg;
+    }
+    /* 墨迹 */
+    if (src || idx < 0) {
+        for (int i = 0; i < cjk_font_h; i++) {
+            int py = y0 + i + vshift;
+            if (py < 0 || py >= fb_h) continue;
+            uint8_t b0, b1;
+            if (src) { b0 = src[i * 2]; b1 = src[i * 2 + 1]; }
+            else { bool edge = (i == 0 || i == cjk_font_h - 1); b0 = edge ? 0xFF : 0x80; b1 = edge ? 0xFF : 0x01; }
+            uint16_t *row = fb + (size_t)py * fb_w;
+            for (int c = 0; c < 16; c++) {
+                uint8_t bit = (c < 8) ? (b0 & (0x80 >> c)) : (b1 & (0x80 >> (c - 8)));
+                if (!bit) continue;
+                int px = pen + (c - left);
+                if (px >= 0 && px < fb_w) row[px] = fg;
+            }
+        }
+    }
+    return adv;
+}
+
 /* 通用: 把一行点阵文本画进任意 RGB565 帧缓冲。
    颜色为 LVGL 原生 RGB565 (flush_cb 会对整帧统一 SWAP16)。缺字时画空心方框。 */
 static void cjk_blit_text(uint16_t *fb, int fb_w, int fb_h,
                           int x, int y, const char *utf8, uint16_t fg, uint16_t bg)
 {
     if (!fb || !utf8) return;
-    const int GW = cjk_font_w;
-    const int GH = cjk_font_h;
     int pen = x;
     const char *p = utf8;
     while (*p) {
         uint32_t u = 0; int n = 0;
         if ((*p & 0x80) == 0)         { u = (uint8_t)*p; n = 1; }
-        else if ((*p & 0xE0) == 0xC0) { u = ((uint32_t)(*p & 0x1F) << 6)  | (*(p+1) & 0x3F); n = 2; }
-        else if ((*p & 0xF0) == 0xE0) { u = ((uint32_t)(*p & 0x0F) << 12) | ((*(p+1) & 0x3F) << 6) | (*(p+2) & 0x3F); n = 3; }
+        else if ((*p & 0xE0) == 0xC0) {
+            /* 2 字节: 续字节必须存在且为 10xxxxxx; 否则视为截断/损坏, 跳过该 lead */
+            if ((*(p+1) & 0xC0) == 0x80) { u = ((uint32_t)(*p & 0x1F) << 6) | (*(p+1) & 0x3F); n = 2; }
+            else { p++; continue; }
+        }
+        else if ((*p & 0xF0) == 0xE0) {
+            /* 3 字节: 两个续字节都必须存在且合法; 否则跳过(避免 E8+00+00 误译成 U+8000/耀) */
+            if ((*(p+1) & 0xC0) == 0x80 && (*(p+2) & 0xC0) == 0x80) {
+                u = ((uint32_t)(*p & 0x0F) << 12) | ((*(p+1) & 0x3F) << 6) | (*(p+2) & 0x3F); n = 3;
+            } else { p++; continue; }
+        }
         else { p++; continue; }        /* 非法 lead, 跳过 */
         p += n;
 
         int idx = cjk_unicode_to_glyph_idx(u);
-        for (int i = 0; i < GH; i++) {
-            int py = y + i;
-            if (py < 0 || py >= fb_h) continue;
-            uint8_t b0, b1;
-            if (idx >= 0) {
-                const uint8_t *src = cjk_font_raw + (size_t)idx * cjk_font_glyph_bytes;
-                b0 = src[i * 2];
-                b1 = src[i * 2 + 1];
-            } else {
-                /* 缺字: 空心方框 (首末行全亮, 中间仅左右两列) */
-                bool edge = (i == 0 || i == GH - 1);
-                b0 = edge ? 0xFF : 0x80;
-                b1 = edge ? 0xFF : 0x01;
-            }
-            for (int j = 0; j < 8; j++) {
-                int px = pen + j;
-                if (px >= 0 && px < fb_w) fb[py * fb_w + px] = (b0 & (0x80 >> j)) ? fg : bg;
-            }
-            for (int j = 0; j < 8; j++) {
-                int px = pen + 8 + j;
-                if (px >= 0 && px < fb_w) fb[py * fb_w + px] = (b1 & (0x80 >> j)) ? fg : bg;
-            }
-        }
-        pen += (u < 0x80) ? 12 : GW;  /* ASCII 12px, 中文保持16px */
+        pen += cjk_draw_glyph(fb, fb_w, fb_h, pen, y, idx, u, fg, bg);
         if (pen > fb_w) break;
     }
 }
@@ -736,7 +780,6 @@ static void cjk_fmt_text_ab(const char *utf8)
     const uint16_t fg = (uint16_t)lv_color_to_u16(lv_color_hex(0xb8a4dc));  /* 紫色 */
     const uint16_t fg_yellow = (uint16_t)lv_color_to_u16(lv_color_hex(0xf59e0b));  /* 黄色(同AB徽章) */
     const uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
-    const int GW = cjk_font_w, GH = cjk_font_h;
     int pen = 0;
     const char *p = utf8;
     while (*p) {
@@ -749,29 +792,7 @@ static void cjk_fmt_text_ab(const char *utf8)
         /* A/B 字符用黄色 */
         uint16_t cur_fg = (u == 'A' || u == 'B') ? fg_yellow : fg;
         int idx = cjk_unicode_to_glyph_idx(u);
-        for (int i = 0; i < GH; i++) {
-            int py = 1 + i;
-            if (py < 0 || py >= FMT_CANVAS_H) continue;
-            uint8_t b0, b1;
-            if (idx >= 0) {
-                const uint8_t *src = cjk_font_raw + (size_t)idx * cjk_font_glyph_bytes;
-                b0 = src[i * 2]; b1 = src[i * 2 + 1];
-            } else {
-                bool edge = (i == 0 || i == GH - 1);
-                b0 = edge ? 0xFF : 0x80; b1 = edge ? 0xFF : 0x01;
-            }
-            for (int j = 0; j < 8; j++) {
-                int px = pen + j;
-                if (px >= 0 && px < FMT_CANVAS_W)
-                    s_fmt_canvas_buf[py * FMT_CANVAS_W + px] = (b0 & (0x80 >> j)) ? cur_fg : bg;
-            }
-            for (int j = 0; j < 8; j++) {
-                int px = pen + 8 + j;
-                if (px >= 0 && px < FMT_CANVAS_W)
-                    s_fmt_canvas_buf[py * FMT_CANVAS_W + px] = (b1 & (0x80 >> j)) ? cur_fg : bg;
-            }
-        }
-        pen += (u < 0x80) ? 12 : GW;
+        pen += cjk_draw_glyph(s_fmt_canvas_buf, FMT_CANVAS_W, FMT_CANVAS_H, pen, 0, idx, u, cur_fg, bg);
     }
 }
 
@@ -2246,7 +2267,7 @@ void display_update(player_state_t state, const char *track_name,
     s_disp_update_pending = true;
 }
 
-void display_show_browse(int selected, int total, char lines[][24], int count)
+void display_show_browse(int selected, int total, char lines[][64], int count)
 {
     if (!g_display_initialized || count <= 0) return;
 
@@ -2255,7 +2276,7 @@ void display_show_browse(int selected, int total, char lines[][24], int count)
        改为复用菜单的点阵 canvas 路径: "标题/行/提示" 结构与菜单完全一致,
        直接转调 display_show_menu(安全入口: 只缓存数据+置标志, 由 lvgl_task 持锁绘制)。 */
     char title[32];
-    snprintf(title, sizeof(title), "Browse %d/%d", selected + 1, total);
+    snprintf(title, sizeof(title), "RG2 %d/%d", selected + 1, total);  /* 临时诊断标记: 确认新固件是否运行 */
     /* R111: 浏览项作为 action 类型, 需处理:
        1. lines[i] 含 ">" 或 " " 前缀, 需去掉
        2. 选中行索引 = 带 ">" 前缀的行 (selected是全局索引, 不能直接用)
@@ -2359,14 +2380,17 @@ static void menu_apply_nolock(void)
     const int LIST_Y = 36;
     const int ROW_H  = 18;
     const int IDX_W  = 32;   /* 序号宽度 (两位数需32px) */
+    /* 两遍式: 先画全部选中高亮, 再画文字。否则下一行的高亮矩形(ry-1..ry+16)
+       会擦掉上一行 ASCII 的下伸部(g/y/p 尾笔落在 ry+16..17)。 */
+    for (int i = 0; i < shown; i++) {
+        if (i == s_menu_sel) {
+            int ry = LIST_Y + i * ROW_H;
+            cjk_canvas_fill_rect(8, ry - 1, DISPLAY_WIDTH - 16, ROW_H, hilite);
+        }
+    }
     for (int i = 0; i < shown; i++) {
         int ry = LIST_Y + i * ROW_H;
         bool selected = (i == s_menu_sel);
-
-        /* 选中高亮背景 */
-        if (selected) {
-            cjk_canvas_fill_rect(8, ry - 1, DISPLAY_WIDTH - 16, ROW_H, hilite);
-        }
 
         const menu_cache_item_t *it = &s_menu_items[i];
         uint16_t row_fg = selected ? fg : dim;
