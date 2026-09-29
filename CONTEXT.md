@@ -3,7 +3,7 @@
 > **项目**：ESP32-S3 听书机（磁带机风格音频播放器）  
 > **仓库**：`zhutao198/tapeplayer`（GitHub）  
 > **本地**：`D:\zhutao\audio_player`  
-> **最后更新**：2026-08-26（**🏁 里程碑 v1.0-stable（基于 R094）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置（低采样率 24000Hz 不再变快）+ R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲 + R089 回退 R088 + R090 屏蔽自动 light-sleep（屏幕常亮）+ R091 音量 decoder 软件缩放（弃 ALC）+ R092/R093 音量曲线（线性 gain=level/14）+ R094 修复 FF/REW 跳曲（seek 清 decoder 残留输入缓冲）+ SD 误报移除（健康检查重试+连续失败阈值）。SD 热拔插为已知待办）
+> **最后更新**：2026-09-29（**🏁 字体渲染修复收尾（R120-R121-ter + R121-cleanup）**：浏览中文文件名乱码修复（UTF-8 多字节安全截断 + 续字节校验）+ 拉丁字形 16px 原生 FreeType hinting 重做（基线对齐、g/p/y 下伸部 3px 可辨）+ 清除全部 TEMP DIAG 探针，构建通过。主线已含：多格式 WAV/FLAC/AAC/OGG/Opus(R116)、书签(R114)、A-B 复读(R111)、UI v2 磁带动画(R109)、开机自锁电路 POW_EN(R118/R119)、中文点阵+ASCII 字体(R103-R107)、音量线性曲线(R093)。SD 热拔插仍为已知待办）
 
 ---
 
@@ -142,7 +142,29 @@ git status --short            # 未提交改动
 | R091 | 2026-08-26 | `52f9c70` | **音量改 decoder 软件 PCM 缩放**：i2s ALC（use_alc=true）在 IDF5.x 下 `alc_volume_setup_process` BREAK 崩溃（PC 0x403743c0）→ 弃用；decoder 新增 `g_vol_gain_q15`+`mp3_decoder_set_volume`+ 输出前 Q15 缩放钳位；`apply_volume_alc` 改调 decoder setter；`use_alc` 恢复 false | ✅ |
 | R092 | 2026-08-26 | `b37bdc4` | **音量曲线 0..-50dB**：R091 的 0..-96dB 低档静音、高档步进大(6.9dB)；改 0..-50dB 恒定 3.6dB 步进 | ❌(最低三档仍无声) |
 | R093 | 2026-08-26 | `697c92f` | **音量改线性增益 gain=level/14**：最低三档可闻(1档≈-23dB)、高档步进小，全量程逐档线性可辨 | ✅(用户满意) |
-| R094 | 2026-08-26 | `e50e09e` | **修复 FF/REW 偶发跳曲**（seek 前清 decoder 残留输入缓冲）+ **SD 误报移除**（健康检查重试+连续失败阈值） | ⏳ |
+| R094 | 2026-08-26 | `e50e09e` | **修复 FF/REW 偶发跳曲**（seek 前清 decoder 残留输入缓冲）+ **SD 误报移除**（健康检查重试+连续失败阈值） | ✅ |
+| R101 | 2026-09 | `8f0bc15` | 修复切歌 fd 泄漏(快进快退无声) + MP2 文件方向性跳过 + 中文字体临时回退英文 | ✅ |
+| R101-followup | 2026-09 | `5d39716` | 修复中文字体乱码根因(cmap 错位+stride+度量)，恢复中文 UI | ✅ |
+| R103 | 2026-09 | `c9a3127` | 修复菜单进/退卡死 30s(task_wdt) + 点阵字库中文显示框架 | ✅ |
+| R104 | 2026-09 | `1bd84a2` | 主菜单中文显示成功(方案C: LVGL canvas) + 修复退出菜单黑屏 | ✅ |
+| R105 | 2026-09 | `b79dc19` | 修复曲名回归 + browse 中文点阵化 | ✅ |
+| R106 | 2026-09 | `ccdbd2f` | 修复中文字符框(FATFS UTF-8) + browse 退出卡死(display_clear_msg) | ✅ |
+| R107 | 2026-09 | `7587073` | 播放界面非中文文案改 ASCII 字体(montserrat_14)，消除二维码乱码 | ✅ |
+| R108 | 2026-09 | `db3f375` | UI v2 对齐(低风险)：状态栏重排+绿进度条+格式行 | ✅ |
+| R109 | 2026-09 | `5d518a6` | 卷轴动画流畅化 + UI v2 重构(盒壳背景+64px 卷轴+底部6键图标条) + 电池 ADC 缓存 + SPI 20MHz | ✅ |
+| R110 | 2026-09 | `f053504` | 卷轴橙色+2xSSAA 抗锯齿 + 盒壳 2xSSAA + 布局重排 + 状态栏回退简洁 | ✅ |
+| R111 | 2026-09 | `3014472` | A-B 复读混合式(长按 PLAY 标记) + 暂停态 scrub 不 resume + 标记 B seek-to-A + 音量 OSD 浮层 | ✅ |
+| R112 | 2026-09 | `177e483` | menu UI 对齐 + browse 交互修复 | ✅ |
+| R113 | 2026-09 | `9b4adca` | A-B 菜单移除 + ASCII 字体重构(Arial 15px 下对齐) + 按键音死机修复 | ✅ |
+| R114 | 2026-09 | `ba33f22` | 书签功能实现(菜单内添加/跳转, NVS 持久化, 每文件 10 个) | ✅ |
+| R115 | 2026-09 | `34d09bc` | 格式行中文化 + 关机系统完善 + 开机体验优化 | ✅ |
+| R116 | 2026-09 | `345f9e8` | 多格式支持(WAV/FLAC/AAC/OGG/Opus) + non-MP3 decoder 重置保护 + 移除 .m4a + 回退 BT 音箱 | ✅ |
+| R117 | 2026-09 | `9b99baf` | WAV PCM 透传 + non-MP3 音量 + 全格式 A-B/scrub 修复 | ✅ |
+| R118 | 2026-09 | `c70e4b7` | 开机早阶段 latch POW_EN(IO40) 高电平(ESP_SYSTEM_INIT_FN) + 自锁电路原理图更新 | ✅ |
+| R119 | 2026-09-23 | `25a297b` | bootloader 强制拉接 early_pow，开机短按即自锁 POW_EN(IO40) | ✅ |
+| R120 | 2026-09-28 | `39f4c63` | 浏览中文文件名乱码修复(UTF-8 多字节安全截断 + 续字节校验)，修复"莲→耀" | ✅ |
+| R121 | 2026-09-28 | `39f4c63` | 拉丁字形基线对齐 + 笔画断点修复；Arial→Verdana→16px 原生 hinting 重做 | ✅ |
+| R121-cleanup | 2026-09-29 | `39f4c63` | 移除字库修复期全部 TEMP DIAG 探针(验证后删除) + 构建通过 | ✅ |
 
 > **🏁 里程碑 `v1.0-stable`（2026-08-26，基于 R094）**：libhelix 根治 PV-MP3 崩溃 + 坏帧跳曲保护 + I2S 时钟按文件真实采样率设置 + R084 修栈溢出 + R085 进度条/计时器重叠 + R086 seek rb 重置 + R087 pause/resume 跳曲 + R089 回退 R088 + R090 屏蔽 light-sleep（屏幕常亮）+ R091 音量 decoder 软件缩放（弃 ALC）+ R092/R093 音量曲线（线性 gain=level/14）+ R094 修复 FF/REW 跳曲（seek 清 decoder 残留缓冲）+ SD 误报移除（健康检查重试）。SD 热拔插为已知待办。回滚：`git checkout v1.0-stable` / `git checkout R094`。
 

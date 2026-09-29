@@ -45,7 +45,11 @@
 | 2026-08-21 | R061 IDF freertos patch（ADF MP3 decoder 可编入）；R062 播放无限重启修复；R063 LVGL 死锁修复 + 无声诊断；R065 **首次开机无声根因（I2S 引脚 -1 覆盖）修复**；R066 暂停切歌野指针；R067 应用层 ID3v2 skip；R068 terminate + i2s 重建 | ✅ commit `59e746f` `3ee8208`（fix-r053-audio 分支）|
 | 2026-08-22 | R069–R075 崩溃攻坚：定位 ESP-ADF 静态库 MP3 decoder 内崩（项目代码无法修）；R072 清理无效修复保留 R067+R068+R071；R073 splash UX；R075 **double-free 根因**（stop 二次 deinit）定位 | ✅ commit `dd3e93e` |
 | 2026-08-22~24 | R076 **MP3 解码器崩溃根除**：coredump 反解确认 PV-MP3 闭源库崩 → 切换开源 esp_audio_codec（esp_mp3_dec / simple_dec，mpeg_parser 切帧）；同时引入蓝牙音箱(A2DP Sink) + 中文 TTF 字体分区(freetype) + 统一菜单 | 🚧 commit `c53662e`（R076-CODEC-* 系列）；待烧录验证 |
-| 2026-08-31 | **R097 里程碑**：拔卡死机（display_set_sd_present 标志位化）+ 单声道语速 2x（decoder 上混）+ 短按 5s→2s + 嗅探按帧长加固 | | ⏳（commit R097 + tag 待提交） |
+| 2026-08-31 | **R097 里程碑**：拔卡死机（display_set_sd_present 标志位化）+ 单声道语速 2x（decoder 上混）+ 短按 5s→2s + 嗅探按帧长加固 | | ✅（已随 R120-R121 系列提交入 main） |
+| 2026-09 | R101–R119 主线迭代（经 `r119-bootloader-pow` 合并入 main）：中文点阵/LVGL canvas 显示框架(R103-R107)、UI v2 磁带动画与卷轴重构(R108-R110)、A-B 复读(R111)、书签(R114)、多格式 WAV/FLAC/AAC/OGG/Opus(R116/R117)、开机自锁电路 POW_EN 早阶段 latch(R118/R119)；含多项 bug 修复 | | ✅ commit `8f9acb3` 等 |
+| 2026-09-23 | R119：bootloader 强制拉接 early_pow，开机短按即自锁 POW_EN(IO40) | | ✅ commit `25a297b` |
+| 2026-09-28 | R120–R121-ter：浏览中文文件名乱码修复（UTF-8 多字节安全截断 + 续字节校验，"莲→耀"根治）+ 拉丁字形基线对齐/笔画断点 + Arial→Verdana→16px 原生 FreeType hinting 重做（g/p/y 下伸部 3px 可辨） | | ✅ commit `39f4c63` |
+| 2026-09-29 | R121-cleanup：移除字库修复期全部 TEMP DIAG/MARKER/DNAME_ALL/GLYPH/BLIT/BROWSE_HEX 探针（验证后删除）+ 构建通过 | | ✅ commit `39f4c63` |
 
 ---
 
