@@ -180,6 +180,8 @@ static uint32_t browse_repeat_interval(uint32_t hold_ms)
 
 static sdmmc_card_t   *g_sd_card = NULL;  // SD 鍗″彞鏌?
 static uint64_t    g_last_sd_check_us = 0;
+static uint64_t    g_last_mount_attempt_us = 0;  /* R131g: 挂载失败后的下次重试时刻, 避免主循环每轮同步阻塞挂载致 TWDT 死机 */
+#define SD_MOUNT_RETRY_US     (5 * 1000000)   /* 挂载失败每 5s 重试一次, 而非每轮主循环 */
 static int         g_sd_read_fail_cnt = 0;  // R094: SD 健康检查连续失败计数，避免瞬时 CRC 误判移除
 #define SD_READ_FAIL_THRESHOLD   2          // 连续 N 次(每次含重试)读失败才判为移除
 static bool        g_sd_inserted = false; // SD 鍗″湪浣?鍘绘姈鍚庢彁浜ょ姸鎬?
@@ -1092,7 +1094,7 @@ static bool mount_sd_card(void)
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = SD_SPI_HOST;
-    host.max_freq_khz = 10000;  /* R117: 20MHz->10MHz, reduce SD SPI CRC errors */  // 鏄惧紡纭锛圫DSPI_HOST_DEFAULT 宸茶浣嗕繚鐣欐樉寮忥級
+    host.max_freq_khz = 20000;  /* R131e: 10MHz->20MHz 提升 SD 读吞吐(原 10MHz 仅 ~240KB/s, 喂不饱 32bit 48k/96k); 顺序读 CRC 风险远低于 R117 的 seek 打断场景, 若 96k 重现 data CRC failed 再降回 */
 
     sdspi_device_config_t device_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
     device_cfg.host_id = SD_SPI_HOST;
@@ -1367,8 +1369,26 @@ void app_enter_bt_speaker(void)
 }
 #endif
 
+/* R124: 打印精准构建信息（真实构建时间 + git 版本），取代 IDF 易过期的 Compile time */
+extern "C" void build_info_print(void);
+
 extern "C" void app_main(void)
 {
+    /* R124: 第一时间打印精准构建信息，便于确认烧录的固件是否为最新 */
+    build_info_print();
+
+    /* R126: 提升 main 任务优先级，消除被音频 element 任务饿死导致的 WAV 卡死。
+       app_main 默认优先级为 1(ESP_TASK_MAIN_PRIO)，而 ADF 的 audio_element
+       (i2s_stream / fatfs_stream 默认、wav_bitdepth_conv 显式) 任务优先级均为 5，
+       lvgl 任务为 8。WAV 是纯 PCM 搬运，conv/file/i2s 三个 element 任务计算量极小、
+       几乎不主动让出 CPU，优先级 1 的 main 被长期饿死 → 无法喂 task_wdt(30s 触发
+       Guru 级告警)、UI 时间不动、按键无反应；WAV 自然结束后 element 空闲 main 才
+       被调度("自动切歌后恢复正常")。play() 看似阻塞 ~10s 也是 main 在
+       audio_pipeline_run 之后被高优先级 element 抢占、无法继续返回造成的饿死式卡顿。
+       将 main 提升到 6(高于音频 5、低于 lvgl 8)，确保 main 始终能被调度，从而
+       正常喂 WDT、刷新 UI、响应按键，且 play() 不再被饿死式卡住。 */
+    vTaskPrioritySet(NULL, 6);
+
     /* 开机自锁: app_main 第一行立即拉高 POW_EN(IO40), 早于任何外设/屏幕初始化,
        确保电源在屏幕亮起前就已自锁(双保险, 配合 R118 的 SECONDARY 阶段 early fn)。 */
     {
@@ -1658,7 +1678,8 @@ extern "C" void app_main(void)
 
             if (g_sd_cd_stable_cnt >= 3) {
                 bool present = (lvl == SD_CD_ACTIVE_LEVEL);
-                if (present && (g_sd_card == NULL)) {
+                if (present && (g_sd_card == NULL) && (esp_timer_get_time() >= g_last_mount_attempt_us)) {
+                    g_last_mount_attempt_us = esp_timer_get_time() + SD_MOUNT_RETRY_US;
                     // 鎻掑叆浜嬩欢: 鎸傝浇 + 鎵弿
                     ESP_LOGI(TAG, "SD card inserted");
                     if (mount_sd_card()) {
@@ -1730,8 +1751,26 @@ extern "C" void app_main(void)
             }
         }
 
-        // 9. 鐪嬮棬鐙楀浣?
+        // 9. 看门狗复位
         esp_task_wdt_reset();
+
+        /* R127-diag: 检测 lvgl 是否停滞(UI 卡死根因定位)。
+           仅当 lvgl 真正停滞(loop 未推进)时才告警, 平时不打心跳(避免刷屏)。 */
+        {
+            extern volatile uint32_t g_lvgl_diag_stage;
+            extern volatile uint32_t g_lvgl_diag_loop;
+            static uint32_t last_loop = 0;
+            static uint64_t td = 0;
+            uint64_t nn = esp_timer_get_time();
+            if (nn - td >= 1000000) {
+                td = nn;
+                if (g_lvgl_diag_loop == last_loop) {
+                    ESP_LOGE(TAG, "DIAG LVGL STALL stage=%u freeheap=%u",
+                             g_lvgl_diag_stage, (unsigned)esp_get_free_heap_size());
+                }
+                last_loop = g_lvgl_diag_loop;
+            }
+        }
 
         // 10. 璇锋眰鏇存柊鏄剧ず灞忥紙瀹為檯鐢?lvgl_task 鎸侀攣璋冪敤 update_display锛岄伩鍏?main 琚?LVGL mutex 闃诲瓒呮椂锛?
         display_request_main_tick();

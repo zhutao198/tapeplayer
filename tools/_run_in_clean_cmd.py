@@ -90,11 +90,15 @@ python {IDF_DIR}\components\espcoredump\espcoredump.py --port COM7 --baud 921600
 """)
 
 def cmd_addr2line() -> int:
-    """反解崩溃 PC 0x403743c0 到函数/行（IRAM 地址，用 elf 直接 addr2line）"""
+    """反解 TWDT backtrace 的 app 空间 PC 到函数/行"""
+    pcs = " ".join([
+        "0x4201f016", "0x4201f0c9", "0x4201f4a2", "0x4202132e", "0x4202176c",
+        "0x42021385", "0x420219c8", "0x42021b26", "0x42021c60", "0x42021e86",
+        "0x42021fbb", "0x42029805", "0x420298b5", "0x42015b83", "0x40380219",
+    ])
     return run(rf"""cd /D {PROJECT_DIR}
 call {IDF_DIR}\export.bat >nul 2>&1
-xtensa-esp32s3-elf-addr2line.exe -e build\audiobook_player.elf -a -f 0x403743c0 > {PROJECT_DIR}\debug\addr2line.log 2>&1
-xtensa-esp32s3-elf-addr2line.exe -e build\audiobook_player.elf -f -C -p 0x403743c0 >> {PROJECT_DIR}\debug\addr2line.log 2>&1
+xtensa-esp32s3-elf-addr2line.exe -e build\audiobook_player.elf -a -f -C -p {pcs} > {PROJECT_DIR}\debug\addr2line.log 2>&1
 """)
 
 def cmd_coredump_save() -> int:

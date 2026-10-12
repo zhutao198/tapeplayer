@@ -36,10 +36,12 @@
 #include "mp3_decoder.h"
 #include "mp3_decoder_esp_codec.h"   // R076-CODEC-7: 开源 MP3 解码器替代闭源 PV-MP3
 #include "mp3_decoder_libhelix.h"    // R080: Helix MP3 替代闭源 PV-MP3（不崩+坏帧跳过）
-#include "aac_decoder.h"
+#include "aac_decoder_esp_codec.h"   // R122-AAC-CODEC: 开源 AAC 解码器替代闭源 aac_decoder
 #include "flac_decoder.h"
+#include "flac_decoder_esp_codec.h"   // R122-FLAC-CODEC: 开源 FLAC 解码器替代闭源 flac_decoder(崩)
 #include "ogg_decoder.h"
 #include "wav_decoder.h"
+#include "wav_bitdepth_conv.h"   // R123-WAV: WAV 原始 PCM(16/24/32bit) -> 16bit 转换 element
 #include "esp_timer.h"
 #include "filter_resample.h"
 #include "driver/i2s.h"        // 遗留 I2S 驱动: i2s_set_pin 显式绑定 GPIO
@@ -61,7 +63,12 @@ static const char *TAG = "audio_player";
 static audio_pipeline_handle_t  g_pipeline = NULL;
 static audio_element_handle_t   g_fatfs_reader = NULL;
 static audio_element_handle_t   g_decoder = NULL;
+static audio_element_handle_t   g_flac_conv = NULL;    // R122-FLAC-16BIT: FLAC 24bit->16bit 转换 element (复用 WAV 已验证路径)
 static audio_element_handle_t   g_i2s_writer = NULL;   // R068：每次 play 重建（弃用 R036-001 跨曲目复用）
+
+static uint32_t     g_wav_data_off = 0;  // R123-WAV: WAV data 块偏移(跳过头部用 + 时长修正)
+static bool         g_is_wav = false;     // R123-WAV: 当前曲目是否为 WAV(变速/采样率切换时据此保持 16bit I2S)
+static bool         g_is_flac = false;    // R122-FLAC-16BIT: 当前曲目是否为 FLAC(24bit 走 16bit 转换, 规避 I2S 24bit 越界)
 
 static bool         g_is_playing = false;
 static bool         g_is_paused = false;
@@ -81,6 +88,8 @@ static int          g_id3_skip_bytes = 0;
 static char         g_seek_path[256] = {0};  // R085: 保存当前曲目真实路径，供 seek 帧对齐扫描使用
 static int          g_current_sample_rate = AUDIO_SAMPLE_RATE;  // R076-CODEC: I2S 当前采样率缓存 (去重 i2s_set_clk 调用)
 static int          g_base_sample_rate   = AUDIO_SAMPLE_RATE;  // R083: 当前曲目真实基准速率(供 speed 倍率计算)
+static int          g_file_bits = 16;                    // R122-WAV: 当前曲目真实位深(供 speed 变速保持，避免 24bit 退回 16bit)
+static int          g_file_ch   = 2;                     // R122-WAV: 当前曲目真实声道(供 speed 变速保持)
 
 
 static uint64_t     g_play_start_us = 0;               // 本次播放起始（pause/resume 时重置）
@@ -210,8 +219,8 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps
 }
 
 
-/* R116: WAV sample rate sniff from RIFF/WAVE header */
-static int wav_sniff_sample_rate(const char *path, int *channels_out)
+/* R116: WAV sample rate/channels/bits sniff from RIFF/WAVE header */
+static int wav_sniff_sample_rate(const char *path, int *channels_out, int *bits_out)
 {
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
@@ -222,7 +231,84 @@ static int wav_sniff_sample_rate(const char *path, int *channels_out)
     if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) return 0;
     int channels = hdr[22] | (hdr[23] << 8);
     int rate = hdr[24] | (hdr[25] << 8) | (hdr[26] << 16) | (hdr[27] << 24);
+    int bits = hdr[34] | (hdr[35] << 8);
     if (channels_out) *channels_out = channels;
+    if (bits_out)     *bits_out     = bits;
+    return rate;
+}
+
+/* R123-WAV: 完整解析 WAV 头，返回采样率/声道/位深，并定位 data 块起始偏移。
+   跳过 RIFF/fmt/data 等所有头部块，保证 PCM 采样对齐（避免 L/R 错位与起始爆音），
+   也用于准确估算时长（头部字节不计入音频数据量）。 */
+static int wav_parse_header(const char *path, int *channels_out, int *bits_out, uint32_t *data_off_out, int *is_float_out)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    uint8_t hdr[12];
+    if (fread(hdr, 1, 12, fp) != 12) { fclose(fp); return 0; }
+    if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) { fclose(fp); return 0; }
+    int rate = 0, ch = 0, bits = 0;
+    int is_float = 0;
+    uint32_t data_off = 0;
+    bool got_fmt = false, got_data = false;
+    uint8_t chunk[8];
+    while (fread(chunk, 1, 8, fp) == 8) {
+        uint32_t sz = chunk[4] | (chunk[5] << 8) | (chunk[6] << 16) | (chunk[7] << 24);
+        if (memcmp(chunk, "fmt ", 4) == 0) {
+            int read_n = (sz < 40) ? (int)sz : 40;
+            uint8_t f[40];
+            if (fread(f, 1, read_n, fp) == (size_t)read_n) {
+                int fmt_tag = f[0] | (f[1] << 8);   /* 1=PCM, 3=IEEE float, 0xFFFE=EXTENSIBLE */
+                ch   = f[2] | (f[3] << 8);
+                rate = f[4] | (f[5] << 8) | (f[6] << 16) | (f[7] << 24);
+                int byterate = f[8] | (f[9] << 8) | (f[10] << 16) | (f[11] << 24);
+                bits = f[14] | (f[15] << 8);
+                is_float = 0;
+                if (fmt_tag == 3) {
+                    is_float = 1;
+                } else if (fmt_tag == 0xFFFE && read_n >= 40) {
+                    /* R131: WAVEFORMATEXTENSIBLE 布局: cbSize@16 wValidBits@18 dwChannelMask@20
+                       SubFormat GUID@24(前4字节=真实format)。旧代码误从@22读, 偏移错2字节。 */
+                    int sub_fmt = f[24] | (f[25] << 8) | (f[26] << 16) | (f[27] << 24);
+                    int valid_bits = f[18] | (f[19] << 8);
+                    if (sub_fmt == 3) is_float = 1;
+                    /* 真 24-in-32(有效位宽 < 容器位宽)时收窄到有效位宽 */
+                    if (valid_bits > 0 && valid_bits < bits) bits = valid_bits;
+                    ESP_LOGI(TAG, "R131: EXTENSIBLE sub_fmt=0x%08x valid_bits=%d", sub_fmt, valid_bits);
+                }
+                /* R131b: 头部 bits 字段可能与实际打包不符(如 24bit 打包却标 32bit, 导致 conv 按 4
+                   字节/样本错位读取→杂音)。nAvgBytesPerSec 反映真实打包字节数, 据此反推真实位深。 */
+                int bits_hdr = bits;
+                if (byterate > 0 && rate > 0 && ch > 0) {
+                    int frame = byterate / rate;           /* 每帧字节数 */
+                    if (frame > 0 && (frame % ch) == 0) {
+                        int bps = frame / ch;              /* 每样本字节数: 2/3/4 */
+                        if      (bps == 2) bits = 16;
+                        else if (bps == 3) bits = 24;
+                        else if (bps == 4) bits = 32;
+                    }
+                }
+                ESP_LOGI(TAG, "R131: fmt_tag=0x%04x hdr_bits=%d byterate=%d -> bits=%d is_float=%d",
+                         fmt_tag, bits_hdr, byterate, bits, is_float);
+                got_fmt = true;
+            }
+            if (sz > (uint32_t)read_n) fseek(fp, (long)(sz - read_n), SEEK_CUR);
+        } else if (memcmp(chunk, "data", 4) == 0) {
+            long pos = ftell(fp);
+            if (pos >= 0) data_off = (uint32_t)pos;
+            got_data = true;
+            break;
+        } else {
+            if (sz & 1) sz++;   // WAV 块按字对齐
+            fseek(fp, (long)sz, SEEK_CUR);
+        }
+    }
+    fclose(fp);
+    if (!got_fmt || !got_data) return 0;
+    if (channels_out) *channels_out = ch;
+    if (bits_out)     *bits_out     = bits;
+    if (data_off_out) *data_off_out = data_off;
+    if (is_float_out) *is_float_out = is_float;
     return rate;
 }
 
@@ -265,19 +351,127 @@ static bool aac_probe_is_adts(const char *path)
     return false;
 }
 
+/* R122-FLAC: 解析 FLAC STREAMINFO 精确时长（total_samples / sample_rate），
+   替代固定 64 bytes/ms 估算（对 24bit/48k FLAC 严重偏低，进度条虚长→曲终被误判"切割"）。
+   返回时长(ms)，失败返回 0。 */
+static int flac_parse_duration_ms(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    uint8_t buf[65536];
+    size_t n = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    if (n < 8) return 0;
+    int off = -1;
+    for (size_t i = 0; i + 4 <= n; i++) {           // 定位 'fLaC'（容错：跳过前置 ID3v2 等）
+        if (buf[i] == 'f' && buf[i+1] == 'L' && buf[i+2] == 'a' && buf[i+3] == 'C') {
+            off = (int)i; break;
+        }
+    }
+    if (off < 0) return 0;
+    size_t idx = (size_t)off + 4;                   // 第一个 metadata block 头
+    if (idx + 4 > n) return 0;
+    uint8_t b0  = buf[idx];
+    int    type = b0 & 0x7F;
+    uint32_t len = ((uint32_t)buf[idx+1] << 16) | ((uint32_t)buf[idx+2] << 8) | buf[idx+3];
+    if (type != 0 || len < 34 || idx + 4 + len > n) return 0;   // 只要 STREAMINFO
+    const uint8_t *d = buf + idx + 4;
+    uint32_t sample_rate = ((uint32_t)d[10] << 12) | ((uint32_t)d[11] << 4) | (d[12] >> 4);
+    uint64_t total = ((uint64_t)(d[13] & 0x0F) << 32)
+                   | ((uint32_t)d[14] << 24) | ((uint32_t)d[15] << 16)
+                   | ((uint32_t)d[16] << 8) | d[17];
+    if (sample_rate == 0 || total == 0) return 0;
+    return (int)(total * 1000 / sample_rate);
+}
+
+/* R122-FLAC: 从 STREAMINFO 取真实采样率（FLAC 无 sniff 会令 i2s 锁 48000，把 44.1k 放快 ~1.09x）。
+   与 flac_parse_duration_ms 共用 STREAMINFO 解析。 */
+static int flac_sniff_sample_rate(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    uint8_t buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    if (n < 8) return 0;
+    int off = -1;
+    for (size_t i = 0; i + 4 <= n; i++) {
+        if (buf[i] == 'f' && buf[i+1] == 'L' && buf[i+2] == 'a' && buf[i+3] == 'C') { off = (int)i; break; }
+    }
+    if (off < 0) return 0;
+    size_t idx = (size_t)off + 4;
+    if (idx + 4 > n) return 0;
+    int type = buf[idx] & 0x7F;
+    uint32_t len = ((uint32_t)buf[idx+1] << 16) | ((uint32_t)buf[idx+2] << 8) | buf[idx+3];
+    if (type != 0 || len < 34 || idx + 4 + len > n) return 0;
+    const uint8_t *d = buf + idx + 4;
+    uint32_t sample_rate = ((uint32_t)d[10] << 12) | ((uint32_t)d[11] << 4) | (d[12] >> 4);
+    return (int)sample_rate;
+}
+
+/* R122-FLAC-16BIT: 从 STREAMINFO 取真实位深(bits per sample)，供位深转换 element 配置 src_bits。
+   与 flac_sniff_sample_rate 共用 'fLaC' 定位逻辑；bits-per-sample index 在 STREAMINFO 第 12 字节 bit[3:1]。 */
+static int flac_sniff_bits(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 16;
+    uint8_t buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    if (n < 8) return 16;
+    int off = -1;
+    for (size_t i = 0; i + 4 <= n; i++) {
+        if (buf[i] == 'f' && buf[i+1] == 'L' && buf[i+2] == 'a' && buf[i+3] == 'C') { off = (int)i; break; }
+    }
+    if (off < 0) return 16;
+    size_t idx = (size_t)off + 4;
+    if (idx + 4 > n) return 16;
+    int type = buf[idx] & 0x7F;
+    uint32_t len = ((uint32_t)buf[idx+1] << 16) | ((uint32_t)buf[idx+2] << 8) | buf[idx+3];
+    if (type != 0 || len < 34 || idx + 4 + len > n) return 16;
+    const uint8_t *d = buf + idx + 4;
+    // R122-FLAC-16BIT: 正确提取 STREAMINFO 的 5-bit bits-per-sample 字段。
+    // 布局(d 指向 STREAMINFO data 起点): d[12] 的 bit[0] = 位深 index 最高位,
+    // d[13] 的 bit[7:4] = 位深 index 低 4 位; 实际位深 = index + 1。
+    // 旧实现误取 d[12] bit[3:1](那是声道数-1) 导致 24bit 被识别成 8bit, 使 conv 错位越界崩溃。
+    int bps_index = ((d[12] & 0x01) << 4) | (d[13] >> 4);
+    int bits = bps_index + 1;
+    if (bits < 8 || bits > 32) bits = 16;   // 非法值兜底
+    return bits;
+}
+
+/* R122-AAC: 从 ADTS 帧头取采样率（AAC 无嗅探会令 i2s 锁 48000，把 44.1k 放快 ~1.09x，与 FLAC 同因）。
+   与 aac_probe_is_adts 共用 ADTS 同步字扫描。采样率索引表见 ISO/IEC 13818-7 Table 8.2。 */
+static const int kAacSampRateTable[16] = {
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
+    16000, 12000, 11025, 8000, 7350, 0, 0, 0
+};
+static int aac_sniff_sample_rate(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    uint8_t buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    if (n < 4) return 0;
+    for (size_t i = 0; i + 4 <= n; i++) {
+        if (buf[i] == 0xFF && (buf[i+1] & 0xF0) == 0xF0) {   // ADTS 同步字 0xFFF (layer=0)
+            int idx = (buf[i+2] >> 2) & 0x0F;
+            if (idx < 16 && kAacSampRateTable[idx] > 0) return kAacSampRateTable[idx];
+        }
+    }
+    return 0;
+}
+
 static audio_element_handle_t create_decoder(const char *path)
 {
     const char *ext = get_file_ext(path);
 
     mp3_decoder_cfg_t  mp3_cfg  = DEFAULT_MP3_DECODER_CONFIG();
-    aac_decoder_cfg_t  aac_cfg  = DEFAULT_AAC_DECODER_CONFIG();
-    flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();
     ogg_decoder_cfg_t  ogg_cfg  = DEFAULT_OGG_DECODER_CONFIG();
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
-    /* R117: FLAC/AAC default out_rb only 2KB (11ms) -> underflow clicking.
-       Bump to 16KB. Keep task on CPU0 (CPU1 is lvgl, would starve decoder prio 5). */
-    aac_cfg.out_rb_size  = 16 * 1024;
-    flac_cfg.out_rb_size = 16 * 1024;
+    /* R117: AAC 输出 ringbuffer 用 16KB 避免欠载(见 DEFAULT_AAC_DECODER_ESP_CODEC_CONFIG)。
+       (FLAC/AAC 均已改用 esp_codec 开源解码器, 见 flac_decoder_esp_codec.c / aac_decoder_esp_codec.c) */
 
     if (strcasecmp(ext, ".mp3") == 0) {
         // R080: 换 Helix MP3 解码器（chmorgan/esp-libhelix-mp3, Apache-2.0）替代闭源 PV-MP3。
@@ -291,11 +485,15 @@ static audio_element_handle_t create_decoder(const char *path)
             ESP_LOGE(TAG, "Using AAC decoder: rejected (unsupported encapsulation)");
             return NULL;
         }
-        ESP_LOGI(TAG, "Using AAC decoder");
-        return aac_decoder_init(&aac_cfg);
+        ESP_LOGI(TAG, "Using AAC decoder (esp_codec, R122-AAC-CODEC)");
+        return aac_decoder_esp_codec_init(NULL);
     } else if (strcasecmp(ext, ".flac") == 0) {
-        ESP_LOGI(TAG, "Using FLAC decoder");
-        return flac_decoder_init(&flac_cfg);
+        ESP_LOGI(TAG, "Using FLAC decoder (esp_codec, R122-FLAC-CODEC)");
+        /* R122-FLAC-CODEC: 用 esp_audio_codec 的开源 FLAC 解码器(simple_dec 路径)
+           替代 ADF 闭源 flac_decoder —— 闭源解码器在 16/24bit 上均有内部 PCM 缓冲越界,
+           污染 PSRAM/LVGL 导致 Guru Meditation, 无法 patch。新解码器与已验证 MP3 同源,
+           正确输出 16/24bit 并上报 music_info, 彻底消除崩溃。 */
+        return flac_decoder_esp_codec_init(NULL);
     } else if (strcasecmp(ext, ".ogg") == 0 || strcasecmp(ext, ".opus") == 0) {
         ESP_LOGI(TAG, "Using OGG/OPUS decoder");
         return ogg_decoder_init(&ogg_cfg);
@@ -396,6 +594,29 @@ bool audio_player_play(const char *filepath)
 
     // 3. 创建解码器（WAV 格式返回 NULL = PCM 直通，不需要解码器）
     bool is_wav = (strcasecmp(get_file_ext(filepath), ".wav") == 0);
+    bool is_flac = (strcasecmp(get_file_ext(filepath), ".flac") == 0);
+    g_is_wav = is_wav;   // R123-WAV: 记录当前格式，变速/采样率切换时保持 16bit I2S
+    g_is_flac = is_flac; // R122-FLAC-16BIT: 记录当前格式，强制 16bit I2S 路径
+    g_flac_conv = NULL;  // R122-FLAC-16BIT: 每首重新挂接; 上一首的 conv 已由 stop 销毁
+
+    // R136（前置拒绝，根治 R135 仍崩）：在创建 pipeline/file/decoder/i2s 之前先嗅探 FLAC 位深，
+    // 非 16bit 直接拒绝并 return，**绝不创建任何 element**。原因：R135 把拒绝分支改为只调
+    // audio_pipeline_deinit，看似干净，但 24bit 的 pipeline 处于"已 register 未 run"态，裸 deinit
+    // 可能让 esp_codec FLAC 元素的内部 ringbuf/buffer 释放不完整 → 堆元数据损坏 → 紧随其后的 16bit
+    // FLAC 从同一堆分到坏块、运行越界踩 LVGL(Guru Meditation @ lv_refr)。提前拒绝使 24bit 分支
+    // 完全不碰堆，根除该污染。若改后 16bit 续播仍崩，则根因是 FLAC 解码器 16bit 本身(转 C 方案)。
+    if (is_flac) {
+        const char *flac_path = strstr(filepath, "://");
+        const char *real_flac = flac_path ? flac_path + 3 : filepath;
+        if (real_flac[0] == '/' && real_flac[1] == '/') real_flac++;
+        int flac_bits_pre = flac_sniff_bits(real_flac);
+        if (flac_bits_pre != 16) {
+            ESP_LOGW(TAG, "R122-FLAC-16BIT: %d-bit FLAC rejected (pre-pipeline, zero heap touch); only 16bit supported", flac_bits_pre);
+            display_toast("FLAC must be\n16bit\ntranscode pls");
+            return false;
+        }
+    }
+
     g_decoder = create_decoder(filepath);
     if (!g_decoder && !is_wav) {
         ESP_LOGE(TAG, "Failed to create decoder");
@@ -469,29 +690,8 @@ bool audio_player_play(const char *filepath)
         return false;
     }
 
-    // 5. 链接管道: WAV=file→i2s (PCM直通), 其他=file→decoder→i2s
-    const char *link_tags[3] = {"file", "decoder", "i2s"};
-    int link_count = is_wav ? 2 : 3;
-    if (is_wav) {
-        link_tags[0] = "file";
-        link_tags[1] = "i2s";
-    }
-    esp_err_t link_err = audio_pipeline_link(g_pipeline, link_tags, link_count);
-    if (link_err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to link pipeline (0x%x)", link_err);
-        audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
-        if (g_decoder) audio_pipeline_unregister(g_pipeline, g_decoder);
-        audio_pipeline_unregister(g_pipeline, g_i2s_writer);
-        audio_element_deinit(g_fatfs_reader);
-        if (g_decoder) audio_element_deinit(g_decoder);
-        audio_element_deinit(g_i2s_writer);
-        g_fatfs_reader = NULL;
-        g_decoder = NULL;
-        g_i2s_writer = NULL;
-        audio_pipeline_deinit(g_pipeline);
-        g_pipeline = NULL;
-        return false;
-    }
+    // 5. 链接管道：移到格式嗅探之后（R123-WAV 需在 WAV 解析后创建位深转换 element 并复用
+    //    "decoder" 槽位，file→decoder→i2s 三元素链接统一在此处完成）。
 
     // 6. 设置文件 URI
     audio_element_set_uri(g_fatfs_reader, filepath);
@@ -501,6 +701,8 @@ bool audio_player_play(const char *filepath)
     // - i2s 时钟改为 48000Hz（MAX98357A 支持 8k-96kHz；PV-MP3 在 44.1kHz 路径可能有 bug 触发 BREAK）
     g_id3_skip_bytes = 0;  // R076-CODEC: 保留用于 seek 修正，但不再手动跳过
     int file_rate = AUDIO_SAMPLE_RATE;  // R083: 默认基准 48000，下述 mp3 会嗅探真实速率
+    int file_bits = 16;                 // R122-WAV: WAV 直通用真实位深(默认16)；解码格式恒16
+    int file_ch   = 2;                  // R122-WAV: WAV 直通用真实声道数(默认2)
     int bitrate_kbps = 0;               // R085: 嗅探到的真实码率，用于准确估算 duration
     /* R117: set g_seek_path for ALL formats (MP3 frame-align, WAV sample-align).
        Previously only MP3 set it, so WAV 4-byte alignment never triggered -> L/R swap noise. */
@@ -563,13 +765,120 @@ bool audio_player_play(const char *filepath)
         const char *wav_path = strstr(filepath, "://");
         const char *real_wav = wav_path ? wav_path + 3 : filepath;
         if (real_wav[0] == '/' && real_wav[1] == '/') real_wav++;
-        int wav_ch = 2;
-        int wav_rate = wav_sniff_sample_rate(real_wav, &wav_ch);
+        int wav_ch = 2, wav_bits = 16;
+        uint32_t wav_data_off = 0;
+        int wav_is_float = 0;
+        int wav_rate = wav_parse_header(real_wav, &wav_ch, &wav_bits, &wav_data_off, &wav_is_float);
         if (wav_rate > 0) {
             file_rate = wav_rate;
-            ESP_LOGI(TAG, "R116: WAV sample rate = %d Hz, channels = %d", wav_rate, wav_ch);
+            file_ch   = wav_ch;
+            file_bits = wav_bits;          // R123-WAV: 真实位深(给 conv 用)，I2S 固定 16bit
+            g_wav_data_off = wav_data_off;
+            ESP_LOGI(TAG, "R116: WAV sample rate = %d Hz, channels = %d, bits = %d, data_off = %u%s",
+                     wav_rate, wav_ch, wav_bits, wav_data_off,
+                     wav_is_float ? " (IEEE_FLOAT)" : "");
         } else {
-            ESP_LOGW(TAG, "R116: sniff WAV sample rate failed, fallback %d Hz", file_rate);
+            ESP_LOGW(TAG, "R116: parse WAV header failed, fallback %d Hz", file_rate);
+        }
+        /* R130: 仅 24/32bit 需要位深转换(32bit 可能含 IEEE float); 16bit 直接 file->i2s 直通,
+           省去不必要的 wav_conv 任务 —— 既减少任务开销, 也消除 16bit WAV 切歌时 decoder 栈溢出死机。
+           (R123-WAV 原对所有 WAV 都挂 wav_conv, 其 task_stack 过小, 切歌 terminate 路径栈溢出。)
+           下游 i2s 固定 16bit(已验证路径)，软件音量缩放也正确。 */
+        audio_element_set_byte_pos(g_fatfs_reader, g_wav_data_off);  // 跳过 WAV 头部(所有 WAV 都需要)
+        if (file_bits != 16) {
+            wav_conv_cfg_t conv_cfg = { .src_bits = file_bits, .is_float = (wav_is_float != 0), .sample_rate = file_rate };
+            g_decoder = wav_bitdepth_conv_init(&conv_cfg);
+            if (!g_decoder) {
+                ESP_LOGE(TAG, "R130: wav_bitdepth_conv_init failed");
+                audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+                audio_element_deinit(g_fatfs_reader);
+                g_fatfs_reader = NULL;
+                audio_pipeline_deinit(g_pipeline);
+                g_pipeline = NULL;
+                return false;
+            }
+            if (audio_pipeline_register(g_pipeline, g_decoder, "decoder") != ESP_OK) {
+                ESP_LOGE(TAG, "R130: register wav_conv failed");
+                audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
+                audio_element_deinit(g_fatfs_reader);
+                audio_element_deinit(g_decoder);
+                g_fatfs_reader = NULL;
+                g_decoder = NULL;
+                audio_pipeline_deinit(g_pipeline);
+                g_pipeline = NULL;
+                return false;
+            }
+            ESP_LOGI(TAG, "R130: WAV bit-depth convert (src=%dbit%s), skip header %u bytes",
+                     file_bits, wav_is_float ? " IEEE_FLOAT" : "", g_wav_data_off);
+        } else {
+            g_decoder = NULL;  // 16bit 直通: 不创建 decoder 任务(回归 R117 file->i2s 设计)
+            ESP_LOGI(TAG, "R130: WAV 16bit passthrough (file->i2s direct), skip header %u bytes", g_wav_data_off);
+        }
+    } else if (strcasecmp(get_file_ext(filepath), ".flac") == 0) {
+        const char *flac_path = strstr(filepath, "://");
+        const char *real_flac = flac_path ? flac_path + 3 : filepath;
+        if (real_flac[0] == '/' && real_flac[1] == '/') real_flac++;
+        int flac_rate = flac_sniff_sample_rate(real_flac);
+        if (flac_rate > 0) {
+            file_rate = flac_rate;
+            ESP_LOGI(TAG, "R122-FLAC: FLAC sample rate = %d Hz", flac_rate);
+        } else {
+            ESP_LOGW(TAG, "R122-FLAC: sniff FLAC sample rate failed, fallback %d Hz", file_rate);
+        }
+
+        int flac_bits = flac_sniff_bits(real_flac);
+        /* R122-FLAC-16BIT (B 止血, 2026-10-10): 只支持 16bit FLAC。esp_codec FLAC 解码器固定输出源位深
+           (24bit), 其内部 24bit 路径在 PSRAM 越界写, 踩坏 LVGL(Guru Meditation)。R129 的 conv 降级方案
+           已证伪——越界发生在解码器输出 24bit PCM 时(早于 conv), 且 esp_flac_dec_open 不支持配置 16bit
+           输出, conv 无从拦截。故非 16bit FLAC 一律拒绝以避免崩溃; 16bit 直通。后续 C 方案(dr_flac)再
+           支持 24bit 以 16bit 播放。 */
+        if (flac_bits != 16) {
+            ESP_LOGW(TAG, "R122-FLAC-16BIT: %d-bit FLAC rejected (esp_codec 24bit output crashes ESP32-S3); only 16bit supported", flac_bits);
+            display_toast("FLAC must be\n16bit\ntranscode pls");
+            // 拒绝分支清理：audio_pipeline_deinit 内部会自动 terminate+unlink+deinit 所有已
+            // registered 元素(file/decoder/i2s)，绝不可先手动 audio_element_deinit 再交给它——
+            // 否则二次释放损坏共享堆，导致后续播放拿到坏内存踩坏 LVGL（R134 实测 16bit 续播崩）。
+            // 故只调 pipeline deinit，再清句柄。
+            audio_pipeline_deinit(g_pipeline);
+            g_pipeline = NULL;
+            g_fatfs_reader = NULL; g_decoder = NULL; g_i2s_writer = NULL;
+            return false;
+        }
+        file_bits = flac_bits;   // 16bit FLAC 直通; i2s 实际强制 16bit, 变速参考用 g_file_bits
+        g_flac_conv = NULL;      // R129 conv 路径已废弃(24bit 改拒绝); 16bit 无需转换
+    } else if (strcasecmp(get_file_ext(filepath), ".aac") == 0 || strcasecmp(get_file_ext(filepath), ".m4a") == 0) {
+        const char *aac_path = strstr(filepath, "://");
+        const char *real_aac = aac_path ? aac_path + 3 : filepath;
+        if (real_aac[0] == '/' && real_aac[1] == '/') real_aac++;
+        int aac_rate = aac_sniff_sample_rate(real_aac);
+        if (aac_rate > 0) {
+            file_rate = aac_rate;
+            ESP_LOGI(TAG, "R122-AAC: AAC sample rate = %d Hz", aac_rate);
+        } else {
+            ESP_LOGW(TAG, "R122-AAC: sniff AAC sample rate failed, fallback %d Hz", file_rate);
+        }
+    }
+
+    // 5b. 链接管道: file→decoder→i2s；FLAC 24bit 时插位深转换 element(file→decoder→conv→i2s)。
+    //     WAV 的 "decoder" 槽位复用为位深转换 element，R123-WAV 必须在创建后再链接。
+    {
+        const char *link_tags[4];
+        int link_count;
+        if (g_flac_conv) {   // R122-FLAC-16BIT: 解码器(flac_dec)→位深转换(conv)→i2s
+            link_tags[0] = "file"; link_tags[1] = "decoder"; link_tags[2] = "conv"; link_tags[3] = "i2s"; link_count = 4;
+        } else if (g_decoder) {
+            link_tags[0] = "file"; link_tags[1] = "decoder"; link_tags[2] = "i2s"; link_count = 3;
+        } else {
+            link_tags[0] = "file"; link_tags[1] = "i2s"; link_count = 2;   /* R130: 16bit WAV 直通 */
+        }
+        esp_err_t link_err = audio_pipeline_link(g_pipeline, link_tags, link_count);
+        if (link_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to link pipeline (0x%x)", link_err);
+            // 同拒绝分支：audio_pipeline_deinit 自动清理所有已 register 元素，避免手动 deinit 二次释放
+            audio_pipeline_deinit(g_pipeline);
+            g_pipeline = NULL;
+            g_fatfs_reader = NULL; g_decoder = NULL; g_flac_conv = NULL; g_i2s_writer = NULL;
+            return false;
         }
     }
 
@@ -578,18 +887,29 @@ bool audio_player_play(const char *filepath)
     //    R100: 单声道文件由 Helix decoder 上混为立体声输出，I2S 保持 2 声道。
     g_base_sample_rate   = file_rate;
     g_current_sample_rate = file_rate;
-    i2s_stream_set_clk(g_i2s_writer, file_rate, 16, 2);
+    g_file_bits = file_bits;   // R122-WAV: 变速时据此保持真实位深/声道
+    g_file_ch   = file_ch;
+    // R123-WAV: WAV 直通一律走 16bit I2S(由位深转换 element 把 24/32bit 软件转 16bit)，
+    // 彻底规避 ESP32-S3 直配 24/32bit I2S 在 96k/32bit 下 i2s_set_clk 卡死。普通解码格式
+    // 仍按真实位深(解码器自行上报 24bit)配置 I2S。
+    int i2s_out_bits = (is_wav || is_flac) ? 16 : file_bits;
+    esp_err_t clk_err = i2s_stream_set_clk(g_i2s_writer, file_rate, i2s_out_bits, file_ch);
+    ESP_LOGI(TAG, "R130: i2s set_clk rate=%d bits=%d ch=%d -> %s",
+             file_rate, i2s_out_bits, file_ch, (clk_err == ESP_OK) ? "OK" : "FAIL");
 
     // 8. 启动管道（R032-209: 检查返回值，失败即终止，避免进入播放态却无声）
     if (audio_pipeline_run(g_pipeline) != ESP_OK) {
         ESP_LOGE(TAG, "audio_pipeline_run failed");
         audio_pipeline_unregister(g_pipeline, g_fatfs_reader);
         if (g_decoder) audio_pipeline_unregister(g_pipeline, g_decoder);
+        if (g_flac_conv) audio_pipeline_unregister(g_pipeline, g_flac_conv);
         audio_pipeline_unregister(g_pipeline, g_i2s_writer);
         audio_element_deinit(g_fatfs_reader);
         if (g_decoder) audio_element_deinit(g_decoder);
+        if (g_flac_conv) audio_element_deinit(g_flac_conv);
         g_fatfs_reader = NULL;
         g_decoder = NULL;
+        g_flac_conv = NULL;
         audio_pipeline_deinit(g_pipeline);
         g_pipeline = NULL;
         return false;
@@ -608,8 +928,8 @@ bool audio_player_play(const char *filepath)
     struct stat st;
     if (stat(filepath, &st) == 0) {
         uint32_t total = (uint32_t)st.st_size;
-        g_total_file_bytes = (total > (uint32_t)g_id3_skip_bytes)
-                           ? total - (uint32_t)g_id3_skip_bytes : 0;
+        uint32_t skip = (uint32_t)g_id3_skip_bytes + (is_wav ? g_wav_data_off : 0);  // R123-WAV: 也扣掉 WAV 头部
+        g_total_file_bytes = (total > skip) ? total - skip : 0;
     } else {
         g_total_file_bytes = 0;
     }
@@ -637,9 +957,19 @@ bool audio_player_play(const char *filepath)
             } else if (strcasecmp(ext, ".opus") == 0) {
                 bytes_per_ms = 12;
             } else if (strcasecmp(ext, ".flac") == 0) {
-                bytes_per_ms = 64;
+                int flac_ms = flac_parse_duration_ms(filepath);
+                if (flac_ms > 0 && g_total_file_bytes > (uint32_t)flac_ms) {
+                    bytes_per_ms = g_total_file_bytes / flac_ms;   // 反推精确字节率，消除虚长
+                    ESP_LOGI(TAG, "Duration from FLAC STREAMINFO: %d ms (was ~%d ms by size/64)",
+                             flac_ms, g_total_file_bytes / 64);
+                } else {
+                    bytes_per_ms = 64;   // STREAMINFO 解析失败时的粗估兜底
+                }
             } else if (strcasecmp(ext, ".wav") == 0) {
-                bytes_per_ms = 176;
+                // R122-WAV: 用嗅探到的真实 rate/bits/ch 算精确字节率（替代固定 176，
+                // 否则 24bit WAV 进度条虚长、曲终被误判"切割"，与 FLAC 同因）
+                int wav_bpm = (file_rate * (file_bits / 8) * file_ch) / 1000;
+                bytes_per_ms = (wav_bpm > 0) ? wav_bpm : 176;
             } else {
                 bytes_per_ms = 16;  // fallback 同 MP3
             }
@@ -753,6 +1083,10 @@ void audio_player_stop(void)
             audio_element_abort_input_ringbuf(g_decoder);        /* 解除 decoder 的读阻塞 */
             audio_element_abort_output_ringbuf(g_decoder);       /* 解除 decoder 的写阻塞 */
         }
+        if (g_flac_conv) {                                       /* R122-FLAC-16BIT: 解除 conv 阻塞 */
+            audio_element_abort_input_ringbuf(g_flac_conv);
+            audio_element_abort_output_ringbuf(g_flac_conv);
+        }
         /* 给 element task 时间从阻塞中返回并执行 close 关闭 fd */
         vTaskDelay(pdMS_TO_TICKS(100));
 
@@ -766,10 +1100,14 @@ void audio_player_stop(void)
     // element 内存已由 audio_pipeline_deinit 释放，此处仅清句柄，避免悬空指针
     g_fatfs_reader = NULL;
     g_decoder = NULL;
+    g_flac_conv = NULL;    // R122-FLAC-16BIT: conv 元素已由 audio_pipeline_deinit 销毁, 仅清句柄
     g_i2s_writer = NULL;   // R068：每次 play() 重建
 
     g_is_playing = false;
     g_is_paused = false;
+    g_is_wav = false;        // R123-WAV: 重置当前格式标志
+    g_is_flac = false;       // R122-FLAC-16BIT: 重置当前格式标志
+    g_wav_data_off = 0;      // R123-WAV: 重置 WAV 头部偏移
 
     g_total_duration_ms = 0;
     g_id3_skip_bytes = 0;  // R067：切歌时重置，新曲目重新探测
@@ -960,9 +1298,14 @@ void audio_player_scrub_seek(int ms)
 {
     if (!g_pipeline || !g_is_playing || !g_fatfs_reader) return;
     if (g_decoder) {
-        /* Compressed formats: direct seek, decoder handles frame boundaries */
+        /* Compressed formats: direct seek, decoder handles frame boundaries.
+           R122-AAC/FLAC-CODEC: 仅 MP3(Helix) 有 helix_ctx_t->err_cnt 需清;
+           AAC/FLAC 已改 esp_codec 解码器, 其 data 首字段是 dec_handle 指针,
+           误调 clear_errors 会破坏句柄 -> 解码头崩溃。故仅 MP3 调用。 */
         audio_player_seek_ms_internal(ms);
-        mp3_decoder_libhelix_clear_errors(g_decoder);
+        if (g_seek_path[0] && strcasecmp(get_file_ext(g_seek_path), ".mp3") == 0) {
+            mp3_decoder_libhelix_clear_errors(g_decoder);
+        }
     } else {
         /* R117 WAV PCM passthrough: reader is already paused in scrub_enter.
            Only update position variables for display — actual seek happens once
@@ -1072,7 +1415,9 @@ void audio_player_set_speed(float speed)
 
     if (sample_rate != g_current_sample_rate) {
         g_current_sample_rate = sample_rate;
-        i2s_stream_set_clk(g_i2s_writer, sample_rate, 16, 2);
+        // R123-WAV: WAV 直通 I2S 固定 16bit(位深由转换 element 处理)，变速时不能退回 32bit I2S
+        int bits = (g_is_wav || g_is_flac) ? 16 : g_file_bits;
+        i2s_stream_set_clk(g_i2s_writer, sample_rate, bits, g_file_ch);
     }
 }
 

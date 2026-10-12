@@ -274,11 +274,19 @@ static volatile bool s_vol_pending = false;
 static volatile int  s_vol_value   = 0;
 static volatile uint32_t s_main_tick_call_count = 0;  /* 诊断：调用次数 */
 
+/* R127-diag: lvgl 停滞诊断全局(供 main 检测卡死点) —— 临时诊断,定位后删除 */
+volatile uint32_t g_lvgl_diag_stage = 0;   /* 1=before-lock 2=in-lock 3=after-timer 4=unlocked 0=idle */
+volatile uint32_t g_lvgl_diag_loop  = 0;
+volatile uint32_t g_lvgl_diag_last_sec = 0;
+
 /* R063-fix: 弹窗消息(show_no_card/show_no_files/show_splash)轮询方案,
    与音量条同源——main_task 只设标志,lvgl_task 在持锁状态下调 LVGL,
    避免 main 直接调 ui_show_msg(裸 LVGL API) 与 lvgl_task 死锁→TWDT(R062 死锁回退)。 */
 static volatile bool s_msg_pending = false;
 static volatile bool s_show_splash_pending = false;  /* R111: 显示启动画面 */
+/* R131i: 全屏消息激活标志(no_card/no_files)。激活时 display_update 不覆盖该消息,
+   否则下一帧 ui_show_player 会把"SD card not detected"一闪而过地隐藏。 */
+static volatile bool s_msg_active = false;
 
 /* P1-fix: display_update flag-consumption cache (main->lvgl_task, 消除跨任务锁竞争) */
 typedef struct {
@@ -315,6 +323,12 @@ static volatile bool s_clear_msg_pending = false;   /* 清全屏消息返回播�
    main 只设标志, 真正的 LVGL 操作由 lvgl_task 在持锁区内执行。 */
 static volatile bool s_menu_pending       = false;  /* 菜单内容待绘制 */
 static volatile bool s_menu_close_pending = false;  /* 菜单关闭待处理(恢复 player) */
+/* R131g: 关机倒计时标志化——main 只设标志, lvgl_task 持锁消费, 杜绝 main 直接调
+   lv_obj_add_flag/invalidate 与 lvgl_task 并发竞争 LVGL inv_areas 链表→损坏→
+   lv_inv_area 死循环→main 卡 30s→TWDT(本次死机根因)。 */
+static volatile bool s_shutdown_cd_pending = false;
+static volatile int  s_shutdown_cd_type   = 0;
+static volatile int  s_shutdown_cd_remain = 0;
 
 void display_register_main_tick(display_main_tick_fn_t fn)
 {
@@ -806,11 +820,41 @@ static void cjk_flush_overlay(void)
     s_cjk_qnum = 0;
 }
 
+/* R131j-diag: 对象树完整性自检 —— 切歌时曾崩在 layout_update_core 遇 null child
+   (Guru Meditation LoadProhibited@0)。根因是非显示模块越界写内存踩坏 LVGL 对象树。
+   本自检在 lv_timer_handler 前走一遍树, 发现 children 含 null/野指针或环(depth 过深)时
+   跳过本次刷新, 避免 panic, 并打印损坏对象地址以定位元凶。 */
+static bool lvgl_obj_ptr_sane(lv_obj_t *o)
+{
+    uint32_t p = (uint32_t)o;
+    if (o == NULL) return false;
+    /* ESP32-S3: DRAM 0x3FC00000-0x3FE00000, PSRAM(XIP) 约 0x3F800000-0x3FC00000 */
+    if (p < 0x3F000000 || p > 0x40800000) return false;
+    if (p & 0x3) return false;   /* 未 4 字节对齐 */
+    return true;
+}
+static bool lvgl_tree_sane(lv_obj_t *obj, int depth)
+{
+    if (!lvgl_obj_ptr_sane(obj)) return false;
+    if (depth > 300) { ESP_LOGE(TAG, "TREE: depth>300 (possible cycle) at %p", (void*)obj); return false; }
+    uint32_t n = lv_obj_get_child_cnt(obj);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *c = lv_obj_get_child(obj, i);
+        if (!lvgl_obj_ptr_sane(c)) {
+            ESP_LOGE(TAG, "TREE: bad child %p (#%u/%u of parent %p)", (void*)c, i, n, (void*)obj);
+            return false;
+        }
+        if (!lvgl_tree_sane(c, depth + 1)) return false;
+    }
+    return true;
+}
+
 /* R063-fix: 不持锁版消息渲染,供 lvgl_task 在已持锁区间内调用(前向声明,定义见 ui_show_msg 处) */
 static void ui_show_msg_nolock(const char *txt);
 /* R100: 前向声明,供 lvgl_task 消费标志时调用(定义在后面) */
 static void ui_show_player(void);
 static void sd_icon_update(bool present);
+static void shutdown_cd_apply_nolock(int type, int remaining);  /* R131g: 关机倒计时实际绘制(仅 lvgl_task 持锁区) */
 
 /* LVGL 心跳 + 定时器处理任务 */
 static void lvgl_task(void *arg)
@@ -828,9 +872,11 @@ static void lvgl_task(void *arg)
      *    "task not found"（wdt 内部状态被破坏），刷屏噪声影响调试
      *  - lvgl_task 死了不会有看门狗重启，main_task 不被监控时整个系统靠业务逻辑自我保护 */
     while (1) {
+        g_lvgl_diag_stage = 1;   /* R127-diag: 即将取 LVGL 锁 */
         /* P1-fix: lv_tick_inc 改由硬件 esp_timer 驱动, 此处不再调用 */
         /* 显式 lv_lock：避免与 main 中 display_update 的 LVGL 访问交叉持锁 */
         lv_lock();
+        g_lvgl_diag_stage = 2;   /* R127-diag: 已进入锁区 */
         /* R056-fix4: 消费音量条标志(持锁状态下,无 race condition,无队列堆积) */
         if (s_vol_pending) {
             s_vol_pending = false;
@@ -860,7 +906,10 @@ static void lvgl_task(void *arg)
         /* R111: 显示 TAPEBOOK 启动画面 */
         if (s_show_splash_pending) {
             s_show_splash_pending = false;
-            if (s_splash) {
+            /* R131i: 若已处于全屏消息态(无卡/无文件), 不显示启动画面, 否则不透明的
+               splash 会盖住 g_msg 的 "SD card not detected"(消费顺序: msg 先于 splash,
+               splash 后显示反而把消息隐藏→屏幕停在启动画面/提示一闪而过)。 */
+            if (s_splash && !s_msg_active) {
                 /* R115: 隐藏其他屏, 确保splash独占显示 */
                 lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
@@ -879,6 +928,8 @@ static void lvgl_task(void *arg)
         /* R100: 消费"清消息返回播放器"标志 */
         if (s_clear_msg_pending) {
             s_clear_msg_pending = false;
+            ESP_LOGI(TAG, "DBG: clear_msg consume (msg_active was %d)", s_msg_active);
+            s_msg_active = false;   /* R131i: 退出全屏消息态, 允许 player 屏正常显示 */
             /* R105: browse 现走点阵 canvas(独占态), 退出时必须清 s_menu_visible
                并隐藏全屏 canvas, 否则 canvas 会一直盖住 player 屏。 */
             s_menu_visible = false;
@@ -905,13 +956,29 @@ static void lvgl_task(void *arg)
             ui_show_player();
             lv_obj_invalidate(lv_screen_active());
         }
+        /* R131g: 消费关机倒计时标志(已在 lv_lock 内, 直接调 LVGL 安全;
+           取代原本 main 直接调 lv_obj_add_flag 与 lvgl_task 并发竞争导致的死锁) */
+        if (s_shutdown_cd_pending) {
+            s_shutdown_cd_pending = false;
+            shutdown_cd_apply_nolock(s_shutdown_cd_type, s_shutdown_cd_remain);
+        }
         /* P1-fix: 消费 display_update 标志 (main_task 只缓存, 此处持锁执行) */
         if (s_disp_update_pending) {
             s_disp_update_pending = false;
-            display_update_nolock(s_disp_cache.state, s_disp_cache.track_name,
-                                  s_disp_cache.track_idx, s_disp_cache.total,
-                                  s_disp_cache.current_sec, s_disp_cache.total_sec,
-                                  s_disp_cache.speed, s_disp_cache.gear, s_disp_cache.volume);
+            /* R131i: 全屏消息(无卡/无文件)激活时, 不调用 display_update_nolock,
+               否则其内部的 ui_show_player() 会一闪而过地隐藏"SD card not detected"。 */
+            if (!s_msg_active) {
+                display_update_nolock(s_disp_cache.state, s_disp_cache.track_name,
+                                      s_disp_cache.track_idx, s_disp_cache.total,
+                                      s_disp_cache.current_sec, s_disp_cache.total_sec,
+                                      s_disp_cache.speed, s_disp_cache.gear, s_disp_cache.volume);
+            } else {
+                static uint32_t s_skip_dbg = 0;
+                if (s_skip_dbg < 5) {
+                    ESP_LOGI(TAG, "DBG: disp_update SKIPPED (msg active) #%u", s_skip_dbg);
+                    s_skip_dbg++;
+                }
+            }
         }
         /* P1-fix2: 卷轴动画 — 硬件时间戳驱动, 在 lv_timer_handler 之前切帧 */
         {
@@ -941,8 +1008,30 @@ static void lvgl_task(void *arg)
                 }
             }
         }
-        lv_timer_handler();
+        /* R131j-diag: 先自检对象树, 损坏则跳过 lv_timer_handler 避免 panic, 并打印元凶 */
+        if (!lvgl_tree_sane(lv_screen_active(), 0)) {
+            static bool s_tree_warn = false;
+            if (!s_tree_warn) { ESP_LOGE(TAG, "TREE: corruption detected -> skip lv_timer_handler (device kept alive)"); s_tree_warn = true; }
+        } else {
+            lv_timer_handler();
+        }
+        g_lvgl_diag_stage = 3;   /* R127-diag: refr/timer 完成, 即将解锁 */
         lv_unlock();
+        g_lvgl_diag_stage = 4;   /* R127-diag: 已解锁, 本轮正常 */
+        g_lvgl_diag_loop++;
+        {
+            static uint64_t s_vis_last = 0;
+            uint64_t nowv = esp_timer_get_time();
+            if (nowv - s_vis_last >= 2000000) {
+                s_vis_last = nowv;
+                ESP_LOGI(TAG, "DBG: VIS msg_hidden=%d player_hidden=%d splash_hidden=%d msg_active=%d",
+                         lv_obj_has_flag(g_msg, LV_OBJ_FLAG_HIDDEN),
+                         lv_obj_has_flag(g_player, LV_OBJ_FLAG_HIDDEN),
+                         lv_obj_has_flag(s_splash, LV_OBJ_FLAG_HIDDEN),
+                         s_msg_active);
+            }
+        }
+        /* R127-diag: 每秒心跳已移除(避免刷屏); 停滞告警由 main.cpp 统一处理。 */
         vTaskDelay(pdMS_TO_TICKS(5));
         /* R098g: 调试期临时 flush 计数诊断日志已移除(每 ~1s 刷屏, 干扰正常日志)。
            如需复测刷新, 临时取消下一行注释即可。 */
@@ -1608,6 +1697,9 @@ static void ui_show_player(void)
         ESP_LOGI(TAG, "DBG: ui_show_player #%u g_player=%p g_msg=%p", (unsigned)n, (void*)g_player, (void*)g_msg);
     }
     n++;
+    if (s_msg_active) {
+        ESP_LOGW(TAG, "DBG: LEAK ui_show_player while msg_active=1 (g_msg being hidden!)");
+    }
     lv_obj_clear_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_splash, LV_OBJ_FLAG_HIDDEN);  /* R111: 隐藏启动画面 */
@@ -1632,6 +1724,9 @@ static void ui_show_msg_nolock(const char *txt)
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_splash, LV_OBJ_FLAG_HIDDEN);   /* 与显示 splash 时隐藏 g_msg 对称, 避免叠加 */
+    s_msg_active = true;   /* R131i: 进入全屏消息态, 阻止 display_update 覆盖 */
+    ESP_LOGI(TAG, "DBG: show_msg active=1 '%s'", txt);
 }
 
 void display_set_play_mode(int mode)
@@ -1906,6 +2001,7 @@ static void display_update_nolock(player_state_t state,
                     float speed, int gear, int volume)
 {
     if (!g_display_initialized) return;
+    g_lvgl_diag_last_sec = (uint32_t)current_sec;   /* R127-diag: 记录最近进度秒, 用于判断 position 是否卡住 */
     // R071: 删除冗余 DBG 打印（before/after lv_lock call#N + now/last/diff）——
     // 主循环 200ms 节流每条都打→ 20行/秒纯噪声，把真崩因日志淹没。
     // LVGL 死锁问题已在 R063-fix 用异步 pending 解决，无需每次锁前后再验。
@@ -2576,12 +2672,20 @@ void display_show_ota_error(const char *msg)
 /* ============================================================
  * R115: 关机倒计时显示
  * ============================================================ */
-void display_show_shutdown_countdown(int type, int remaining)
+/* R131g: 实际绘制(仅 lvgl_task 持锁区调用)。main 不直接碰 LVGL, 避免与 lvgl_task
+   并发竞争 inv_areas 链表损坏 -> lv_inv_area 死循环 -> main 卡 30s -> TWDT。 */
+static void shutdown_cd_apply_nolock(int type, int remaining)
 {
-    if (!g_display_initialized) return;
     if (type <= 0 || remaining < 0) {
-        /* 无倒计时: 隐藏消息, 返回播放器界面 */
-        lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+        /* R131i: 无倒计时时, 若已存在全屏消息(无卡/无文件), 不要隐藏 g_msg
+           (否则被电源管理每秒 1Hz 的"取消倒计时"调用反复藏掉→提示一闪而过/黑屏),
+           应恢复该消息文本并重新显示, 直到 display_clear_msg(有卡)清除。 */
+        if (s_msg_active) {
+            lv_label_set_text(g_msg, s_msg_text);
+            lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+        }
         return;
     }
     char buf[64];
@@ -2593,4 +2697,12 @@ void display_show_shutdown_countdown(int type, int remaining)
     lv_label_set_text(g_msg, buf);
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(g_msg);
+}
+
+/* R131g: main 只设标志, 由 lvgl_task 在持锁区内调 shutdown_cd_apply_nolock 执行。 */
+void display_show_shutdown_countdown(int type, int remaining)
+{
+    s_shutdown_cd_type   = type;
+    s_shutdown_cd_remain = remaining;
+    s_shutdown_cd_pending = true;
 }

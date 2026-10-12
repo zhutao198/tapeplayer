@@ -32,6 +32,9 @@ idf_component_register(
         "audio_player.cpp"
         "mp3_decoder_esp_codec.c"   # R076-CODEC-7: 开源 MP3 解码器 wrapper (替代闭源 PV-MP3)
         "mp3_decoder_libhelix.c"   # R080: Helix MP3 解码器 wrapper (替代闭源 PV-MP3, 不崩+坏帧跳过)
+        "flac_decoder_esp_codec.c"  # R122-FLAC-CODEC: 开源 FLAC 解码器 wrapper (替代闭源 flac_decoder, 崩)
+        "aac_decoder_esp_codec.c"   # R122-AAC-CODEC: 开源 AAC 解码器 wrapper (替代闭源 aac_decoder, 与 FLAC 同构)
+        "wav_bitdepth_conv.c"       # R123-WAV: WAV 原始 PCM(16/24/32bit) -> 16bit 转换 element(规避 32bit I2S 卡死)
         "settings.cpp"
         "bookmark.cpp"
         "power_mgmt.cpp"
@@ -47,10 +50,33 @@ idf_component_register(
         "ui_font_16.c"
         "cjk_font.c"   # 点阵字库(simsun 16x16, 替代 LVGL 中文路径; 硬件上 LVGL lv_font_chinese_* 渲染不稳)
         "bt_speaker.cpp"
+        "build_info.c"           # R124: 精准构建信息(每次构建重新生成, 含真实构建时间+git版本)
     INCLUDE_DIRS
         "."
     REQUIRES ${COMPONENT_REQUIRES}
 )
+
+# ----------------------------------------------------------------------------
+# R124: 精准构建信息
+# 每次构建都重新生成 build_info.h（含真实构建时间 + git 版本），并确保 build_info.c
+# 重新编译，使启动日志里的构建时间/版本始终准确（替代 IDF 的 Compile time，后者因
+# 增量编译不重编 esp_app_desc.c 而易滞留旧日期）。
+# ----------------------------------------------------------------------------
+set(BUILD_INFO_H "${CMAKE_CURRENT_BINARY_DIR}/build_info.h")
+# 伪目标：无 OUTPUT，ninja 视为始终过期 -> 依赖它的 custom command 每次构建都重跑
+add_custom_target(build_info_force_phony COMMAND ${CMAKE_COMMAND} -E echo "regenerate build_info.h")
+add_custom_command(
+    OUTPUT ${BUILD_INFO_H}
+    COMMAND ${CMAKE_COMMAND} -D OUT_FILE=${BUILD_INFO_H} -D SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/gen_build_info.cmake
+    DEPENDS build_info_force_phony
+    COMMENT "Generating build_info.h (fresh build timestamp)"
+    VERBATIM
+)
+# 让 main 组件库的编译排在生成之后，且 build_info.c 在头文件更新时重编
+add_dependencies(${COMPONENT_LIB} build_info_force_phony)
+target_include_directories(${COMPONENT_LIB} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+set_source_files_properties(build_info.c PROPERTIES OBJECT_DEPENDS ${BUILD_INFO_H})
 
 # 传递目标模块选择为编译宏
 # (在 C 代码里可用 BOARD_MODULE_WROOM_1_N16R8 / _WROOM_2_N32R16V)
