@@ -563,7 +563,7 @@ bool audio_player_play(const char *filepath)
     // R141-diag: 打印 teardown 后剩余 DRAM 与最大空闲块。逐曲观察: 若 free DRAM 单调下降
     // => 泄漏(每次切歌漏固定量); 若 free 持平但 largest 骤降 => 碎片化。用于定位"切歌数首后
     // Memory exhausted" 根因(既有问题, 此前被 FLAC 崩溃掩盖)。
-    ESP_LOGD(TAG, "R141-heap: after-stop free_dram=%u largest_dram=%u free_psram=%u",
+    ESP_LOGI(TAG, "R141-heap: after-stop free_dram=%u largest_dram=%u free_psram=%u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -583,7 +583,7 @@ bool audio_player_play(const char *filepath)
 
     // 1. 创建 pipeline
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
-    pipeline_cfg.rb_size = 32 * 1024;  /* R117: 8KB->32KB, reduce FLAC/AAC underflow clicking */
+    pipeline_cfg.rb_size = 64 * 1024;  /* R147: 32KB->64KB, 更大缓冲摊平 SD CRC 读失败造成的瞬时缺口, 降低欠载咔哒 */
     g_pipeline = audio_pipeline_init(&pipeline_cfg);
     if (!g_pipeline) {
         ESP_LOGE(TAG, "Failed to create audio pipeline");
@@ -608,23 +608,11 @@ bool audio_player_play(const char *filepath)
     g_is_flac = is_flac; // R122-FLAC-16BIT: 记录当前格式，强制 16bit I2S 路径
     g_flac_conv = NULL;  // R122-FLAC-16BIT: 每首重新挂接; 上一首的 conv 已由 stop 销毁
 
-    // R136（前置拒绝，根治 R135 仍崩）：在创建 pipeline/file/decoder/i2s 之前先嗅探 FLAC 位深，
-    // 非 16bit 直接拒绝并 return，**绝不创建任何 element**。原因：R135 把拒绝分支改为只调
-    // audio_pipeline_deinit，看似干净，但 24bit 的 pipeline 处于"已 register 未 run"态，裸 deinit
-    // 可能让 esp_codec FLAC 元素的内部 ringbuf/buffer 释放不完整 → 堆元数据损坏 → 紧随其后的 16bit
-    // FLAC 从同一堆分到坏块、运行越界踩 LVGL(Guru Meditation @ lv_refr)。提前拒绝使 24bit 分支
-    // 完全不碰堆，根除该污染。若改后 16bit 续播仍崩，则根因是 FLAC 解码器 16bit 本身(转 C 方案)。
-    if (is_flac) {
-        const char *flac_path = strstr(filepath, "://");
-        const char *real_flac = flac_path ? flac_path + 3 : filepath;
-        if (real_flac[0] == '/' && real_flac[1] == '/') real_flac++;
-        int flac_bits_pre = flac_sniff_bits(real_flac);
-        if (flac_bits_pre != 16) {
-            ESP_LOGW(TAG, "R122-FLAC-16BIT: %d-bit FLAC rejected (pre-pipeline, zero heap touch); only 16bit supported", flac_bits_pre);
-            display_toast("FLAC must be\n16bit\ntranscode pls");
-            return false;
-        }
-    }
+    // R146(方案A): 移除 24bit FLAC 前置拒绝。原 R136 屏蔽 24bit 是误判——真凶是 main 任务栈溢出
+    // (R141 已修), 与位深无关; 且现用 dr_flac 解码器, drflac_read_pcm_frames_s16 内部按
+    // unusedBitsPerSample 右移, 把任意源位深(8/16/24/32)转为 16bit 输出, 解码缓冲按 int32 存、
+    // 与源位深无关(不增内存/栈)。故 24bit FLAC 直接降位 16bit 播放, 无需预拒、无需 conv element。
+    // i2s 对 FLAC 恒 16bit(见下方 i2s_out_bits)。注: 96kHz 24bit FLAC 压缩码率高, 10MHz SD 可能欠载。
 
     g_decoder = create_decoder(filepath);
     if (!g_decoder && !is_wav) {
@@ -836,25 +824,15 @@ bool audio_player_play(const char *filepath)
         }
 
         int flac_bits = flac_sniff_bits(real_flac);
-        /* R122-FLAC-16BIT (B 止血, 2026-10-10): 只支持 16bit FLAC。esp_codec FLAC 解码器固定输出源位深
-           (24bit), 其内部 24bit 路径在 PSRAM 越界写, 踩坏 LVGL(Guru Meditation)。R129 的 conv 降级方案
-           已证伪——越界发生在解码器输出 24bit PCM 时(早于 conv), 且 esp_flac_dec_open 不支持配置 16bit
-           输出, conv 无从拦截。故非 16bit FLAC 一律拒绝以避免崩溃; 16bit 直通。后续 C 方案(dr_flac)再
-           支持 24bit 以 16bit 播放。 */
+        /* R146(方案A): 重新启用非 16bit FLAC(降位 16bit 播放)。原 R122 屏蔽是误判(真凶 main 栈
+           溢出 R141, 与位深无关); dr_flac 的 drflac_read_pcm_frames_s16 内部按 unusedBitsPerSample
+           右移, 把任意源位深转为 16bit 输出, 不增内存/栈。故接受任意位深, dr_flac 自行降位。
+           注: 96kHz 24bit FLAC 压缩码率高, 10MHz SD 可能欠载; 44.1/48k 无碍。 */
         if (flac_bits != 16) {
-            ESP_LOGW(TAG, "R122-FLAC-16BIT: %d-bit FLAC rejected (esp_codec 24bit output crashes ESP32-S3); only 16bit supported", flac_bits);
-            display_toast("FLAC must be\n16bit\ntranscode pls");
-            // 拒绝分支清理：audio_pipeline_deinit 内部会自动 terminate+unlink+deinit 所有已
-            // registered 元素(file/decoder/i2s)，绝不可先手动 audio_element_deinit 再交给它——
-            // 否则二次释放损坏共享堆，导致后续播放拿到坏内存踩坏 LVGL（R134 实测 16bit 续播崩）。
-            // 故只调 pipeline deinit，再清句柄。
-            audio_pipeline_deinit(g_pipeline);
-            g_pipeline = NULL;
-            g_fatfs_reader = NULL; g_decoder = NULL; g_i2s_writer = NULL;
-            return false;
+            ESP_LOGI(TAG, "R146: %d-bit FLAC accepted (dr_flac downconverts to 16bit)", flac_bits);
         }
-        file_bits = flac_bits;   // 16bit FLAC 直通; i2s 实际强制 16bit, 变速参考用 g_file_bits
-        g_flac_conv = NULL;      // R129 conv 路径已废弃(24bit 改拒绝); 16bit 无需转换
+        file_bits = 16;          // dr_flac 恒输出 16bit; i2s 对 FLAC 亦强制 16bit(见 i2s_out_bits)
+        g_flac_conv = NULL;      // 无需位深转换 element(dr_flac 内部已转 16bit)
     } else if (strcasecmp(get_file_ext(filepath), ".aac") == 0 || strcasecmp(get_file_ext(filepath), ".m4a") == 0) {
         const char *aac_path = strstr(filepath, "://");
         const char *real_aac = aac_path ? aac_path + 3 : filepath;

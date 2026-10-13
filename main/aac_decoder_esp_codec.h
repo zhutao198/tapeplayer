@@ -25,7 +25,7 @@ extern "C" {
 typedef struct {
     int task_stack;      /*!< 解码任务栈大小 (字节), -1 用默认 */
     int out_rb_size;     /*!< 输出 ringbuffer 大小 (字节) */
-    bool stack_in_ext;   /*!< 栈是否分配到 PSRAM (建议 false, 避免 Harvard 冲突) */
+    bool stack_in_ext;   /*!< 栈是否分配到 PSRAM (R145: 改 true, 规避长播 DRAM 碎片化致解码任务创建失败; FLAC ext=1 在 S3 已验证可正常工作) */
 } aac_decoder_esp_codec_cfg_t;
 
 /* R122-AAC-CODEC: esp_codec AAC 解码器为软件解码, README 建议运行任务栈 ~20K。
@@ -33,7 +33,7 @@ typedef struct {
 #define DEFAULT_AAC_DECODER_ESP_CODEC_CONFIG() { \
     .task_stack   = 48 * 1024,  \
     .out_rb_size  = 16 * 1024,  \
-    .stack_in_ext = false,       \
+    .stack_in_ext = true,        \
 }
 
 /**

@@ -29,13 +29,13 @@ extern "C" {
 typedef struct {
     int  task_stack;     /*!< 解码任务栈大小 (字节), -1 用默认 */
     int  out_rb_size;    /*!< 输出 ringbuffer 大小 (字节) */
-    bool stack_in_ext;   /*!< 栈是否分配到 PSRAM (建议 false, 避免 Harvard 冲突) */
+    bool stack_in_ext;   /*!< 栈是否分配到 PSRAM (R145: 改 true, 规避长播 DRAM 碎片化致解码任务创建失败; FLAC ext=1 在 S3 已验证可正常工作) */
 } mp3_decoder_libhelix_cfg_t;
 
 #define DEFAULT_MP3_DECODER_LIBHELIX_CONFIG() { \
     .task_stack   = 32 * 1024,  \
     .out_rb_size  = 16 * 1024,  \
-    .stack_in_ext = false,      \
+    .stack_in_ext = true,       \
 }
 
 /**

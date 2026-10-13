@@ -1094,7 +1094,10 @@ static bool mount_sd_card(void)
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = SD_SPI_HOST;
-    host.max_freq_khz = 20000;  /* R131e: 10MHz->20MHz 提升 SD 读吞吐(原 10MHz 仅 ~240KB/s, 喂不饱 32bit 48k/96k); 顺序读 CRC 风险远低于 R117 的 seek 打断场景, 若 96k 重现 data CRC failed 再降回 */
+    host.max_freq_khz = 20000;  /* R147: 10MHz->20MHz 回退。R145 降时钟没能治好恒定 data CRC failed
+                                  (0x2b9d/0x99f3, 10MHz 与 20MHz 同值、与时钟无关) -> 根因大概率是 SD 卡/
+                                  接线 marginal, 非时钟。故拿回 20MHz 吞吐余量(96kHz 24bit FLAC ~205KB/s,
+                                  10MHz ~240KB/s 余量太小)。CRC 根因(换卡/查接线)另行处理。 */
 
     sdspi_device_config_t device_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
     device_cfg.host_id = SD_SPI_HOST;
