@@ -18,6 +18,7 @@
 #include "config.h"
 #include "tape_control.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"   // R141-diag: heap_caps_get_free_size 诊断切歌 DRAM 泄漏/碎片化
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -39,6 +40,7 @@
 #include "aac_decoder_esp_codec.h"   // R122-AAC-CODEC: 开源 AAC 解码器替代闭源 aac_decoder
 #include "flac_decoder.h"
 #include "flac_decoder_esp_codec.h"   // R122-FLAC-CODEC: 开源 FLAC 解码器替代闭源 flac_decoder(崩)
+#include "flac_decoder_drflac.h"        // R-FLAC-DRFLAC: 自托管 dr_flac 解码器(内存可控, 不踩 LVGL)
 #include "ogg_decoder.h"
 #include "wav_decoder.h"
 #include "wav_bitdepth_conv.h"   // R123-WAV: WAV 原始 PCM(16/24/32bit) -> 16bit 转换 element
@@ -150,7 +152,7 @@ static int mp3_sniff_sample_rate(const char *path, int id3_sz, int *bitrate_kbps
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
     if (fseek(fp, id3_sz, SEEK_SET) != 0) { fclose(fp); return 0; }
-    uint8_t buf[1024];   // R083-fix: 仅需扫首个帧头(4B)，1KB 足够；避免大栈数组撑爆 main 任务栈
+    static uint8_t buf[1024];   // R141: static 移出 8KB main 栈；仅 main 任务串行调用，static 安全
     size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
     static const int rates[3][4] = {
@@ -330,7 +332,7 @@ static bool aac_probe_is_adts(const char *path)
 {
     FILE *fp = fopen(path, "rb");
     if (!fp) return false;
-    uint8_t buf[4096];
+    static uint8_t buf[4096];   // R141: static 移出 8KB main 栈，避免 4KB 栈数组溢出踩内存
     size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
     if (n < 4) return false;
@@ -358,7 +360,7 @@ static int flac_parse_duration_ms(const char *path)
 {
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
-    uint8_t buf[65536];
+    static uint8_t buf[4096];   // R141 根因修复: 原 64KB 栈数组撑爆 8KB main 栈→踩坏 DRAM 堆/PSRAM LVGL→FLAC 必崩。改 static 并缩至 4KB(仅需 fLaC+STREAMINFO; 找不到则回退粗估时长, 不再崩)
     size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
     if (n < 8) return 0;
@@ -390,7 +392,7 @@ static int flac_sniff_sample_rate(const char *path)
 {
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
-    uint8_t buf[4096];
+    static uint8_t buf[4096];   // R141: static 移出 8KB main 栈
     size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
     if (n < 8) return 0;
@@ -415,7 +417,7 @@ static int flac_sniff_bits(const char *path)
 {
     FILE *fp = fopen(path, "rb");
     if (!fp) return 16;
-    uint8_t buf[4096];
+    static uint8_t buf[4096];   // R141: static 移出 8KB main 栈
     size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
     if (n < 8) return 16;
@@ -450,7 +452,7 @@ static int aac_sniff_sample_rate(const char *path)
 {
     FILE *fp = fopen(path, "rb");
     if (!fp) return 0;
-    uint8_t buf[4096];
+    static uint8_t buf[4096];   // R141: static 移出 8KB main 栈
     size_t n = fread(buf, 1, sizeof(buf), fp);
     fclose(fp);
     if (n < 4) return 0;
@@ -470,8 +472,9 @@ static audio_element_handle_t create_decoder(const char *path)
     mp3_decoder_cfg_t  mp3_cfg  = DEFAULT_MP3_DECODER_CONFIG();
     ogg_decoder_cfg_t  ogg_cfg  = DEFAULT_OGG_DECODER_CONFIG();
     wav_decoder_cfg_t  wav_cfg  = DEFAULT_WAV_DECODER_CONFIG();
+    flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();   // R-A: 回退闭源 flac_decoder (16bit 稳定, 见 git HEAD)
     /* R117: AAC 输出 ringbuffer 用 16KB 避免欠载(见 DEFAULT_AAC_DECODER_ESP_CODEC_CONFIG)。
-       (FLAC/AAC 均已改用 esp_codec 开源解码器, 见 flac_decoder_esp_codec.c / aac_decoder_esp_codec.c) */
+       (FLAC 已回退 ADF 闭源 flac_decoder; AAC 仍用 esp_codec 开源解码器) */
 
     if (strcasecmp(ext, ".mp3") == 0) {
         // R080: 换 Helix MP3 解码器（chmorgan/esp-libhelix-mp3, Apache-2.0）替代闭源 PV-MP3。
@@ -488,12 +491,11 @@ static audio_element_handle_t create_decoder(const char *path)
         ESP_LOGI(TAG, "Using AAC decoder (esp_codec, R122-AAC-CODEC)");
         return aac_decoder_esp_codec_init(NULL);
     } else if (strcasecmp(ext, ".flac") == 0) {
-        ESP_LOGI(TAG, "Using FLAC decoder (esp_codec, R122-FLAC-CODEC)");
-        /* R122-FLAC-CODEC: 用 esp_audio_codec 的开源 FLAC 解码器(simple_dec 路径)
-           替代 ADF 闭源 flac_decoder —— 闭源解码器在 16/24bit 上均有内部 PCM 缓冲越界,
-           污染 PSRAM/LVGL 导致 Guru Meditation, 无法 patch。新解码器与已验证 MP3 同源,
-           正确输出 16/24bit 并上报 music_info, 彻底消除崩溃。 */
-        return flac_decoder_esp_codec_init(NULL);
+        ESP_LOGI(TAG, "Using FLAC decoder (dr_flac, R-FLAC-DRFLAC)");
+        /* R-FLAC-DRFLAC: 用 dr_flac 自托管解码器。esp_codec/闭源 flac_decoder 都在 PSRAM
+           分配大缓冲且越界踩坏同在 PSRAM 的 LVGL 堆 -> Guru Meditation。dr_flac 仅分配少量
+           内部状态(几 KB), 绝不越界, 彻底根治。24bit 由 R136 前置嗅探拒绝兜底。 */
+        return flac_decoder_drflac_init(NULL);
     } else if (strcasecmp(ext, ".ogg") == 0 || strcasecmp(ext, ".opus") == 0) {
         ESP_LOGI(TAG, "Using OGG/OPUS decoder");
         return ogg_decoder_init(&ogg_cfg);
@@ -558,6 +560,13 @@ bool audio_player_play(const char *filepath)
 
     ESP_LOGI(TAG, "Playing: %s", filepath);
     audio_player_stop(); // 确保上一个管道已销毁
+    // R141-diag: 打印 teardown 后剩余 DRAM 与最大空闲块。逐曲观察: 若 free DRAM 单调下降
+    // => 泄漏(每次切歌漏固定量); 若 free 持平但 largest 骤降 => 碎片化。用于定位"切歌数首后
+    // Memory exhausted" 根因(既有问题, 此前被 FLAC 崩溃掩盖)。
+    ESP_LOGD(TAG, "R141-heap: after-stop free_dram=%u largest_dram=%u free_psram=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     // R062-fix：复用 g_i2s_writer 跨 play 时，上一轮 stop 已将其置为
     // AEL_STATE_FINISHED，若不 reset 直接重新 register/run，i2s 元素 resume
     // 时仍为 finished 态 → pipeline 误判播放完成 → 无限重启（听不到声音）。

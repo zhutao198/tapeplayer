@@ -1019,18 +1019,7 @@ static void lvgl_task(void *arg)
         lv_unlock();
         g_lvgl_diag_stage = 4;   /* R127-diag: 已解锁, 本轮正常 */
         g_lvgl_diag_loop++;
-        {
-            static uint64_t s_vis_last = 0;
-            uint64_t nowv = esp_timer_get_time();
-            if (nowv - s_vis_last >= 2000000) {
-                s_vis_last = nowv;
-                ESP_LOGI(TAG, "DBG: VIS msg_hidden=%d player_hidden=%d splash_hidden=%d msg_active=%d",
-                         lv_obj_has_flag(g_msg, LV_OBJ_FLAG_HIDDEN),
-                         lv_obj_has_flag(g_player, LV_OBJ_FLAG_HIDDEN),
-                         lv_obj_has_flag(s_splash, LV_OBJ_FLAG_HIDDEN),
-                         s_msg_active);
-            }
-        }
+        /* R143: 移除每 ~2s 刷屏的 DBG:VIS 对象可见性诊断(用户要求去掉)。 */
         /* R127-diag: 每秒心跳已移除(避免刷屏); 停滞告警由 main.cpp 统一处理。 */
         vTaskDelay(pdMS_TO_TICKS(5));
         /* R098g: 调试期临时 flush 计数诊断日志已移除(每 ~1s 刷屏, 干扰正常日志)。
@@ -2006,12 +1995,8 @@ static void display_update_nolock(player_state_t state,
     // 主循环 200ms 节流每条都打→ 20行/秒纯噪声，把真崩因日志淹没。
     // LVGL 死锁问题已在 R063-fix 用异步 pending 解决，无需每次锁前后再验。
     // call_count 仅用于 ui_show_player #N 调试（前3次打印），保留不增噪声。
-    static uint32_t call_count = 0;
-    if (call_count <= 3) {
-        ESP_LOGI(TAG, "DBG: display_update call #%u state=%d track='%s' idx=%d/%d pos=%d/%d spd=%.2f gear=%d vol=%d",
-                 (unsigned)call_count, (int)state, track_name, track_idx, total,
-                 current_sec, total_sec, speed, gear, volume);
-    }
+    static uint32_t call_count = 0;   /* 仍供下方 post-update #N 前3次打印节流使用 */
+    /* R143: 关闭与 FLAC 无关的 DBG:display_update call #N 启动诊断(用户要求) */
     call_count++;
     /* P1-fix: 已在 lvgl_task 持锁区调用, 无需再加锁 */
 

@@ -23,7 +23,7 @@ CONFIG_SPIRAM_SPEED_80M=y
 # 让 malloc() 也能分配 PSRAM（SPIRAM_USE_MALLOC 隐含 caps 分配能力），
 # 并将小分配阈值设为 0，使 LVGL 控件/对象与 freetype 字形缓存优先落 PSRAM。
 CONFIG_SPIRAM_USE_MALLOC=y
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
 
 # Partition table (OTA-capable, see partitions_ota.csv)
 CONFIG_PARTITION_TABLE_CUSTOM=y

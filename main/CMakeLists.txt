@@ -33,6 +33,7 @@ idf_component_register(
         "mp3_decoder_esp_codec.c"   # R076-CODEC-7: 开源 MP3 解码器 wrapper (替代闭源 PV-MP3)
         "mp3_decoder_libhelix.c"   # R080: Helix MP3 解码器 wrapper (替代闭源 PV-MP3, 不崩+坏帧跳过)
         "flac_decoder_esp_codec.c"  # R122-FLAC-CODEC: 开源 FLAC 解码器 wrapper (替代闭源 flac_decoder, 崩)
+        "flac_decoder_drflac.c"     # R-FLAC-DRFLAC: 自托管 dr_flac 解码器 (内存可控, 不踩 LVGL)
         "aac_decoder_esp_codec.c"   # R122-AAC-CODEC: 开源 AAC 解码器 wrapper (替代闭源 aac_decoder, 与 FLAC 同构)
         "wav_bitdepth_conv.c"       # R123-WAV: WAV 原始 PCM(16/24/32bit) -> 16bit 转换 element(规避 32bit I2S 卡死)
         "settings.cpp"

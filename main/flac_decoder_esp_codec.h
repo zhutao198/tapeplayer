@@ -28,12 +28,15 @@ typedef struct {
 } flac_decoder_esp_codec_cfg_t;
 
 /* R122-FLAC-CODEC: esp_codec FLAC 解码器为软件解码, README 建议运行任务栈 ~20K。
-   R135: 48K 仍栈溢出踩坏 LVGL 堆(LoadProhibited in lv_obj_style), 放大到 96K。
-   stack_in_ext=false 栈放片内 RAM (规避 PSRAM Harvard 冲突); out_rb 16K。 */
+   R135: 48K 栈溢出, 放大到 96K。
+   R-FIX: 96K 强制片内(ext=0)在 ESP32-S3(DRAM≈284KB)上 xTaskCreate 分配不出连续片内
+   栈 -> "Error creating task decoder" 整首被 skip。改回 stack_in_ext=true 放 PSRAM(8MB
+   充足); 且 LVGL 对象已由 sdkconfig SPIRAM_MALLOC_ALWAYSINTERNAL=16384 隔离到片内 DRAM,
+   PSRAM 上的解码栈/缓冲再也踩不到 LVGL, 不再 Guru Meditation。 */
 #define DEFAULT_FLAC_DECODER_ESP_CODEC_CONFIG() { \
     .task_stack   = 96 * 1024,  \
     .out_rb_size  = 16 * 1024,  \
-    .stack_in_ext = false,       \
+    .stack_in_ext = true,        \
 }
 
 /**
