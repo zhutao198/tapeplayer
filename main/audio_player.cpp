@@ -1242,41 +1242,26 @@ static void safe_mp3_decoder_reset(void)
     }
 }
 
-/* R153b: 当前曲目是否为 MP3 —— 决定 seek 是否需要"停管道+重建解码器"。
-   仅 MP3(Helix) 有跨帧位保留(reservoir)/哈夫曼状态, 连续 seek 失配后必须重建
-   解码器(R094 根因, R153 修复); FLAC(dr_flac 帧各自独立)/AAC 无需重建, 且二者
-   open 会从流当前位置重新解析文件头(FLAC 需 fLaC 标记), 中途 seek 后若走
-   pause->close->resume->open 必然打不开 -> 绝不可对它们用 pause_seek_resume。 */
+/* R153b: 当前曲目是否为 MP3 —— 只有 MP3 需要在 seek 后重建解码器(见下)。 */
 static bool is_mp3_current(void)
 {
     return g_seek_path[0] && strcasecmp(get_file_ext(g_seek_path), ".mp3") == 0;
 }
 
-/* R153b: 非 MP3 路径的 seek —— 不停 decoder, 仅停 reader+i2s(R117 行为, 全格式已验证)。
-   适用于: WAV 直通(无 decoder)与 FLAC/AAC(帧独立无需重建, 见 is_mp3_current)。 */
+/* R154: 所有格式统一的 seek 路径(不停 decoder, 仅停 reader+i2s —— R117 已验证行为) */
 static void seek_no_decoder_reset(int ms)
 {
     audio_element_pause(g_fatfs_reader);
     if (g_i2s_writer) audio_element_pause(g_i2s_writer);
     audio_player_seek_ms_internal(ms);
-    audio_element_resume(g_fatfs_reader, 0, pdMS_TO_TICKS(100));
     if (g_decoder) {
         audio_element_reset_output_ringbuf(g_decoder);   /* 丢弃旧位置已解码 PCM */
+        if (is_mp3_current()) {
+            mp3_decoder_libhelix_request_rebuild();      /* R154: 任务侧安全重建 */
+        }
     }
+    audio_element_resume(g_fatfs_reader, 0, pdMS_TO_TICKS(100));
     if (g_i2s_writer) audio_element_resume(g_i2s_writer, 0, pdMS_TO_TICKS(100));
-}
-
-static void audio_player_pause_seek_resume(int ms)
-{
-    if (!g_pipeline || !g_is_playing) return;
-    audio_pipeline_pause(g_pipeline);
-    audio_player_seek_ms_internal(ms);
-    if (g_decoder) {
-        audio_element_reset_input_ringbuf(g_decoder);
-        audio_element_reset_output_ringbuf(g_decoder);
-    }
-    safe_mp3_decoder_reset();
-    audio_pipeline_resume(g_pipeline);
 }
 
 void audio_player_seek_ms(int ms)
@@ -1285,29 +1270,14 @@ void audio_player_seek_ms(int ms)
     // S5：保留原暂停态——暂停时 seek 不再静默 resume
     bool was_paused = g_is_paused;
     if (!was_paused) {
-        if (g_decoder && is_mp3_current()) {
-            /* R153: MP3 恢复 R085~R116 一贯的 pause_seek_resume 全复位路径：
-               停整个管道(含解码任务, 保证重置无并发; pause/resume 均有 2s 超时上限,
-               不会像 stop 路径那样永久阻塞 main) -> seek -> 清 decoder 输入/输出
-               ringbuffer -> safe_mp3_decoder_reset() 重置解码器内部状态 -> resume。
-               R117(WAV 直通批次)曾把此路径改成"仅停 reader+i2s + 只清输出 rb", 漏掉了
-               R094 根因修复(解码器重建): Helix 解码器含跨帧位保留(reservoir)状态,
-               连续 seek 2-3 次后与新位置数据失配 -> 连续 51 坏帧 -> err_cnt>50 误判曲终
-               返回 AEL_IO_DONE -> 解码器元素永久 FINISHED -> 表现为"连续快进/快退后
-               完全无声, 且管道不结束不自动跳下一首"(2026-10-14 实测, 见开发日志 R153)。
-               R153b: 仅 MP3 走此路径 —— FLAC/AAC 的 open 会重解析文件头, 不能
-               close/open(见 is_mp3_current)。 */
-            audio_player_pause_seek_resume(ms);
-        } else {
-            /* R153b: WAV 直通(无 decoder)与 FLAC/AAC 保持 R117 已验证行为。 */
-            seek_no_decoder_reset(ms);
-        }
+        /* R154: 全格式统一走 seek_no_decoder_reset(MP3 重建已并入其标志机制) */
+        seek_no_decoder_reset(ms);
     } else {
         audio_player_seek_ms_internal(ms);
         if (g_decoder) {
             audio_element_reset_input_ringbuf(g_decoder);
             audio_element_reset_output_ringbuf(g_decoder);
-            safe_mp3_decoder_reset();   // R094: 同 pause_seek_resume，避免残留缓冲误判曲终
+            safe_mp3_decoder_reset();   // R094/R154: 只置重建标志, 任务侧安全执行
         }
         // R035-020：保持 paused：清掉内部函数的 start_us 赋值，避免 get_position_ms 在暂停态累积。
         g_play_start_us = 0;
@@ -1359,21 +1329,11 @@ void audio_player_scrub_exit(bool resume)
     g_scrub_active = false;
     /* R111: 暂停态退出scrub不resume, 避免RESUME->PAUSE抖动导致管道状态混乱 */
     if (resume) {
-        if (g_decoder && is_mp3_current()) {
-            /* R153: MP3 停管道全复位+重建(同 seek_ms 播放态)。
-               scrub 期间(decoder 任务运行中)按 R098 设计只清 err_cnt 不重建解码器;
-               释放时必须停管道+重建, 否则 scrub 累积的位保留失配同样触发
-               err_cnt>50 误判曲终 -> 解码器 FINISHED -> 无声不跳歌。
-               R153b: 仅 MP3; FLAC/AAC 走下方 R117 路径(open 重解析文件头不可重启)。 */
-            audio_player_pause_seek_resume(final_ms);
-        } else if (g_decoder) {
-            /* R117 FLAC/AAC: 仅停 reader+i2s + 清输出 rb(帧独立无需重建解码器)。 */
-            audio_element_pause(g_fatfs_reader);
-            if (g_i2s_writer) audio_element_pause(g_i2s_writer);
-            audio_player_seek_ms_internal(final_ms);
-            audio_element_reset_output_ringbuf(g_decoder);
-            audio_element_resume(g_fatfs_reader, 0, pdMS_TO_TICKS(100));
-            if (g_i2s_writer) audio_element_resume(g_i2s_writer, 0, pdMS_TO_TICKS(100));
+        if (g_decoder) {
+            /* R154: 压缩格式统一 seek_no_decoder_resume(同 seek_ms 播放态) —— 不停
+               decoder + MP3 任务侧重建。scrub 期间按 R098 只清 err_cnt, 释放时置
+               重建标志, 解码任务自行安全重建。 */
+            seek_no_decoder_reset(final_ms);
         } else {
             /* R117 WAV PCM passthrough: i2s NEVER paused. Reader was paused in scrub_enter.
                KEY: set_byte_pos only changes file offset — reader's internal prefetch buffer
@@ -1540,16 +1500,8 @@ void audio_player_tick(void)
         if (cur >= g_ab_b_ms) {
             g_ab_loop_count++;   /* R111: 遍数 +1 */
             ESP_LOGD(TAG, "AB loop #%d: seek back to A (%d ms)", g_ab_loop_count, g_ab_a_ms);
-            if (g_decoder && is_mp3_current()) {
-                /* R153: MP3 必须全复位+重建解码器(同 seek_ms/scrub_exit)。
-                   R117 曾把此路径改为"仅停 reader+i2s", AB 循环反复回跳 A 点会累积
-                   Helix 位保留失配 -> err_cnt>50 误判曲终 -> 无声/跳歌。
-                   R153b: 仅 MP3; FLAC/AAC 走下方 R117 路径。 */
-                audio_player_pause_seek_resume(g_ab_a_ms);
-            } else {
-                /* R117 WAV 直通 / FLAC / AAC: 仅停 reader + i2s, 保持既有已验证行为。 */
-                seek_no_decoder_reset(g_ab_a_ms);
-            }
+            /* R154: 全格式统一 seek_no_decoder_reset(MP3 重建已并入其标志机制) */
+            seek_no_decoder_reset(g_ab_a_ms);
         }
     }
 

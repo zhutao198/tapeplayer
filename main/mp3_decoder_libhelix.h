@@ -60,9 +60,20 @@ void mp3_decoder_set_volume(int level);
  * reader 在新位置重开但 decoder 元素未 close/reopen，残留的旧位置半截数据会
  * 与新数据拼接成非法 MP3 导致误判曲终跳下一首。调用本函数清空并从新位置重新同步。
  *
- * @param[in]  el  解码器 audio_element handle（用于清零其实例级 err_cnt；可传 NULL）
+ * R154: 本函数只置重建标志，真正的重建由解码任务在自己 process 顶部执行
+ * (mp3_task_rebuild_if_req)——不可在 main 线程原地 free/init，会与解码任务
+ * 并发写坏 Helix 状态(实测致解码器永久静默失败：无声、无日志、仅切歌可恢复)。
+ * 元素处于 PAUSED 时标志会延迟到 resume 后第一个 process 消费，安全。
+ *
+ * @param[in]  el  解码器 audio_element handle（保留参数兼容，R154 起未使用）
  */
 void mp3_decoder_libhelix_reset(audio_element_handle_t el);
+
+/**
+ * @brief  R154: 请求解码任务在下一个 process 入口重建 Helix 解码器（任务侧安全执行）
+ */
+void mp3_decoder_libhelix_request_rebuild(void);
+
 void mp3_decoder_libhelix_clear_errors(audio_element_handle_t el);
 
 #ifdef __cplusplus

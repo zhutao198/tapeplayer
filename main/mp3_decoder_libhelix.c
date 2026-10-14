@@ -104,6 +104,15 @@ static size_t     s_in_len = 0;   /* s_in 中尚未喂给 Helix 的字节数 */
 static int        s_no_valid_hdr_runs = 0;
 #define HELIX_NO_HDR_MAX_RUNS   3
 
+/* R154: 解码器重建请求标志 —— 由 main 任务在 seek 后置位, 由解码任务在自己
+   process 顶部(安全点, 无并发)执行真正的 MP3FreeDecoder/MP3InitDecoder。
+   取代 R094/R098 的"main 线程原地重建": 实测(2026-10-14)当 audio_element_pause
+   停解码器超时(解码任务阻塞在输出、等 i2s 消耗; pause 超时无日志且调用方忽略
+   返回值)时, 原地重建与正在运行的解码任务并发 -> Helix 内部状态写坏 -> 解码器
+   既不报错也不产出(UNDERFLOW/阻塞均无日志, ADF 的 IN-[x] AEL_IO_TIMEOUT 日志被
+   注释) -> 完全无声、串口全静、只有切歌能恢复。改为任务侧重建后零并发。 */
+static volatile bool s_rebuild_req = false;
+
 /* R091: 软件音量。Q15 固定点增益(32768=1.0 统一)，由 mp3_decoder_set_volume 设置，
    _mp3_helix_process 输出前缩放 PCM。替代 ADF 脆弱的 i2s ALC（IDF5.x 会 BREAK 崩溃）。 */
 static int g_vol_gain_q15 = 32768;
@@ -146,6 +155,7 @@ static esp_err_t _mp3_helix_open(audio_element_handle_t self)
        首帧判定，导致新曲目被误判不可解码而跳过。 */
     s_in_len = 0;
     s_no_valid_hdr_runs = 0;
+    s_rebuild_req = false;   /* R154: 新 element 干净起步, 不消费上一首遗留的重建请求 */
     audio_element_setdata(self, c);
     return ESP_OK;
 }
@@ -164,6 +174,36 @@ static esp_err_t _mp3_helix_close(audio_element_handle_t self)
     return ESP_OK;
 }
 
+/* R154: main 侧调用: 请求解码任务在下一个 process 入口重建解码器。 */
+void mp3_decoder_libhelix_request_rebuild(void)
+{
+    s_rebuild_req = true;
+}
+
+/* R154: 任务侧调用: 若有重建请求则执行。仅允许在 _mp3_helix_process 顶部调用
+   (解码任务自身上下文), 绝不可从 main 调用。 */
+static void mp3_task_rebuild_if_req(helix_ctx_t *c)
+{
+    if (!s_rebuild_req) return;
+    s_rebuild_req = false;
+    if (c) {
+        /* 先建后释放, 避免 OOM 变 NULL (R095 同款策略) */
+        void *nd = MP3InitDecoder();
+        if (nd) {
+            MP3FreeDecoder(c->decoder);
+            c->decoder = nd;
+        }
+        c->err_cnt = 0;
+        /* 清 last_* 强制下次成功帧重报 music_info(便于诊断确认重建生效) */
+        c->last_rate = 0;
+        c->last_ch   = 0;
+        c->last_bits = 0;
+    }
+    s_in_len = 0;
+    s_no_valid_hdr_runs = 0;
+    g_seek_dbg_first = true;
+}
+
 /* R094: seek/跳曲前重置解码器。根因（经 mp3_dbg 实测确认）：
    s_in/s_in_len 为模块级 static，跨 pause/resume/seek 保留；更关键的是 Helix 解码器
    内部状态 c->decoder(MP3DecInfo，含位保留/哈夫曼等上下文) 在多次 seek 后与新位置
@@ -171,30 +211,13 @@ static esp_err_t _mp3_helix_close(audio_element_handle_t self)
    (err_cnt 累加至 51 误返 AEL_IO_DONE 跳曲)。仅清 s_in/err_cnt 不够，必须重新初始化
    Helix 解码器，与切歌新建 decoder 效果一致：从新位置干净重新同步帧边界。
    注：首帧因位保留引用了"上一帧主数据"(已跳跃丢失)可能产出 1 帧轻微杂音或单帧错误，
-   但次帧起主数据连续即可正常解码(err_cnt 在成功帧清零)，不会累积误判。 */
+   但次帧起主数据连续即可正常解码(err_cnt 在成功帧清零)，不会累积误判。
+   R154: 改为只置重建标志(任务侧执行)。调用时机多为播放中(解码任务运行中)或
+   元素已 PAUSED(标志会延迟到 resume 后第一个 process 消费), 两种都安全。 */
 void mp3_decoder_libhelix_reset(audio_element_handle_t el)
 {
-    if (el) {
-        helix_ctx_t *c = (helix_ctx_t *)audio_element_getdata(el);
-        if (c) {
-            c->err_cnt = 0;
-            /* R098: 重建 Helix 解码器以重置内部位保留/哈夫曼状态，否则 seek 到合法帧边界后
-               仍会连续解坏帧(err_cnt>50)误判曲终跳曲(R094 根因)。
-               崩溃根因已确认是 frame_align 伪同步字(R095)导致垃圾 nSlots(R097 已修)，
-               与重建本身无关。此处直接重建安全：调用时机为 pause_seek_resume(主任务、
-               解码任务已暂停)，无并发。R095: 先分配新 decoder，成功才释放旧，避免 OOM 变 NULL。 */
-            void *new_dec = MP3InitDecoder();
-            if (new_dec) {
-                MP3FreeDecoder(c->decoder);
-                c->decoder = new_dec;
-            } else {
-                ESP_LOGE("mp3_dbg", "R098 MP3InitDecoder OOM, keep old decoder (seek may glitch)");
-            }
-        }
-    }
-    s_in_len = 0;
-    s_no_valid_hdr_runs = 0;   /* R101: 新曲目/新位置重新计数，避免上一首的放弃状态残留 */
-    g_seek_dbg_first = true;
+    (void)el;   /* R154: 重建在任务侧按元素实例执行, 无需在此拿句柄 */
+    mp3_decoder_libhelix_request_rebuild();
 }
 
 /* R098: FF/REW secure: clear err_cnt only, no decoder free/realloc
@@ -214,6 +237,12 @@ static audio_element_err_t _mp3_helix_process(audio_element_handle_t self, char 
     (void)el_buffer;
     (void)el_buf_len;
     helix_ctx_t *c = (helix_ctx_t *)audio_element_getdata(self);
+    if (!c) return AEL_PROCESS_FAIL;
+
+    /* R154: 任务侧自重建 —— main 在 seek 后只置标志, 真正的 free/init 在这里执行,
+       与解码零并发(本任务自身上下文)。放在读输入之前, 确保 s_in 清空后读到的
+       全是 seek 后的新数据。 */
+    mp3_task_rebuild_if_req(c);
 
     /* 从上游 ringbuf 取输入（自动处理 EOS：返回 AEL_IO_DONE） */
     audio_element_err_t r = audio_element_input(self, (char *)(s_in + s_in_len),
