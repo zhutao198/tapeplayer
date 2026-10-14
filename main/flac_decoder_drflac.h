@@ -28,7 +28,7 @@ typedef struct {
  * 状态, 不碰 PSRAM。解码任务栈保留在 PSRAM(有 8MB), 128KB 对 dr_flac 足够。 */
 #define DEFAULT_FLAC_DECODER_DRFLAC_CONFIG() { \
     .task_stack   = 128 * 1024, \
-    .out_rb_size  = 32 * 1024,  \
+    .out_rb_size  = 64 * 1024,  \
     .stack_in_ext = true,        \
 }
 

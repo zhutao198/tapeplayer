@@ -1154,7 +1154,7 @@ void display_start_lvgl_task(void)
 {
     // R071：合并 before/after lvgl task create 打印为单条；保留失败路径 ESP_LOGE
     TaskHandle_t h = NULL;
-    BaseType_t rc = xTaskCreatePinnedToCoreWithCaps(lvgl_task, "lvgl", 16384, NULL, 8, &h,  /* P1-fix: prio 5->8 */
+    BaseType_t rc = xTaskCreatePinnedToCoreWithCaps(lvgl_task, "lvgl", 16384, NULL, 4, &h,  /* R150: prio 8->4, 降到音频 element 任务(默认 5)之下。原 prio 8 会抢占 file/decoder/i2s 致: ① 周期重绘时音频瞬断=咔咔; ② 96kHz FLAC 解码被抢 CPU 实时产出仅 ~64%(30s 播成 47s)。 */
                                                     1, MALLOC_CAP_INTERNAL);
     if (rc != pdPASS || !h) {
         ESP_LOGE(TAG, "lvgl task CREATE FAILED! rc=%d", (int)rc);

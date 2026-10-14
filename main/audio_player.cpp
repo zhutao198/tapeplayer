@@ -563,7 +563,9 @@ bool audio_player_play(const char *filepath)
     // R141-diag: 打印 teardown 后剩余 DRAM 与最大空闲块。逐曲观察: 若 free DRAM 单调下降
     // => 泄漏(每次切歌漏固定量); 若 free 持平但 largest 骤降 => 碎片化。用于定位"切歌数首后
     // Memory exhausted" 根因(既有问题, 此前被 FLAC 崩溃掩盖)。
-    ESP_LOGI(TAG, "R141-heap: after-stop free_dram=%u largest_dram=%u free_psram=%u",
+    // R142 已定论: 无泄漏(free/largest 按格式有界稳态, 见开发日志 R142-verify)。
+    // R145 为长播观察临时提 LOGI; R152 收尾降回 LOGD(默认不显示), 保留备查。
+    ESP_LOGD(TAG, "R141-heap: after-stop free_dram=%u largest_dram=%u free_psram=%u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));

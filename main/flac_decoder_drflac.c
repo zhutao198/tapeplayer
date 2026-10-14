@@ -8,11 +8,11 @@
  *   "dr_flac/解码任务栈溢出踩 LVGL"(R138~R140 都在查解码栈, 均错)。
  * - R141 定论: 真凶是 audio_player.cpp 的 flac_parse_duration_ms(64KB)/flac_sniff_*(4KB) 在
  *   8KB main 任务栈上开大数组, main 栈溢出踩坏 DRAM 堆 + PSRAM LVGL; dr_flac 解码根本没跑就崩。
- * - R144: ① dr_flac 内部分配(含大 pDecodeBuffer)与 PCM 缓冲改用 MALLOC_CAP_DEFAULT, 大缓冲回落
- *   PSRAM。原因: R138 据误判强制 DRAM, 但碎片化 DRAM(最大连续块 ~31KB)令立体声 FLAC 解码缓冲
- *   (单声道 2 倍)分配失败 -> drflac_open 失败 -> 立体声 FLAC 无法播放。PSRAM 充裕(8MB/最大连续块
- *   7.6MB), 软件解码无 DMA, 放 PSRAM 安全。② 按真实声道数解码并统一输出立体声(单声道上混), 修复
- *   单声道 FLAC 语速翻倍 + 哒哒噪音。
+ * - R144: ① dr_flac 内部分配改用 MALLOC_CAP_DEFAULT; ② 按真实声道数解码并统一输出立体声(单声道
+ *   上混), 修复单声道 FLAC 语速翻倍 + 哒哒噪音。
+ * - R149: 分配器改"DRAM 优先 + PSRAM 兜底"(见 drflac_malloc_cb)。R144 大缓冲落 PSRAM 虽放得下但
+ *   解码慢, 96kHz 24bit 解不动(30s 曲子播成 47s, 实测); DRAM 访存快才实时, R145 后 DRAM 最大连续块
+ *   ~70KB 放得下典型解码缓冲, 放不下再回落 PSRAM。
  *
  * 流式解码: drflac_open_relaxed 的 read 回调从 audio_element_input (上游 in_rb) 拉数据,
  * seek/tell 回调返回 DRFLAC_FALSE 表示不可寻址, dr_flac 以顺序流式模式解码 FLAC 帧。
@@ -76,12 +76,33 @@ static drflac_bool32 drflac_tell_cb(void *pUserData, drflac_int64 *pCursor)
 static void *drflac_malloc_cb(size_t sz, void *pUserData)
 {
     (void)pUserData;
-    return heap_caps_malloc(sz, MALLOC_CAP_DEFAULT);
+    /* R149: 优先 DRAM(解码访存快, 96kHz 24bit 才实时); DRAM 不够(碎片化/过大)回落 PSRAM 保证能开。
+       背景: R144 全落 PSRAM 虽能放, 但 PSRAM 慢, 96kHz 输出速率翻倍解不动(30s 曲子播成 47s, 实测);
+       R145 把 AAC/MP3 栈挪去 PSRAM 后 DRAM 最大连续块回到 ~70KB, 放得下典型解码缓冲。
+       R151 诊断(已定论): 44.1/48k 解码缓冲 41264B→DRAM(快); 96k 24bit 缓冲 69936B 超 DRAM 最大
+       连续块→回落 PSRAM→解码慢(30s 播 47s)。定论=96kHz 24bit 超本硬件实时能力, 建议转码 48k。
+       R152 收尾: 该分配位置日志降为 LOGD(默认不显示), 保留备查。 */
+    void *p = heap_caps_malloc(sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const char *loc = "DRAM";
+    if (!p) { p = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); loc = "PSRAM"; }
+    if (sz >= 24576) ESP_LOGD(TAG, "R151-diag: drflac alloc %uB -> %s", (unsigned)sz, loc);
+    return p;
 }
 static void *drflac_realloc_cb(void *p, size_t sz, void *pUserData)
 {
     (void)pUserData;
-    return heap_caps_realloc(p, sz, MALLOC_CAP_DEFAULT);
+    if (!p) return drflac_malloc_cb(sz, pUserData);
+    void *q = heap_caps_realloc(p, sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!q) q = heap_caps_realloc(p, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!q) {   /* 跨区搬移: 手动 alloc(DRAM/PSRAM 回落) + copy + free */
+        size_t old = heap_caps_get_allocated_size(p);
+        void *n = drflac_malloc_cb(sz, pUserData);
+        if (!n) return NULL;
+        if (old) memcpy(n, p, old < sz ? old : sz);
+        heap_caps_free(p);
+        q = n;
+    }
+    return q;
 }
 static void drflac_free_cb(void *p, void *pUserData)
 {
