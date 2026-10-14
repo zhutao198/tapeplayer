@@ -1983,6 +1983,37 @@ void display_show_volume(int volume)
     g_vol_hide_until = esp_timer_get_time() + 3000 * 1000;
 }
 
+/* R155: 从曲目名(含扩展名, 来自 playlist_get_name)提取格式 token 并大写。
+   例: "voice-sample.mp3" -> "MP3"; "flac/music.FLAC" -> "FLAC"; "a.b/song.wav" -> "WAV"。
+   取不到扩展名(playlist_get_name 失败时的 "Track N" 兜底名, 正常播放不可达)时
+   回退 "AUDIO" —— 取代 R115 起硬编码的 "MP3"(任何格式都显示 MP3 的 bug)。
+   仅用于格式行文本, 不涉音频链路; 手工 ASCII 大写, 不依赖 ctype.h。 */
+static void fmt_tag_from_track(const char *track_name, char *out, size_t outsz)
+{
+    const char *dot = NULL;
+    if (track_name) {
+        /* 从尾向前找: 先遇 '/' 说明目录部分无扩展名; 先遇 '.' 即扩展名起点 */
+        for (const char *p = track_name + strlen(track_name); p > track_name; p--) {
+            char ch = *(p - 1);
+            if (ch == '.') { dot = p - 1; break; }
+            if (ch == '/') break;
+        }
+    }
+    size_t i = 0;
+    if (dot && dot[1]) {
+        for (const char *p = dot + 1; *p && i + 1 < outsz; p++, i++) {
+            char ch = *p;
+            if (ch >= 'a' && ch <= 'z') ch = (char)(ch - ('a' - 'A'));
+            out[i] = ch;
+        }
+    }
+    out[i] = '\0';
+    if (i == 0) {   /* 无扩展名(或空扩展名) -> 中性回退, 不再错显示 MP3 */
+        strncpy(out, "AUDIO", outsz - 1);
+        out[outsz - 1] = '\0';
+    }
+}
+
 static void display_update_nolock(player_state_t state,
                     const char *track_name,
                     int track_idx, int total,
@@ -2124,8 +2155,11 @@ static void display_update_nolock(player_state_t state,
         }
     }
 
-    /* R115: 格式行 = MP3 + 播放模式(中文) + A-B复读信息 (canvas渲染支持中文) */
+    /* R155: 格式行 = 真实格式(从曲目名扩展名取, 取代 R115 起硬编码的 "MP3")
+       + 播放模式(中文) + A-B复读信息 (canvas渲染支持中文) */
     {
+        char fmt_tag[8];
+        fmt_tag_from_track(track_name, fmt_tag, sizeof(fmt_tag));
         char fmt_buf[128];
         if (ab_a >= 0) {
             /* A-B时不显示播放模式, 给A-B时间和循环次数留空间 */
@@ -2135,21 +2169,22 @@ static void display_update_nolock(player_state_t state,
                 format_time(ab_b / 1000, bbuf, sizeof(bbuf));
                 int loop_n = audio_player_ab_loop_count();
                 if (ab_on && loop_n > 0)
-                    snprintf(fmt_buf, sizeof(fmt_buf), "MP3|A%s B%sx%d", abuf, bbuf, loop_n);
+                    snprintf(fmt_buf, sizeof(fmt_buf), "%s|A%s B%sx%d", fmt_tag, abuf, bbuf, loop_n);
                 else
-                    snprintf(fmt_buf, sizeof(fmt_buf), "MP3|A%s B%s", abuf, bbuf);
+                    snprintf(fmt_buf, sizeof(fmt_buf), "%s|A%s B%s", fmt_tag, abuf, bbuf);
             } else {
-                snprintf(fmt_buf, sizeof(fmt_buf), "MP3|A%s B:--", abuf);
+                snprintf(fmt_buf, sizeof(fmt_buf), "%s|A%s B:--", fmt_tag, abuf);
             }
         } else {
             const char *mode_cn = (s_play_mode == 1) ? "列表循环" :
                                   (s_play_mode == 2) ? "单曲循环" : "顺序播放";
-            snprintf(fmt_buf, sizeof(fmt_buf), "MP3|%s", mode_cn);
+            snprintf(fmt_buf, sizeof(fmt_buf), "%s|%s", fmt_tag, mode_cn);
         }
         /* R119-ui-a: 格式行内容未变时跳过整屏点阵重绘(写~115KB PSRAM)。
-           原代码每次 display_update 都 clear+text+invalidate, 即使内容固定("MP3|顺序播放")
+           原代码每次 display_update 都 clear+text+invalidate, 即使内容固定("FLAC|顺序播放")
            也整屏重绘, 形成每 200ms 一次的渲染尖峰, 拉长 lvgl_task 单帧,
-           导致磁带卷轴(reel)动画在该帧卡顿。与曲名 canvas 已有的"内容未变跳过"对齐。 */
+           导致磁带卷轴(reel)动画在该帧卡顿。与曲名 canvas 已有的"内容未变跳过"对齐。
+           R155: 切歌时格式 token 会变 -> 触发一次重绘(与曲名重绘同款成本, 每曲一次)。 */
         static char s_last_fmt[128] = "";
         if (strcmp(s_last_fmt, fmt_buf) != 0) {
             strncpy(s_last_fmt, fmt_buf, sizeof(s_last_fmt) - 1);
