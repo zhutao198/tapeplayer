@@ -787,7 +787,10 @@ static void cjk_fmt_clear(void)
     for (size_t i = 0; i < n; i++) s_fmt_canvas_buf[i] = bg;
 }
 
-/* R115: 格式行 canvas — A/B字符用黄色高亮 */
+/* R115: 格式行 canvas — A/B字符用黄色高亮
+   R156: 仅 "|" 之后的 A-B 信息区黄高亮。格式 token(如 AAC/FLAC, 含字母 A/B)在
+   "|" 之前, 必须保持统一紫色 —— R155 把真实格式引入该行后, AAC/FLAC 的 'A'
+   被误黄高亮(用户实测反馈), 此修复之。 */
 static void cjk_fmt_text_ab(const char *utf8)
 {
     if (!s_fmt_canvas_buf) return;
@@ -795,6 +798,7 @@ static void cjk_fmt_text_ab(const char *utf8)
     const uint16_t fg_yellow = (uint16_t)lv_color_to_u16(lv_color_hex(0xf59e0b));  /* 黄色(同AB徽章) */
     const uint16_t bg = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
     int pen = 0;
+    bool ab_zone = false;   /* R156: '|' 之后才是 A-B 信息区 */
     const char *p = utf8;
     while (*p) {
         uint32_t u = 0; int n = 0;
@@ -803,8 +807,9 @@ static void cjk_fmt_text_ab(const char *utf8)
         else if ((*p & 0xF0) == 0xE0) { u = ((uint32_t)(*p & 0x0F) << 12) | ((*(p+1) & 0x3F) << 6) | (*(p+2) & 0x3F); n = 3; }
         else { p++; continue; }
         p += n;
-        /* A/B 字符用黄色 */
-        uint16_t cur_fg = (u == 'A' || u == 'B') ? fg_yellow : fg;
+        if (u == '|') ab_zone = true;   /* R156: 进入 A-B 信息区 */
+        /* A/B 字符用黄色 (仅 A-B 信息区, R156) */
+        uint16_t cur_fg = (ab_zone && (u == 'A' || u == 'B')) ? fg_yellow : fg;
         int idx = cjk_unicode_to_glyph_idx(u);
         pen += cjk_draw_glyph(s_fmt_canvas_buf, FMT_CANVAS_W, FMT_CANVAS_H, pen, 0, idx, u, cur_fg, bg);
     }
