@@ -1708,6 +1708,10 @@ static void ui_show_msg(const char *txt)
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
+    /* R158: 隐藏点阵菜单 canvas, 避免信息文字与上一帧菜单点阵重叠(关于/操作说明屏)。
+       关闭信息屏时 menu_refresh()->menu_apply_nolock() 结尾会重新显示 canvas。
+       display_init 早期调用时 s_cjk_canvas 尚未创建, NULL 守卫覆盖。 */
+    if (s_cjk_canvas) lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
     lv_unlock();
 }
 
@@ -2570,7 +2574,7 @@ void display_show_info(const char *title, const char *text)
 {
     if (!g_display_initialized) return;
 
-    static char buf[256];
+    static char buf[512];   /* R158: 256->512, 操作说明内容较长(旧值会截断) */
     int len = 0;
     len += snprintf(buf + len, sizeof(buf) - len, "%s\n\n",
                     (title && title[0]) ? title : "Info");
@@ -2583,6 +2587,8 @@ void display_show_info(const char *title, const char *text)
         display_set_brightness(s_last_brightness);
         g_display_sleep = false;
     }
+    /* R158: 隐藏点阵菜单 canvas 的动作在 ui_show_msg 持锁区内执行(见该函数),
+       此处不可直接碰 LVGL —— display_show_info 运行在 main 任务上下文。 */
     ui_show_msg(buf);
 }
 

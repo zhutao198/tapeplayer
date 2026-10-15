@@ -62,15 +62,19 @@ idf_component_register(
 # 每次构建都重新生成 build_info.h（含真实构建时间 + git 版本），并确保 build_info.c
 # 重新编译，使启动日志里的构建时间/版本始终准确（替代 IDF 的 Compile time，后者因
 # 增量编译不重编 esp_app_desc.c 而易滞留旧日期）。
+#
+# R158 修复接线缺陷: 原实现把生成命令放在 OUTPUT 型 add_custom_command 里、
+# DEPENDS 指向无输出的 phony 目标 —— CMake 对目标的 DEPENDS 解析为该目标的输出
+# 文件列表, phony 无输出 => 依赖为空 => 生成命令只在 build_info.h 缺失时跑过一次
+# (实测 2026-09-30 之后从未重新生成, 版本串一直停留在 R118-10-ge53e1f9-dirty)。
+# 改为: 生成命令直接放进自定义目标(build_info_force_phony)。自定义目标每次构建
+# 都会执行(旧接法中该目标的 echo 也确实每次都跑, 见构建日志 [1/N]), 且组件库
+# add_dependencies 于它 => 先生成后编译, 顺序有保证。
 # ----------------------------------------------------------------------------
 set(BUILD_INFO_H "${CMAKE_CURRENT_BINARY_DIR}/build_info.h")
-# 伪目标：无 OUTPUT，ninja 视为始终过期 -> 依赖它的 custom command 每次构建都重跑
-add_custom_target(build_info_force_phony COMMAND ${CMAKE_COMMAND} -E echo "regenerate build_info.h")
-add_custom_command(
-    OUTPUT ${BUILD_INFO_H}
+add_custom_target(build_info_force_phony
     COMMAND ${CMAKE_COMMAND} -D OUT_FILE=${BUILD_INFO_H} -D SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/gen_build_info.cmake
-    DEPENDS build_info_force_phony
     COMMENT "Generating build_info.h (fresh build timestamp)"
     VERBATIM
 )
