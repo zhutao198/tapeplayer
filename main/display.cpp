@@ -321,6 +321,11 @@ static lv_obj_t     *s_toast = NULL;
 static volatile bool s_sd_icon_pending  = false;   /* SD 图标+插拔提示待更新 */
 static volatile bool s_sd_icon_present   = false;   /* 期望的卡在位状态 */
 static volatile bool s_clear_msg_pending = false;   /* 清全屏消息返回播放器 */
+/* R163: OTA 屏已清过一次顶层点阵 canvas(菜单残留)的标志。
+   ota_sd_render 在主循环 OTA 分支不受 200ms 节流, 每轮都调 ui_show_ota;
+   清 canvas 是 memset+invalidate 全屏重绘, 需一次性(进 OTA 清一次即可)。
+   复位点: ui_show_player()(退出 OTA 回播放屏的必经路径)。 */
+static bool s_ota_canvas_cleared = false;
 /* R102-fix: 菜单绘制标志位化。
    原因: display_show_menu 有两条调用路径——
      (a) display_update()  : main 任务, 但已持 lv_lock -> 安全
@@ -1707,6 +1712,7 @@ static void ui_show_player(void)
     lv_obj_add_flag(s_splash, LV_OBJ_FLAG_HIDDEN);  /* R111: 隐藏启动画面 */
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
     s_menu_visible = false;
+    s_ota_canvas_cleared = false;   /* R163: 回播放屏, 下次进 OTA 需重新清 canvas */
 }
 
 static void ui_show_msg(const char *txt)
@@ -2739,9 +2745,24 @@ void display_show_bt_status(const char *device_name, bool connected, int volume)
  * ============================================================ */
 static void ui_show_ota(void)
 {
+    /* R163: 修复"菜单进固件升级, 按 PLAY 界面无变化"——根因是顶层点阵 canvas
+       (cjk_canvas_init 在 ui_create 之后创建, 最顶层覆盖所有对象, 见 R160 注释)
+       在进入 OTA 后仍显示着冻结的菜单画面, 把 g_ota 整个盖住。
+       修法复用 ui_show_msg 的已验证模式(R160):
+         1) g_ota move_foreground 到最前(否则会被 canvas 盖住);
+         2) 顶层 canvas 若可见, 清空为背景色(不能隐藏——隐藏会透出曲名/格式行
+            顶层 canvas, R158 实测; 清空后仍不透明继续遮盖, g_ota 已在最前不受影响)。
+       退出 OTA 回播放屏时 ui_show_player 会藏掉 canvas, 无需在此恢复。 */
+    lv_obj_move_foreground(g_ota);
     lv_obj_clear_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+    if (s_cjk_canvas && !lv_obj_has_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN) &&
+        !s_ota_canvas_cleared) {
+        cjk_canvas_clear();
+        lv_obj_invalidate(s_cjk_canvas);
+        s_ota_canvas_cleared = true;
+    }
     if (g_display_sleep) {
         display_set_brightness(s_last_brightness);
         g_display_sleep = false;
