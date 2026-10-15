@@ -1708,10 +1708,16 @@ static void ui_show_msg(const char *txt)
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
-    /* R158: 隐藏点阵菜单 canvas, 避免信息文字与上一帧菜单点阵重叠(关于/操作说明屏)。
-       关闭信息屏时 menu_refresh()->menu_apply_nolock() 结尾会重新显示 canvas。
+    /* R159: 信息屏显示时, 若点阵菜单 canvas 可见(菜单态), 将其【清空为背景色】而非隐藏。
+       R158 曾用隐藏: 但曲名/格式行 canvas 是顶层对象(非 g_player 子对象), 菜单 canvas
+       一隐藏它们就透出来 —— 实测关于屏背后透出玩家屏(见 111.jpg)。清空后 canvas 仍不透明,
+       继续遮盖; 关闭信息屏时 menu_refresh()->menu_apply_nolock() 会重绘菜单。
+       非菜单态 canvas 本不可见, 不动(信息文字照常盖在 player 屏上, 既有行为)。
        display_init 早期调用时 s_cjk_canvas 尚未创建, NULL 守卫覆盖。 */
-    if (s_cjk_canvas) lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
+    if (s_cjk_canvas && !lv_obj_has_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN)) {
+        cjk_canvas_clear();
+        lv_obj_invalidate(s_cjk_canvas);
+    }
     lv_unlock();
 }
 
@@ -2587,7 +2593,7 @@ void display_show_info(const char *title, const char *text)
         display_set_brightness(s_last_brightness);
         g_display_sleep = false;
     }
-    /* R158: 隐藏点阵菜单 canvas 的动作在 ui_show_msg 持锁区内执行(见该函数),
+    /* R158/R159: 点阵菜单 canvas 的清空动作在 ui_show_msg 持锁区内执行(见该函数),
        此处不可直接碰 LVGL —— display_show_info 运行在 main 任务上下文。 */
     ui_show_msg(buf);
 }

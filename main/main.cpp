@@ -1638,10 +1638,20 @@ extern "C" void app_main(void)
                     power_mgmt_cancel_shutdown_countdown();
                 }
 
-                /* R115: 更新关机倒计时显示(1Hz刷新) */
+                /* R115: 更新关机倒计时显示(1Hz刷新)
+                   R159: 仅在状态变化时调用。原实现每秒无条件调
+                   display_show_shutdown_countdown(0,-1), 其内部在无倒计时时会隐藏 g_msg
+                   —— 常驻信息屏(关于)因此被每秒藏掉一次、再由主循环显示回来, 表现为 1Hz
+                   闪烁; 也会干扰其他全屏消息。改为变化才调用: 无倒计时稳态不再碰 g_msg;
+                   倒计时开始/结束/取消仍照常刷新与隐藏(取消行为不变)。 */
+                static int s_last_cd_type = INT32_MIN, s_last_cd_remain = INT32_MIN;
                 int cd_remaining = power_mgmt_get_shutdown_countdown_remaining();
                 int cd_type = (int)power_mgmt_get_shutdown_countdown_type();
-                display_show_shutdown_countdown(cd_type, cd_remaining);
+                if (cd_type != s_last_cd_type || cd_remaining != s_last_cd_remain) {
+                    s_last_cd_type = cd_type;
+                    s_last_cd_remain = cd_remaining;
+                    display_show_shutdown_countdown(cd_type, cd_remaining);
+                }
             }
         }
 
