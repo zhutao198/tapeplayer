@@ -71,6 +71,25 @@ static void timer_set_idx(int i)
 /* ---- TOGGLE 数据: 播放模式 ---- */
 static const char *s_mode_opts[] = {"顺序播放", "列表循环", "单曲循环"};
 
+/* ---- TOGGLE 数据: 背光亮度 (R157) ---- */
+static const char *s_bl_opts[] = {"20%", "40%", "60%", "80%", "100%"};
+static const int   s_bl_vals[] = {20, 40, 60, 80, 100};
+static int bl_get_idx(void)
+{
+    int pct = settings_load_brightness();
+    for (int i = 0; i < 5; i++) {
+        if (s_bl_vals[i] == pct) return i;
+    }
+    return 4;   /* 默认 100% */
+}
+static void bl_set_idx(int i)
+{
+    int pct = s_bl_vals[i];
+    settings_save_brightness(pct);
+    display_set_brightness(pct);   /* 即时生效: 用户调档时屏幕实时变亮变暗 */
+    ESP_LOGI(TAG, "Backlight set: %d%%", pct);
+}
+
 /* ---- TOGGLE 数据: 开关 (R049c) ---- */
 static const char *s_onoff_opts[] = {"关", "开"};
 
@@ -96,6 +115,7 @@ static const menu_item_t g_system_sub[] = {
     { "固件升级",   MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ota_enter },
     { "关于",       MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_about_enter },
     { "定时关机",   MI_TOGGLE,  s_timer_opts, 5, timer_get_idx,    timer_set_idx,    NULL, 0, NULL },
+    { "背光亮度",   MI_TOGGLE,  s_bl_opts,   5, bl_get_idx,       bl_set_idx,       NULL, 0, NULL },  /* R157 */
 };
 
 static const menu_item_t g_root[] = {
@@ -104,9 +124,9 @@ static const menu_item_t g_root[] = {
     { "播放模式", MI_ACTION, NULL, 0, NULL, NULL, NULL, 0, mode_fill_and_enter },
     { "系统设置", MI_SUBMENU, NULL, 0, NULL, NULL, g_system_sub,
 #if defined(CONFIG_USE_BT_SPEAKER)
-        4, NULL },
+        5, NULL },   /* R157: +背光亮度 */
 #else
-        3, NULL },
+        4, NULL },   /* R157: +背光亮度 */
 #endif
 };
 static const int g_root_count = 4;   // 根菜单顺序：浏览文件/书签/播放模式/系统设置 (R113: 移除A-B复读菜单项, 仅保留快捷键)

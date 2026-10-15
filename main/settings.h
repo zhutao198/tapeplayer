@@ -66,6 +66,17 @@ void settings_save_auto_off(int minutes);
  */
 int settings_load_auto_off(void);
 
+/**
+ * @brief R157: 保存背光亮度 (百分比)
+ */
+void settings_save_brightness(int percent);
+
+/**
+ * @brief R157: 加载背光亮度
+ * @return 百分比 20~100，默认 100（无记录/NVS异常时）
+ */
+int settings_load_brightness(void);
+
 /* R049c / R049d：按键提示音、语音播报、EQ */
 void settings_save_key_beep(int on);
 int  settings_load_key_beep(void);

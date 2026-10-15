@@ -1235,6 +1235,9 @@ static void init_hardware(void)
 
     // 3. 鏄剧ず灞?
     display_init();
+    /* R157: 应用保存的背光亮度(display_init 内先按 100 亮起, 此处随即改为用户选定值)。
+       settings_init 已先于 display_init 执行, NVS 可读; 无记录时 load 返回 100, 行为不变。 */
+    display_set_brightness(settings_load_brightness());
     display_show_splash();
 
     // 4. 鎸夐敭

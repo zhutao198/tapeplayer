@@ -224,6 +224,7 @@
 #define NVS_KEY_KEY_BEEP    "key_beep"        // 按键提示音 0/1 (R049c)
 #define NVS_KEY_VOICE       "voice"           // 语音播报 0/1 (R049d stub)
 #define NVS_KEY_EQ          "eq"              // EQ 模式 0..4 (R049d stub)
+#define NVS_KEY_BRIGHTNESS  "brightness"      // 背光亮度 20~100 (%) (R157, 默认100)
 
 /* 固件版本号：用于 OTA 防降级校验 (R049c 真实化) */
 #ifndef APP_VERSION_STR

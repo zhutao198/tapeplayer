@@ -218,6 +218,31 @@ int settings_load_auto_off(void)
     return (int)min;
 }
 
+/* R157: 背光亮度 (%) 持久化。默认 100 —— 老设备无此键时行为与之前一致。
+   不提供 0%: 全黑但设备开着, 按键唤醒后恢复的还是 0(s_last_brightness),
+   用户无法察觉状态; "关闭背光省电"由屏保超时负责。 */
+void settings_save_brightness(int percent)
+{
+    if (!g_nvs_handle) return;
+    if (percent < 20)  percent = 20;
+    if (percent > 100) percent = 100;
+    esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_BRIGHTNESS, (uint8_t)percent);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_BRIGHTNESS, err);
+}
+
+int settings_load_brightness(void)
+{
+    if (!g_nvs_handle) return 100;
+    uint8_t pct = 100;
+    esp_err_t err = nvs_get_u8(g_nvs_handle, NVS_KEY_BRIGHTNESS, &pct);
+    if (err != ESP_OK) {
+        pct = 100;
+    }
+    if (pct < 20)  pct = 20;   /* 防御旧数据/异常值: 不低于最低可档 */
+    if (pct > 100) pct = 100;
+    return (int)pct;
+}
+
 /* R049c / R049d：按键提示音、语音播报、EQ（桩，持久化无效果） */
 void settings_save_key_beep(int on)
 {
