@@ -25,7 +25,7 @@ void app_enter_browse(void);
 int  app_get_play_mode(void);
 void app_set_play_mode(int m);
 void app_show_info(const char *title, const char *text);
-void app_show_info_hold(const char *title, const char *text);   /* R158: 常驻信息屏(任意键关闭) */
+/* R161: 关于屏改走 display_show_text_page(点阵 canvas, 中文友好), 不再用 LVGL 标签信息屏 */
 void app_play_beep(void);
 void app_enter_ota(void);
 int  app_get_current_track_idx(void);
@@ -140,25 +140,23 @@ void app_ota_enter(void)   { app_enter_ota(); }
 void app_usb_enter(void)   { app_show_info("USB 存储", "大容量存储模式\n需 USB OTG\n功能未开放"); }
 void app_about_enter(void)
 {
-    /* R158/R159: 一句话简介 + 操作说明, 重点是菜单外快捷键(如 A-B 复读 —— R113 起仅剩快捷键,
-       菜单里没有入口, 用户无从得知)。常驻信息屏: 不自动消失, 任意键关闭。
-       版本号取 BUILD_INFO_RELEASE(最近的 v* 发布标签, 随发版自动更新), 不再硬编码过期版本号。
-       R159: 内容必须纯 ASCII —— g_msg 是 LVGL 标签, 本项目 LVGL 中文路径坏(R098h-hotfix:
-       ui_font v8 格式与 v9.5 fmt_txt 不兼容), 汉字显示为方框(用户实测 111.jpg); 全项目
-       g_msg 全屏消息一向用 ASCII(No audio files found/TF card inserted 等), 中文界面靠
-       点阵 canvas(菜单)。若关于屏要中文, 需改为点阵 canvas 渲染, 另案评估。 */
+    /* R161: 一句话简介 + 操作说明, 重点是菜单外快捷键(如 A-B 复读 —— R113 起仅剩快捷键,
+       菜单里没有入口, 用户无从得知)。走点阵 canvas 文本页(与文件列表/菜单同款路径),
+       中文友好 —— LVGL 标签路径中文为方框(R098h-hotfix, R159 曾被迫改英文, 现恢复中文)。
+       版本号取 BUILD_INFO_RELEASE(最近的 v* 发布标签, 随发版自动更新)。
+       常驻到任意键关闭(拦截见 menu_handle_button 顶部)。 */
     char about[512];
     snprintf(about, sizeof(about),
-             "TapeBook Player [%s]\n"
-             "ESP32-S3, MP3/AAC/FLAC/WAV/OGG\n"
+             "TapeBook 有声书播放器 [%s]\n"
+             "ESP32-S3, 支持 MP3/AAC/FLAC/WAV\n"
              "\n"
-             "[Keys not in menu]\n"
-             "Hold PLAY: A-B repeat (again: clear)\n"
-             "FF/REW tap: skip 2s\n"
-             "FF/REW hold: variable speed\n"
-             "REW+STOP at once: restart track",
+             "【菜单外快捷键】\n"
+             "长按播放: A-B复读(再按清除)\n"
+             "短按快进/快退: 跳转2秒\n"
+             "长按快进/快退: 无极变速\n"
+             "快退+停止同按: 回本曲开头",
              BUILD_INFO_RELEASE);
-    app_show_info_hold("About", about);   /* R159: 标题也须 ASCII(同左: LVGL标签中文为方框) */
+    display_show_text_page("关于", about);
 }
 void app_bookmark_enter(void) { bookmark_fill_and_enter(); }
 
@@ -328,6 +326,20 @@ static void menu_render(void)
 
 void menu_handle_button(const btn_event_info_t *events, int n)
 {
+    /* R161: 点阵文本页(关于)常驻中 —— 任意键关闭并重绘菜单, 吞掉本帧全部按键
+       (否则按键会操作被遮住的菜单)。文本页由 app_about_enter 在菜单内打开,
+       此时菜单必然处于打开态, menu_refresh() 必定可用。 */
+    if (display_textpage_active()) {
+        for (int k = 0; k < n; k++) {
+            if (events[k].event != BTN_EVENT_NONE) {
+                display_textpage_dismiss();
+                menu_refresh();   /* 重绘当前菜单(同时退出文本页模式) */
+                break;
+            }
+        }
+        return;
+    }
+
     for (int k = 0; k < n; k++) {
         const btn_event_info_t *e = &events[k];
         if (e->event == BTN_EVENT_NONE) continue;

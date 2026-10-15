@@ -161,7 +161,6 @@ static char     g_info_title[32] = {0};
 static char     g_info_text[512] = {0};   /* R158: 64->512, 操作说明文字较多需完整显示 */
 static uint64_t g_info_until_us = 0;
 static bool     g_info_active = false;
-static bool     g_info_hold = false;      /* R158: 常驻信息屏(关于/操作说明) —— 不自动消失, 任意键关闭 */
 static bool     g_ota_in_progress = false;  // OTA 鍐欏叆涓細鐙崰 SD 鍗★紝灞忚斀涓诲惊鐜彃鎷斿鐞?
 
 /**
@@ -442,23 +441,8 @@ void app_show_info(const char *title, const char *text)
     strncpy(g_info_text, text ? text : "", sizeof(g_info_text) - 1);
     g_info_text[sizeof(g_info_text) - 1] = '\0';
     g_info_until_us = esp_timer_get_time() + 1500000;  // 鏄劇ず 1.5s
-    g_info_hold = false;
     g_info_active = true;
     ESP_LOGI(TAG, "Info: %s", title);
-}
-
-/* R158: 常驻信息屏(关于/操作说明) —— 不自动消失, 任意键关闭(见 handle_button_events)。
-   display_show_info 已自带 "(Press any key to return)" 提示, 此函数让该提示名副其实。 */
-void app_show_info_hold(const char *title, const char *text)
-{
-    strncpy(g_info_title, title ? title : "", sizeof(g_info_title) - 1);
-    g_info_title[sizeof(g_info_title) - 1] = '\0';
-    strncpy(g_info_text, text ? text : "", sizeof(g_info_text) - 1);
-    g_info_text[sizeof(g_info_text) - 1] = '\0';
-    g_info_until_us = UINT64_MAX;   /* 永不到期 */
-    g_info_hold = true;
-    g_info_active = true;
-    ESP_LOGI(TAG, "Info(hold): %s", title);
 }
 
 /* R049c: 按键提示音 (已禁用: beep管道在无主音频时会导致task_wdt死机) */
@@ -542,20 +526,6 @@ static void handle_button_events(void)
     }
 
     /* 缁熶竴鑿滃崟璺敱 (R049): 鑿滃崟鎵撳紑鏃舵墍鏈夋寜閿氦缁欒彍鍗曞鐞?*/
-    /* R158: 常驻信息屏(关于/操作说明) —— 任意键关闭并重绘菜单。
-       必须在菜单路由之前: 该屏从菜单进入, g_app_state 为 MENU, 不拦截的话按键会
-       操作被遮住的菜单。进入时菜单必然打开(s_depth>=1), menu_refresh() 必定可用。 */
-    if (g_info_hold && g_info_active) {
-        for (int j = 0; j < n; j++) {
-            if (events[j].event != BTN_EVENT_NONE) {
-                g_info_active = false;
-                g_info_hold = false;
-                menu_refresh();   /* 重绘当前菜单(隐藏 g_msg, 恢复点阵菜单) */
-                return;           /* 吞掉该键, 不传导给菜单 */
-            }
-        }
-    }
-
     if (menu_is_open() && g_app_state != APP_STATE_BROWSING) {
         menu_handle_button(events, n);
         return;
@@ -1019,11 +989,6 @@ static void update_display(void)
 {
     // R049c锛氫俊鎭睆瑕嗙洊浼樺厛锛圤TA/USB/鍏充簬绛夋々鎻愮ず锛夛紝涓嶅彈 200ms 鑺傛祦闄愬埗
     if (g_info_active) {
-        if (g_info_hold) {
-            /* R158: 常驻信息屏(关于/操作说明) —— 不自动消失 */
-            display_show_info(g_info_title, g_info_text);
-            return;
-        }
         uint64_t t = esp_timer_get_time();
         if (t < g_info_until_us) {
             display_show_info(g_info_title, g_info_text);

@@ -161,6 +161,27 @@ void display_menu_closed(void);
 void display_show_info(const char *title, const char *text);
 
 /**
+ * @brief R161: 点阵 canvas 文本页（关于/说明）—— 中文友好
+ *
+ * 与文件列表/菜单同一套路：点阵字库渲染（cjk_canvas_text），不走 LVGL 标签
+ * （本项目 LVGL 中文路径坏，R098h-hotfix：ui_font v8 格式与 v9.5 不兼容，
+ *  汉字显示为方框——R159 曾因此被迫把关于屏改英文，本函数恢复中文）。
+ * 常驻显示直到 display_textpage_dismiss()；“任意键返回”由调用方处理
+ * （菜单打开时 menu_handle_button 顶部拦截，见 menu.cpp）。
+ *
+ * @param title 标题（顶部栏，紫色）
+ * @param text  多行正文（'\n' 分隔；每行按显示宽度截断，全角=2格/ASCII=1格，
+ *               上限 36 格≈288px，不截断 UTF-8 多字节序列）
+ */
+void display_show_text_page(const char *title, const char *text);
+
+/** R161: 点阵文本页是否正在显示（菜单据此拦截按键） */
+bool display_textpage_active(void);
+
+/** R161: 关闭点阵文本页（调用方随后应重绘菜单） */
+void display_textpage_dismiss(void);
+
+/**
  * @brief 打印 PSRAM/DRAM 堆水位与当前屏 LVGL 对象数（内存诊断，每 10s 自动触发）
  */
 void display_mem_report(void);

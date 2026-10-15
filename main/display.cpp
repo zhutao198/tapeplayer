@@ -75,6 +75,14 @@ static int    s_menu_sel = 0;
 static char   s_menu_hint[64];
 /* R111: A-B 菜单缓存（main只写缓存+设标志, lvgl_task持锁消费） */
 
+/* R161: 点阵文本页(关于)缓存 —— 与菜单同一 canvas, main 只写缓存+设标志 */
+static bool   s_textpage_mode = false;
+static char   s_textpage_title[32] = {0};
+#define TEXTPAGE_MAX_LINES 12
+#define TEXTPAGE_LINE_BUF  112   /* 36 显示格 × 全角 3 字节, 留余量 */
+static char   s_textpage_lines[TEXTPAGE_MAX_LINES][TEXTPAGE_LINE_BUF] = {0};
+static int    s_textpage_count = 0;
+
 /* R098f: display_init 提前到本文件靠前位置, 其依赖的下列函数定义在文件后段,
    此处补前向声明以满足编译 (均为本编译单元内函数)。 */
 static esp_err_t        lcd_hw_init(void);
@@ -2443,6 +2451,9 @@ void display_show_menu(const char *title, const menu_disp_item_t *items, int cou
 {
     if (!g_display_initialized || count <= 0 || !items) return;
 
+    /* R161: 回到菜单渲染即退出文本页模式(关于屏关闭后重绘菜单走此路径) */
+    s_textpage_mode = false;
+
     /* 仅缓存菜单内容到全局(纯内存写, 不触碰 LVGL) */
     s_menu_count = count;
     s_menu_sel   = sel;
@@ -2481,6 +2492,24 @@ static void menu_apply_nolock(void)
     lv_obj_add_flag(g_msg,    LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota,    LV_OBJ_FLAG_HIDDEN);
+
+    /* R161: 点阵文本页(关于) —— 同一 canvas, 画标题+文本行+提示, 画完即 return */
+    if (s_textpage_mode) {
+        const uint16_t fg     = (uint16_t)lv_color_to_u16(lv_color_white());
+        const uint16_t bg     = (uint16_t)lv_color_to_u16(lv_color_hex(0x0a0e17));
+        const uint16_t purple = (uint16_t)lv_color_to_u16(lv_color_hex(0xb8a4dc));
+        const uint16_t gray   = (uint16_t)lv_color_to_u16(lv_color_hex(0x8a93a6));
+        cjk_canvas_clear();
+        cjk_canvas_text(8, 6, s_textpage_title, purple, bg);         /* 标题(紫色, 同菜单) */
+        const int TX = 12, TY = 40, ROW_H = 20;
+        for (int i = 0; i < s_textpage_count; i++) {
+            cjk_canvas_text(TX, TY + i * ROW_H, s_textpage_lines[i], fg, bg);
+        }
+        cjk_canvas_text(8, DISPLAY_HEIGHT - 20, "按任意键返回", gray, bg);
+        lv_obj_clear_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(s_cjk_canvas);
+        return;
+    }
 
     /* R111: 设计稿风格菜单 —— 顶部状态栏 + 选中高亮 + 序号 + 子菜单箭头 + TOGGLE右对齐 */
     if (!s_cjk_canvas) return;
@@ -2600,6 +2629,89 @@ void display_show_info(const char *title, const char *text)
     /* R158/R159: 点阵菜单 canvas 的清空动作在 ui_show_msg 持锁区内执行(见该函数),
        此处不可直接碰 LVGL —— display_show_info 运行在 main 任务上下文。 */
     ui_show_msg(buf);
+}
+
+/* ============================================================
+ * R161: 点阵 canvas 文本页(关于/说明) —— 中文友好, 替代 LVGL 标签信息屏
+ * 与菜单/文件列表同一 canvas 路径(cjk_canvas_text 点阵字库), 常驻到
+ * display_textpage_dismiss()。main 侧只写缓存+置标志, lvgl_task 持锁绘制。
+ * ============================================================ */
+
+/* 按显示宽度取一行: 全角=2 格(16px), ASCII=1 格(8px); 不超过 max_cells;
+   从不在 UTF-8 多字节序列中间截断。返回占用格数, *byte_len 输出字节数。 */
+static int textpage_fit_line(const char *p, int max_cells, int *byte_len)
+{
+    int cells = 0, len = 0;
+    while (p[len]) {
+        if (p[len] == '\n') break;
+        int clen = 1;
+        if (p[len] & 0x80) {
+            if ((p[len] & 0xE0) == 0xC0)      clen = 2;
+            else if ((p[len] & 0xF0) == 0xE0) clen = 3;
+            else if ((p[len] & 0xF8) == 0xF0) clen = 4;
+            else                              clen = 1;   /* 非法字节按 1 格跳过 */
+        }
+        int cw = (clen == 1) ? 1 : 2;
+        if (cells + cw > max_cells) break;
+        cells += cw;
+        len  += clen;
+    }
+    *byte_len = len;
+    return cells;
+}
+
+void display_show_text_page(const char *title, const char *text)
+{
+    if (!g_display_initialized) return;
+
+    /* 拆分+按宽度截断(纯内存写) */
+    char lines[TEXTPAGE_MAX_LINES][TEXTPAGE_LINE_BUF];
+    int count = 0;
+    const char *p = text ? text : "";
+    while (*p && count < TEXTPAGE_MAX_LINES) {
+        int blen = 0;
+        textpage_fit_line(p, 36, &blen);   /* 36 格 ≈ 288px, x=12 起不超屏 */
+        memcpy(lines[count], p, (size_t)blen);
+        lines[count][blen] = '\0';
+        count++;
+        p += blen;
+        if (*p == '\n') p++;               /* 跳过换行; 行末则结束 */
+    }
+
+    /* 内容未变则不重绘(避免重复调用整屏重绘) */
+    bool same = s_textpage_mode && (count == s_textpage_count) &&
+                (strcmp((title && title[0]) ? title : "Info", s_textpage_title) == 0);
+    for (int i = 0; same && i < count; i++) {
+        if (strcmp(lines[i], s_textpage_lines[i]) != 0) same = false;
+    }
+    if (same) return;
+
+    snprintf(s_textpage_title, sizeof(s_textpage_title), "%s",
+             (title && title[0]) ? title : "Info");
+    s_textpage_count = count;
+    for (int i = 0; i < count; i++) {
+        strncpy(s_textpage_lines[i], lines[i], TEXTPAGE_LINE_BUF - 1);
+        s_textpage_lines[i][TEXTPAGE_LINE_BUF - 1] = '\0';
+    }
+    s_textpage_mode = true;
+    s_menu_visible  = true;   /* menu_apply_nolock 可见性条件; 其内部按 mode 分支渲染 */
+
+    /* 唤醒背光 (非 LVGL 操作, 可在此执行) */
+    if (g_display_sleep) {
+        display_set_brightness(s_last_brightness);
+        g_display_sleep = false;
+    }
+    s_menu_pending = true;    /* 由 lvgl_task 持锁区消费 menu_apply_nolock() */
+}
+
+bool display_textpage_active(void)
+{
+    return s_textpage_mode;
+}
+
+void display_textpage_dismiss(void)
+{
+    s_textpage_mode = false;
 }
 
 /* ============================================================
