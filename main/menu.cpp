@@ -112,12 +112,12 @@ void mode_fill_and_enter(void);  /* 前向声明 */
 /* R049c / R049d：系统子菜单（蓝牙音箱在 USE_BT_SPEAKER 时置于此，占原 A-B 复读位置） */
 static const menu_item_t g_system_sub[] = {
 #if defined(CONFIG_USE_BT_SPEAKER)
-    { "蓝牙音箱", MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_enter_bt_speaker },
+    { "蓝牙音箱",   MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_enter_bt_speaker },
 #endif
     { "固件升级",   MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_ota_enter },
-    { "关于",       MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_about_enter },
     { "定时关机",   MI_TOGGLE,  s_timer_opts, 5, timer_get_idx,    timer_set_idx,    NULL, 0, NULL },
     { "背光亮度",   MI_TOGGLE,  s_bl_opts,   5, bl_get_idx,       bl_set_idx,       NULL, 0, NULL },  /* R157 */
+    { "关于",       MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_about_enter },   /* R160: 移至菜单最后 */
 };
 
 static const menu_item_t g_root[] = {

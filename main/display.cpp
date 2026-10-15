@@ -1706,6 +1706,10 @@ static void ui_show_msg(const char *txt)
     lv_lock();   /* 保护 LVGL 对象树: main_task 与 lvgl_task 并发写必须加锁 */
     lv_label_set_text(g_msg, txt);
     lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+    /* R160: 移到最前。菜单 canvas(cjk_canvas_init 在 ui_create 之后创建)设计上就在
+       最顶层覆盖所有对象; R159 将其清空为背景色后仍不透明, 会盖住 g_msg —— 实测关于屏
+       全空白。关机倒计时文本本就使用 move_foreground(见 shutdown_cd_apply_nolock), 同一模式。 */
+    lv_obj_move_foreground(g_msg);
     lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
     /* R159: 信息屏显示时, 若点阵菜单 canvas 可见(菜单态), 将其【清空为背景色】而非隐藏。
