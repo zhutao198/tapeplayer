@@ -2075,6 +2075,28 @@ static void display_update_nolock(player_state_t state,
 
     uint64_t now = esp_timer_get_time();
 
+    /* R164: 屏幕切换(ui_show_player + 藏点阵 canvas)必须放在指纹早退之前!
+       原实现放在 fp 检查之后: 从 OTA/信息屏回到播放态时, 若指纹与上次播放态渲染
+       一致(暂停/停止后位置冻结、电量未跳变), 直接早退 -> ui_show_player 不执行
+       -> g_ota(OTA屏)/g_msg(信息屏)残留 -> "退出后屏幕冻结, 但按键有效
+       (PLAY 甚至能播音)"(2026-10-15 实测)。偶发原因: 电量百分比充电时约每 10s
+       跳一次, 跳了(fp 变)就能退, 没跳就冻住 -> "有时能退出有时不能"。
+       ui_show_player 仅是几个 LVGL flag 操作(幂等), 每 200ms 一次无开销无重绘;
+       真正昂贵的标签/点阵更新仍留在 fp 检查之后。
+       注: 全屏消息态(s_msg_active)时 lvgl_task 根本不会调本函数(见消费处门限),
+       不存在藏掉 g_msg 的风险(R131i 设计保持)。 */
+    ui_show_player();  /* 默认渲染 player 屏; 同时隐藏 g_ota/g_msg/splash */
+
+    /* R102: MENU 态不跑 ui_show_player(否则会恢复 player 盖掉点阵), 改为持续重绘菜单点阵。
+       R102-fix: 此处已持 lv_lock(函数开头 lv_lock), 直接调 nolock 版本;
+       不要调 display_show_menu(那是无锁入口, 只会置标志导致延迟一帧)。 */
+    if (s_menu_visible) {
+        menu_apply_nolock();
+    } else if (s_cjk_canvas && !lv_obj_has_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN)) {
+        /* 非菜单态: 确保点阵 canvas 已隐藏, 避免遮挡 player 屏 */
+        lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
+    }
+
     uint32_t fp = calc_fingerprint(state, track_idx, total,
                                    current_sec, total_sec, speed, gear, volume);
     fp = fp * 31 + (uint32_t)s_play_mode;   // 播放模式变化也触发刷新
@@ -2098,18 +2120,6 @@ static void display_update_nolock(player_state_t state,
     if (g_display_sleep) {
         display_set_brightness(s_last_brightness);
         g_display_sleep = false;
-    }
-
-    ui_show_player();  /* 默认渲染 player 屏 */
-
-    /* R102: MENU 态不跑 ui_show_player(否则会恢复 player 盖掉点阵), 改为持续重绘菜单点阵。
-       R102-fix: 此处已持 lv_lock(函数开头 lv_lock), 直接调 nolock 版本;
-       不要调 display_show_menu(那是无锁入口, 只会置标志导致延迟一帧)。 */
-    if (s_menu_visible) {
-        menu_apply_nolock();
-    } else if (s_cjk_canvas && !lv_obj_has_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN)) {
-        /* 非菜单态: 确保点阵 canvas 已隐藏, 避免遮挡 player 屏 */
-        lv_obj_add_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN);
     }
 
 

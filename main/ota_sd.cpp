@@ -121,8 +121,10 @@ void ota_sd_begin(void)
     struct stat st;
     if (stat(img_path, &st) != 0) {
         s_phase = OTA_PHASE_ERROR;
+        /* R164: 错误信息一律英文 —— ota_body 是 LVGL 标签(UI_FONT 纯 ASCII),
+           中文会渲染成方块(2026-10-15 截图实测)。整个 OTA 屏保持英文一致。 */
         snprintf(s_err_msg, sizeof(s_err_msg),
-                 "未找到 %s\n请确认 TF 卡已插入", OTA_IMAGE_NAME);
+                 "%.16s not found\nCheck TF card inserted", OTA_IMAGE_NAME);
         return;
     }
     s_img_size = st.st_size;
@@ -136,7 +138,7 @@ void ota_sd_begin(void)
         if (ver_cmp(s_new_ver, s_cur_ver) < 0) {
             s_phase = OTA_PHASE_ERROR;
             snprintf(s_err_msg, sizeof(s_err_msg),
-                     "新版本 %s 低于当前 %s\n拒绝降级", s_new_ver, s_cur_ver);
+                     "Version %s < current %s\nDowngrade rejected", s_new_ver, s_cur_ver);
             return;
         }
     }
@@ -162,7 +164,7 @@ static void ota_sd_perform(void)
     FILE *f = fopen(img_path, "rb");
     if (!f) {
         s_phase = OTA_PHASE_ERROR;
-        snprintf(s_err_msg, sizeof(s_err_msg), "打开镜像失败");
+        snprintf(s_err_msg, sizeof(s_err_msg), "Failed to open image");
         return;
     }
 
@@ -198,7 +200,7 @@ static void ota_sd_perform(void)
         fclose(f);
         mbedtls_sha256_free(&sha);
         s_phase = OTA_PHASE_ERROR;
-        snprintf(s_err_msg, sizeof(s_err_msg), "初始化写分区失败");
+        snprintf(s_err_msg, sizeof(s_err_msg), "OTA begin failed");
         return;
     }
 
@@ -214,7 +216,7 @@ static void ota_sd_perform(void)
             fclose(f);
             mbedtls_sha256_free(&sha);
             s_phase = OTA_PHASE_ERROR;
-            snprintf(s_err_msg, sizeof(s_err_msg), "写入失败（卡被拔出？）");
+            snprintf(s_err_msg, sizeof(s_err_msg), "Write failed\n(TF card removed?)");
             return;
         }
         written += n;
@@ -235,7 +237,7 @@ static void ota_sd_perform(void)
     if (have_sha && memcmp(calc_sha, expect_sha, 32) != 0) {
         esp_ota_abort(h);
         s_phase = OTA_PHASE_ERROR;
-        snprintf(s_err_msg, sizeof(s_err_msg), "校验失败：镜像与 SHA256 不符");
+        snprintf(s_err_msg, sizeof(s_err_msg), "SHA256 mismatch");
         return;
     }
 
@@ -243,14 +245,14 @@ static void ota_sd_perform(void)
     r = esp_ota_end(h);
     if (r != ESP_OK) {
         s_phase = OTA_PHASE_ERROR;
-        snprintf(s_err_msg, sizeof(s_err_msg), "镜像校验失败（非本机/损坏）");
+        snprintf(s_err_msg, sizeof(s_err_msg), "Image verify failed\n(corrupt/wrong chip)");
         return;
     }
 
     r = esp_ota_set_boot_partition(dst);
     if (r != ESP_OK) {
         s_phase = OTA_PHASE_ERROR;
-        snprintf(s_err_msg, sizeof(s_err_msg), "设置启动分区失败");
+        snprintf(s_err_msg, sizeof(s_err_msg), "Set boot partition failed");
         return;
     }
 
@@ -265,15 +267,21 @@ void ota_sd_handle_button(const btn_event_info_t *events, int n)
 {
     for (int k = 0; k < n; k++) {
         const btn_event_info_t *e = &events[k];
-        if (e->event != BTN_EVENT_SHORT_PRESS) continue;
+        /* R164: STOP 长按也当"退出"——只认 SHORT_PRESS 是 UX 陷阱: 用户按得稍重/
+           稍久生成 LONG_PRESS 就被静默忽略, 表现为"按了没反应"(2026-10-15 实测:
+           "有时能退出有时不能"正是按捏时长差异)。PROGRESS 态仍全键锁死, 不变。 */
+        bool stop_press = (e->id == BTN_ID_STOP) &&
+                          (e->event == BTN_EVENT_SHORT_PRESS ||
+                           e->event == BTN_EVENT_LONG_PRESS);
+        if (e->event != BTN_EVENT_SHORT_PRESS && !stop_press) continue;
         s_last_activity_us = esp_timer_get_time();   // 任意有效按键重置空闲计时
 
         switch (s_phase) {
         case OTA_PHASE_CONFIRM:
-            if (e->id == BTN_ID_PLAY_PAUSE) {
+            if (e->id == BTN_ID_PLAY_PAUSE && e->event == BTN_EVENT_SHORT_PRESS) {
                 if (!s_battery_ok) break;   // 低电量：锁死确认
                 ota_sd_perform();
-            } else if (e->id == BTN_ID_STOP) {
+            } else if (stop_press) {
                 app_ota_exit();
             }
             break;
@@ -286,8 +294,11 @@ void ota_sd_handle_button(const btn_event_info_t *events, int n)
             break;
 
         case OTA_PHASE_ERROR:
-            if (e->id == BTN_ID_PLAY_PAUSE)      ota_sd_begin();   // 重试
-            else if (e->id == BTN_ID_STOP)       app_ota_exit();   // 返回
+            if (e->id == BTN_ID_PLAY_PAUSE && e->event == BTN_EVENT_SHORT_PRESS) {
+                ota_sd_begin();   // 重试
+            } else if (stop_press) {
+                app_ota_exit();   // 返回
+            }
             break;
 
         default:
