@@ -143,3 +143,6 @@ tools/gen_cjk_font.py
 tools/gen_cjk_font_mixed.py
 tools/tmp_check_font.py
 _merge_stash/
+
+# R166: SD 卡 OTA 测试包(2MB+ 构建产物, 按需本地生成, 不入仓)
+ota_pkg/
