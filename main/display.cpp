@@ -300,6 +300,17 @@ static volatile bool s_msg_active = false;
    (disp_update 门限), 防止 R164 后每 200ms 的 ui_show_player() 把倒计时 g_msg
    藏掉造成 1Hz 闪烁(低电倒计时恰好在播放中开始: 位置每秒变->指纹变->player 重绘)。 */
 static volatile bool s_shutdown_cd_active = false;
+/* R166-B3: 信息屏(USB/蓝牙提示)异步化 —— main 只组文本+置标志, lvgl_task 持锁消费。
+   原 display_show_info 在 main 任务直接 lv_lock+LVGL(R102/R131g 修复过的范式违反:
+   持锁久时阻塞 main, 连带 audio_player_tick/按键扫描停摆), 且 R164 后与 lvgl_task
+   的 ui_show_player 互相藏/显 g_msg 打架(靠每帧重画勉强维持)。 */
+static volatile bool s_info_pending = false;
+static char         s_info_text[576] = {0};   /* 组屏文本(含结尾提示, >512 留余量) */
+/* R166-B3: BT 屏 hint 行同样异步化; 必须排在 disp_update 消费之后(播放渲染每秒
+   重置 lbl_hint, 见 display_update_nolock 内 2393 行), 否则会被覆盖。
+   当前 main 同步设 hint 本就存在被异步渲染覆盖的时序竞争, 顺带修掉。 */
+static volatile bool s_bt_hint_pending = false;
+static char         s_bt_hint_text[80] = {0};
 
 /* P1-fix: display_update flag-consumption cache (main->lvgl_task, 消除跨任务锁竞争) */
 typedef struct {
@@ -874,6 +885,8 @@ static bool lvgl_tree_sane(lv_obj_t *obj, int depth)
 
 /* R063-fix: 不持锁版消息渲染,供 lvgl_task 在已持锁区间内调用(前向声明,定义见 ui_show_msg 处) */
 static void ui_show_msg_nolock(const char *txt);
+/* R166-B3: 信息屏不持锁版绘制(定义见 ui_show_info_nolock, 在 ui_show_msg 之后) */
+static void ui_show_info_nolock(const char *txt);
 /* R100: 前向声明,供 lvgl_task 消费标志时调用(定义在后面) */
 static void ui_show_player(void);
 static void sd_icon_update(bool present);
@@ -925,6 +938,11 @@ static void lvgl_task(void *arg)
         if (s_msg_pending) {
             s_msg_pending = false;
             ui_show_msg_nolock(s_msg_text);
+        }
+        /* R166-B3: 消费信息屏绘制标志(持锁区, 同 s_msg_pending 范式) */
+        if (s_info_pending) {
+            s_info_pending = false;
+            ui_show_info_nolock(s_info_text);
         }
         /* R111: 显示 TAPEBOOK 启动画面 */
         if (s_show_splash_pending) {
@@ -1005,6 +1023,13 @@ static void lvgl_task(void *arg)
                     s_skip_dbg++;
                 }
             }
+        }
+        /* R166-B3: 消费 BT 屏 hint 行更新 —— 必须在 disp_update 之后:
+           display_update_nolock 每次渲染都重置 lbl_hint(见函数内 2393 行),
+          提前设置会被覆盖。 */
+        if (s_bt_hint_pending) {
+            s_bt_hint_pending = false;
+            lv_label_set_text(lbl_hint, s_bt_hint_text);
         }
         /* P1-fix2: 卷轴动画 — 硬件时间戳驱动, 在 lv_timer_handler 之前切帧 */
         {
@@ -1757,6 +1782,28 @@ static void ui_show_msg_nolock(const char *txt)
     lv_obj_add_flag(s_splash, LV_OBJ_FLAG_HIDDEN);   /* 与显示 splash 时隐藏 g_msg 对称, 避免叠加 */
     s_msg_active = true;   /* R131i: 进入全屏消息态, 阻止 display_update 覆盖 */
     ESP_LOGI(TAG, "DBG: show_msg active=1 '%s'", txt);
+}
+
+/* R166-B3: 信息屏不持锁版绘制(原 display_show_info 内联逻辑的完整迁移, 行为逐条对齐)。
+   与 ui_show_msg_nolock 的关键差异(对齐锁定版 ui_show_msg):
+   ① g_msg move_foreground —— cjk_canvas 创建于 ui_create 之后是顶层对象(R160 注释),
+      信息屏可能从菜单触发(canvas 可见), 不置最前会被菜单 canvas 盖住;
+   ② 清顶层点阵 canvas 为背景色而非隐藏(隐藏会透出曲名/格式行 canvas, R158 实测);
+   ③ 置 s_msg_active 冻结 player 渲染, 到期由 main 调 display_clear_msg 解除。 */
+static void ui_show_info_nolock(const char *txt)
+{
+    lv_label_set_text(g_msg, txt);
+    lv_obj_clear_flag(g_msg, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(g_msg);
+    lv_obj_add_flag(g_player, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_ota, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_splash, LV_OBJ_FLAG_HIDDEN);
+    if (s_cjk_canvas && !lv_obj_has_flag(s_cjk_canvas, LV_OBJ_FLAG_HIDDEN)) {
+        cjk_canvas_clear();
+        lv_obj_invalidate(s_cjk_canvas);
+    }
+    s_msg_active = true;   /* R131i: 进入全屏消息态, 阻止 display_update 覆盖 */
+    ESP_LOGI(TAG, "DBG: show_info active=1 '%s'", txt);
 }
 
 void display_set_play_mode(int mode)
@@ -2654,22 +2701,25 @@ void display_show_info(const char *title, const char *text)
 {
     if (!g_display_initialized) return;
 
-    static char buf[512];   /* R158: 256->512, 操作说明内容较长(旧值会截断) */
+    /* R166-B3: main 任务只组文本+置标志(与 s_msg_pending/display_toast 同范式),
+       实际绘制由 lvgl_task 持锁区消费 s_info_pending 完成(ui_show_info_nolock)。
+       原实现直接调 ui_show_msg(内含 lv_lock): ①main 碰 LVGL 的范式违反(R102/R131g
+       修复家族), 持锁久时阻塞 main, 连带 audio_player_tick/按键扫描停摆;
+       ②R164 后 display_update_nolock 的 ui_show_player 每 200ms 藏 g_msg, 与此处
+       每帧显示互相打架(靠每帧重画勉强维持)。 */
     int len = 0;
-    len = safe_append(buf, sizeof(buf), len, "%s\n\n",
+    len = safe_append(s_info_text, sizeof(s_info_text), len, "%s\n\n",
                       (title && title[0]) ? title : "Info");
     if (text) {
-        len = safe_append(buf, sizeof(buf), len, "%s", text);
+        len = safe_append(s_info_text, sizeof(s_info_text), len, "%s", text);
     }
-    len = safe_append(buf, sizeof(buf), len, "\n\n(Press any key to return)");
+    len = safe_append(s_info_text, sizeof(s_info_text), len, "\n\n(Press any key to return)");
 
     if (g_display_sleep) {
-        display_set_brightness(s_last_brightness);
+        display_set_brightness(s_last_brightness);   /* LEDC PWM, 非 LVGL, main 调用安全 */
         g_display_sleep = false;
     }
-    /* R158/R159: 点阵菜单 canvas 的清空动作在 ui_show_msg 持锁区内执行(见该函数),
-       此处不可直接碰 LVGL —— display_show_info 运行在 main 任务上下文。 */
-    ui_show_msg(buf);
+    s_info_pending = true;
 }
 
 /* ============================================================
@@ -2769,10 +2819,12 @@ void display_show_bt_status(const char *device_name, bool connected, int volume)
 
     /* 复用播放界面：设备名作为曲目名，无进度（BT 无文件/seek） */
     display_update(st, name, 0, 0, 0, 0, 0.0f, 0, volume);
-    /* 覆盖底部提示为蓝牙操作说明 */
-    lv_lock();
-    lv_label_set_text(lbl_hint, "PLAY/PAUSE passthrough AVRCP   STOP exit");
-    lv_unlock();
+    /* R166-B3: hint 行异步化(main 不碰 LVGL)。lvgl_task 在 disp_update 消费之后
+       设置(播放渲染每秒重置 lbl_hint, 提前会被覆盖)。当前 main 同步设 hint 本就
+       存在被异步渲染覆盖的时序竞争, 顺带修掉。 */
+    snprintf(s_bt_hint_text, sizeof(s_bt_hint_text),
+             "PLAY/PAUSE passthrough AVRCP   STOP exit");
+    s_bt_hint_pending = true;
 }
 
 /* ============================================================

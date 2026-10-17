@@ -999,7 +999,12 @@ static void update_display(void)
             display_show_info(g_info_title, g_info_text);
             return;
         }
+        /* R166-B3: 信息屏到期 —— 必须 clear: 绘制路径(ui_show_info_nolock)会置
+           s_msg_active 冻结 player 渲染, 不清则 display_update_nolock 被永久 gate
+           -> 播放屏冻结(比原 bug 更严重)。display_clear_msg 经 s_clear_msg_pending
+           由 lvgl_task 解除冻结并恢复播放屏。 */
         g_info_active = false;
+        display_clear_msg();
     }
 
     /* R049c OTA 鍗囩骇鐣岄潰锛氫紭鍏堟覆鏌擄紝涓嶅彈 200ms 鑺傛祦闄愬埗 */
