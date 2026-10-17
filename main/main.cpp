@@ -486,6 +486,11 @@ void app_bookmark_jump(int position_s)
 {
     ESP_LOGI(TAG, "Bookmark jump: track=%d pos=%ds", g_current_track, position_s);
     menu_close();
+    /* R165-B2: 必须与 app_menu_exit 一样配对 display_menu_closed()。只 menu_close() 不清
+       s_menu_visible/canvas 显示态, 下次 display_update_nolock 在 s_menu_visible==true
+       时跑 menu_apply_nolock(), 把书签菜单 canvas 重画盖在播放屏上(R106 同族复发)。
+       且返回播放态时指纹常未变(同曲同位置), R164 前的指纹早退还会跳过修复, 双重叠加必现。 */
+    display_menu_closed();
     g_seek_on_play_position = position_s;
     play_current_track();
     display_clear_msg();
@@ -1507,41 +1512,6 @@ extern "C" void app_main(void)
             }
         }
         // 7. 瀹氭椂鍏虫満妫€鏌ワ紙鍚?FF/RW锛?
-
-        // 5. 寮傛澶勭悊鏇茬洰鎾畬锛堥伩鍏嶅湪鍥炶皟鍐呭祵濂?pipeline 鎿嶄綔锛?
-        if (g_pending_track_finished) {
-            g_pending_track_finished = false;
-            g_current_track = g_pending_track_next;
-            playlist_set_index(g_current_track);
-            g_seek_on_play_position = g_pending_track_seek;
-            play_current_track();
-        }
-
-        // 5b. 寮傛淇濆瓨鎸佷箙鍖栫姸鎬侊紙鍥炶皟涓粎鏆傚瓨锛宻ettings_flush() 璐熻矗钀界洏锛?
-        if (g_pending_save_track >= 0) {
-            char name[FILENAME_MAX_LEN] = "";
-            playlist_get_name(g_pending_save_track, name, sizeof(name));
-            settings_save_position(g_pending_save_track, g_pending_save_position, name);
-            flush_nvs_if_safe();   // R032-104: 鎾畬鍚庣珛鍗宠惤鐩橈紝閬垮厤 30s 鑷姩淇濆瓨绐楀彛鍐呮柇鐢典涪鏂偣
-            g_pending_save_track = -1;
-        }
-
-        // 6. 姣?30 绉掕嚜鍔ㄤ繚瀛樻柇鐐?+ 鎵归噺 flush NVS锛堟挱鏀?鏆傚仠/FF/RW 鍧囦繚瀛橈紝R034-002 / R035-004锛?
-        {
-            uint64_t now = esp_timer_get_time();
-            if ((now - g_last_auto_save_us) >= AUTO_SAVE_INTERVAL_US) {
-                g_last_auto_save_us = now;
-                if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
-                    g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
-                    save_current_position();
-                    flush_nvs_if_safe();
-                    // R035-010锛氳嚜鍔ㄤ繚瀛樹篃绠楃敤鎴锋椿鍔紝閲嶇疆 auto-off 璁℃椂
-                    power_mgmt_record_activity();
-                }
-            }
-        }
-
-        // 7. 瀹氭椂鍏虫満妫€鏌ワ紙鍚?FF/RW锛?
         if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
             g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND
 #if defined(CONFIG_USE_BT_SPEAKER)
@@ -1626,6 +1596,14 @@ extern "C" void app_main(void)
             ESP_LOGI(TAG, "Shutdown countdown expired (type=%d), powering off", ctype);
             audio_player_stop();
             save_current_position();
+            /* R165-A1: 落盘前把状态置 STOPPED。flush_nvs_if_safe() 在 PLAYING/FF/REW 态
+               跳过 settings_flush()(R095/R098: 解码中 nvs_commit 禁 Flash cache 会崩)——
+               低电倒计时可能在播放中到期, 走到这里 state 仍是 PLAYING -> 位置只 staged 未
+               commit -> 下一行立即断电, 断点/音量/播放模式全丢。此刻 audio_player_stop()
+               已停管道(解码任务退出), commit 安全; 与 auto-off 路径(置 STOPPED 再 flush)同型。
+               顺序约束: save_current_position() 仅在 PLAYING/PAUSED/FF/REW 态才实际保存,
+               必须先 save 后置位。 */
+            g_app_state = APP_STATE_STOPPED;
             flush_nvs_if_safe();
             /* 定时关机: 清除定时设置 */
             if (ctype == SHUTDOWN_COUNTDOWN_AUTO_OFF) {

@@ -204,7 +204,10 @@ static void ota_sd_perform(void)
         return;
     }
 
-    uint8_t buf[4096];
+    /* R165-A3: 4096B 改 static —— 原在 main 任务(8KB 栈)栈帧上, 叠加 FATFS/sdspi/
+       mbedtls 调用帧有溢出风险(本函数由按键回调同步调用, 期间阻塞 main 数秒~分钟)。
+       同步单线程使用无重入问题; OTA 时音频已停, 常驻 4KB 无压力。 */
+    static uint8_t buf[4096];
     long written = 0;
     int last_pct = -1;
     int n;
@@ -244,6 +247,8 @@ static void ota_sd_perform(void)
     /* esp_ota_end 内部校验镜像 SHA256 + 适用本芯片；失败即拒绝 */
     r = esp_ota_end(h);
     if (r != ESP_OK) {
+        esp_ota_abort(h);   /* R165-A2: end 失败 handle 未释放, IDF 文档要求 abort 善后;
+                               否则 ERROR 态按 PLAY 重试会再次 begin, 泄漏 handle */
         s_phase = OTA_PHASE_ERROR;
         snprintf(s_err_msg, sizeof(s_err_msg), "Image verify failed\n(corrupt/wrong chip)");
         return;

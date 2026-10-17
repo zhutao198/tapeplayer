@@ -35,6 +35,7 @@
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
+#include <stdarg.h>   /* R165-C1: safe_append 变参格式化 */
 
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_st7789.h"
@@ -295,6 +296,10 @@ static volatile bool s_show_splash_pending = false;  /* R111: 显示启动画面
 /* R131i: 全屏消息激活标志(no_card/no_files)。激活时 display_update 不覆盖该消息,
    否则下一帧 ui_show_player 会把"SD card not detected"一闪而过地隐藏。 */
 static volatile bool s_msg_active = false;
+/* R165-B4: 关机倒计时显示中(全屏 g_msg 覆盖层)。置位期间冻结 player 渲染
+   (disp_update 门限), 防止 R164 后每 200ms 的 ui_show_player() 把倒计时 g_msg
+   藏掉造成 1Hz 闪烁(低电倒计时恰好在播放中开始: 位置每秒变->指纹变->player 重绘)。 */
+static volatile bool s_shutdown_cd_active = false;
 
 /* P1-fix: display_update flag-consumption cache (main->lvgl_task, 消除跨任务锁竞争) */
 typedef struct {
@@ -984,8 +989,11 @@ static void lvgl_task(void *arg)
         if (s_disp_update_pending) {
             s_disp_update_pending = false;
             /* R131i: 全屏消息(无卡/无文件)激活时, 不调用 display_update_nolock,
-               否则其内部的 ui_show_player() 会一闪而过地隐藏"SD card not detected"。 */
-            if (!s_msg_active) {
+               否则其内部的 ui_show_player() 会一闪而过地隐藏"SD card not detected"。
+               R165-B4: 关机倒计时同理——倒计时画在 g_msg 上, player 重绘的
+               ui_show_player() 会把它藏掉 -> 每秒重画 = 1Hz 闪烁。冻结 30s 无感
+               (倒计时全覆盖屏幕), 取消/到期后标志自动清除, 下一 tick 恢复刷新。 */
+            if (!s_msg_active && !s_shutdown_cd_active) {
                 display_update_nolock(s_disp_cache.state, s_disp_cache.track_name,
                                       s_disp_cache.track_idx, s_disp_cache.total,
                                       s_disp_cache.current_sec, s_disp_cache.total_sec,
@@ -2625,18 +2633,35 @@ void display_menu_closed(void)
 /* R111: main侧只缓存数据+设标志, 绝不触碰 LVGL (与 display_show_menu 同范式)。
    原实现直接 lv_lock+LVGL写, 与 CPU1 lvgl_task 并发竞争→损坏 LVGL 内部结构
    →lv_refr遍历死循环→main卡30s→task_wdt。 */
+/* R165-C1: 安全追加格式化文本到定长缓冲, 返回新长度(钳在 [0, sz-1])。
+   原写法 `len += snprintf(buf + len, sizeof(buf) - len, ...)` 在 len 超界后
+   sizeof(buf)-len 作为 size_t 下溢成巨量 -> snprintf 越界写。当前输入短不爆,
+   长版本号/长提示文本即爆(潜伏)。 */
+static int safe_append(char *buf, size_t sz, int len, const char *fmt, ...)
+{
+    if (len < 0 || (size_t)len >= sz) len = (int)sz - 1;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf + len, sz - (size_t)len, fmt, ap);
+    va_end(ap);
+    if (n < 0) return len;              /* 编码错误: 保持原样 */
+    len += n;
+    if ((size_t)len >= sz) len = (int)sz - 1;
+    return len;
+}
+
 void display_show_info(const char *title, const char *text)
 {
     if (!g_display_initialized) return;
 
     static char buf[512];   /* R158: 256->512, 操作说明内容较长(旧值会截断) */
     int len = 0;
-    len += snprintf(buf + len, sizeof(buf) - len, "%s\n\n",
-                    (title && title[0]) ? title : "Info");
+    len = safe_append(buf, sizeof(buf), len, "%s\n\n",
+                      (title && title[0]) ? title : "Info");
     if (text) {
-        len += snprintf(buf + len, sizeof(buf) - len, "%s", text);
+        len = safe_append(buf, sizeof(buf), len, "%s", text);
     }
-    len += snprintf(buf + len, sizeof(buf) - len, "\n\n(Press any key to return)");
+    len = safe_append(buf, sizeof(buf), len, "\n\n(Press any key to return)");
 
     if (g_display_sleep) {
         display_set_brightness(s_last_brightness);
@@ -2786,15 +2811,16 @@ void display_show_ota_confirm(const char *cur_ver, const char *new_ver,
 
     static char buf[160];
     int len = 0;
-    len += snprintf(buf + len, sizeof(buf) - len, "Current:  %s\n",
-                    cur_ver ? cur_ver : "?");
-    len += snprintf(buf + len, sizeof(buf) - len, "New:      %s\n",
-                    (new_ver && new_ver[0]) ? new_ver : "Unknown");
-    len += snprintf(buf + len, sizeof(buf) - len, "Image:    %s\n",
-                    img_name ? img_name : "");
-    len += snprintf(buf + len, sizeof(buf) - len, "Size:     %ld KB\n", size_kb);
-    len += snprintf(buf + len, sizeof(buf) - len, "Battery:  %s",
-                    battery_ok ? "OK" : "LOW - please charge");
+    /* R165-C1: safe_append 防 len 超界后 size_t 下溢越界写 */
+    len = safe_append(buf, sizeof(buf), len, "Current:  %s\n",
+                      cur_ver ? cur_ver : "?");
+    len = safe_append(buf, sizeof(buf), len, "New:      %s\n",
+                      (new_ver && new_ver[0]) ? new_ver : "Unknown");
+    len = safe_append(buf, sizeof(buf), len, "Image:    %s\n",
+                      img_name ? img_name : "");
+    len = safe_append(buf, sizeof(buf), len, "Size:     %ld KB\n", size_kb);
+    len = safe_append(buf, sizeof(buf), len, "Battery:  %s",
+                      battery_ok ? "OK" : "LOW - please charge");
 
     lv_label_set_text(ota_title, "Firmware Update");
     lv_label_set_text(ota_body, buf);
@@ -2860,6 +2886,8 @@ void display_show_ota_error(const char *msg)
    并发竞争 inv_areas 链表损坏 -> lv_inv_area 死循环 -> main 卡 30s -> TWDT。 */
 static void shutdown_cd_apply_nolock(int type, int remaining)
 {
+    /* R165-B4: 倒计时激活标志。取消/结束时 main 会以 type<=0 再调一次, 同步清除。 */
+    s_shutdown_cd_active = (type > 0 && remaining >= 0);
     if (type <= 0 || remaining < 0) {
         /* R131i: 无倒计时时, 若已存在全屏消息(无卡/无文件), 不要隐藏 g_msg
            (否则被电源管理每秒 1Hz 的"取消倒计时"调用反复藏掉→提示一闪而过/黑屏),
