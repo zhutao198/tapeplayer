@@ -1096,6 +1096,23 @@ static bool lcd_on_color_trans_done(esp_lcd_panel_io_handle_t io,
 
 static esp_err_t lcd_hw_init(void)
 {
+    /* E2: 总线三线钳位(仅此一项, RST 脉冲形状保持发布版原样)。
+       用户示波器实测: 按 RESET 后 SCLK 悬空高阻, 从高电平缓慢放电需数秒,
+       "还没到 0V 就开始发送时钟" -> ① 缓慢边沿穿越面板施密特阈值区时叠加
+       噪声产生虚假时钟沿, CS 恒接地的面板把它们当真实时钟采样(移入 DC/MOSI
+       电平 = 垃圾命令); ② app 发首条命令(SLPOUT)时 SCLK 基线非零, 首组
+       时钟边沿幅度不足, 面板可能误采 -> init 失败 -> 黑屏。
+       SCLK 线放电时间常数逐板不同(电容/泄漏个体差异), 也解释了好板/坏板
+       的两极分化。这里在 SPI 初始化前用 GPIO 强驱动把三线钳到 0V:
+       消除非零基线 + 把"缓慢穿越阈值"变成一个陡沿(面板至多移入 1 位 0,
+       无害), 之后总线静止。 */
+    gpio_set_direction(DISPLAY_SCLK_IO, GPIO_MODE_OUTPUT);
+    gpio_set_level(DISPLAY_SCLK_IO, 0);
+    gpio_set_direction(DISPLAY_MOSI_IO, GPIO_MODE_OUTPUT);
+    gpio_set_level(DISPLAY_MOSI_IO, 0);
+    gpio_set_direction(DISPLAY_DC_IO, GPIO_MODE_OUTPUT);
+    gpio_set_level(DISPLAY_DC_IO, 0);
+
     /* LCD 软电源: 拉低导通 */
     gpio_set_direction(LCD_POW_EN_IO, GPIO_MODE_OUTPUT);
     gpio_set_level(LCD_POW_EN_IO, 0);
@@ -1130,7 +1147,7 @@ static esp_err_t lcd_hw_init(void)
     io_cfg.cs_gpio_num        = -1;
     io_cfg.dc_gpio_num        = DISPLAY_DC_IO;
     io_cfg.spi_mode           = 0;
-    io_cfg.pclk_hz            = 20 * 1000 * 1000;   // P1-fix: 10->20MHz 刷新提速2x (如花屏降回15M)
+    io_cfg.pclk_hz            = 10 * 1000 * 1000;   // E1b: 在"从未成功"的板卡(MAC 28:84:85)上单变量试10MHz; 上一块板(MAC 68:ee)10/20MHz失败率无显著差异
     io_cfg.trans_queue_depth  = 10;
     io_cfg.on_color_trans_done = NULL;   /* 回退阻塞 flush, 排查动画卡顿 */
     io_cfg.lcd_cmd_bits       = 8;
