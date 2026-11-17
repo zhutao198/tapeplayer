@@ -68,6 +68,22 @@ ESP_SYSTEM_INIT_FN(early_pow_en_latch, CORE, BIT(0), 100)
     gpio_ll_output_enable(hw, pin);               /* GPIO_ENABLE1 bit8 */
     gpio_ll_matrix_out_default(hw, pin);           /* 路由 GPIO 矩阵输出到 pad */
     gpio_ll_set_level(hw, pin, 1);                /* GPIO_OUT1 bit8 = 高, 建自锁 */
+
+    /* v2.1.1: 消灭"core 阶段 -> lcd_hw_init"约 1 秒内的总线悬空窗口。
+       TFT_CS 恒接地, 面板全程监听; 此窗口内 SCLK/MOSI/DC 若高阻悬空,
+       悬空 SCLK 的噪声翻转会被面板当真实时钟采样 -> 移入垃圾命令 ->
+       残留约 1/20 冷启动失败 (v2.1 的 lcd_hw_init 内钳位只覆盖后半段,
+       前半段 app 启动的 1 秒仍裸露)。这里用与 R118 同款的 gpio_ll 在
+       CORE 阶段(app_main 之前)就把三线钳为输出低, 面板从复位起面对
+       静止总线。与 lcd_hw_init 里的高层钳位(gpio_set_direction/level)
+       叠加幂等, 无冲突; 之后 SPI/esp_lcd 接管时会重新配置这些脚。 */
+    const int lcd_pins[] = {DISPLAY_SCLK_IO, DISPLAY_MOSI_IO, DISPLAY_DC_IO};
+    for (size_t i = 0; i < sizeof(lcd_pins) / sizeof(lcd_pins[0]); i++) {
+        gpio_ll_func_sel(hw, lcd_pins[i], PIN_FUNC_GPIO);
+        gpio_ll_output_enable(hw, lcd_pins[i]);
+        gpio_ll_matrix_out_default(hw, lcd_pins[i]);
+        gpio_ll_set_level(hw, lcd_pins[i], 0);    /* 输出低 = 静止总线, 无时钟沿 */
+    }
     return ESP_OK;
 }
 
