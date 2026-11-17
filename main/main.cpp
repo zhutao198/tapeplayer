@@ -135,6 +135,15 @@ static int            g_seek_on_play_position = 0;  // 鏂偣鎭㈠ seek �
 // g_last_auto_save_us: 涓?auto_save/settings_flush/power_mgmt 鑰﹀悎锛屽崟浠诲姟涓?OK锛圡-15: 璁捐绾э紝鍙帴鍙楋級
 static uint64_t       g_last_auto_save_us = 0;
 static play_mode_t    g_play_mode = PLAY_MODE_SEQUENCE;
+/* S1: 播放速度档位 0..5 (0.5/0.75/1.0/1.25/1.5/2.0), 跨曲目/重启保持 */
+static int            g_play_speed_idx = PLAY_SPEED_DEFAULT;
+static const float    k_play_speed_values[PLAY_SPEED_COUNT] = PLAY_SPEED_VALUES;
+
+static float app_current_play_speed(void)
+{
+    if (g_play_speed_idx < 0 || g_play_speed_idx >= PLAY_SPEED_COUNT) return 1.0f;
+    return k_play_speed_values[g_play_speed_idx];
+}
 
 // 寤惰繜澶勭悊锛氭洸鐩挱瀹?鈫?涓诲惊鐜鐞嗕笅涓€棣栵紙閬垮厤鍦ㄥ洖璋冨唴宓屽璋?play锛?
 static bool           g_pending_track_finished = false;
@@ -259,7 +268,7 @@ static void jump_to_track_start(void)
 
     if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED ||
         g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
-        audio_player_set_speed(TAPE_SPEED_NORMAL);
+        audio_player_set_speed(app_current_play_speed());   /* S1: 跳曲首后恢复用户倍速档位 */
         audio_player_seek(0);
         save_current_position();   // 钀界洏鏇查浣嶇疆锛?锛?
         if (g_app_state == APP_STATE_FAST_FORWARD || g_app_state == APP_STATE_REWIND) {
@@ -311,8 +320,10 @@ static void play_current_track(void)
             } else {
                 g_app_state = APP_STATE_PLAYING;
             }
+            /* S1: 每次开播应用用户倍速档位(FF/REW 跨曲时也用档位而非 1.0) */
+            audio_player_set_speed(app_current_play_speed());
             g_last_auto_save_us = esp_timer_get_time();
-            ESP_LOGI(TAG, "Now playing: %s", filepath);
+            ESP_LOGI(TAG, "Now playing: %s (speed idx=%d)", filepath, g_play_speed_idx);
             return;   /* R101: 播放成功，结束查找 */
         }
     }
@@ -431,6 +442,25 @@ void app_set_play_mode(int m)
     g_play_mode = (play_mode_t)m;
     settings_save_play_mode(m);
     display_set_play_mode(m);
+}
+
+/* S1: 播放速度档位宿主回调 (供 menu.cpp 动态子菜单使用) */
+int app_get_play_speed_idx(void)
+{
+    return g_play_speed_idx;
+}
+
+void app_set_play_speed_idx(int idx)
+{
+    if (idx < 0 || idx >= PLAY_SPEED_COUNT) idx = PLAY_SPEED_DEFAULT;
+    g_play_speed_idx = idx;
+    settings_save_play_speed(idx);
+    settings_flush();
+    /* 播放中即时生效; 非播放态下一曲开播时生效 */
+    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
+        audio_player_set_speed(app_current_play_speed());
+    }
+    ESP_LOGI(TAG, "S1: play speed -> idx=%d (%.2fx)", idx, k_play_speed_values[idx]);
 }
 
 /* R049c锛氫俊鎭睆锛堟々鍔熻兘鎻愮ず锛?*/
@@ -915,7 +945,8 @@ static void handle_button_events(void)
                     /* R111: 暂停态不resume, scrub seek不需要管道运行, 避免PAUSE/RESUME混乱 */
                     skip_seconds(SEEK_STEP_SEC);            // R046锛氬厛缁ф壙鐭寜鍩哄噯璺宠繘 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
                     tape_control_ff_press();
-                    audio_player_set_speed(tape_control_get_speed());
+                    /* S1: 不再把 tape 速度传给 set_speed —— FF 靠 tick 内跳帧 seek 实现,
+                       I2S 保持用户倍速档位, 避免 16x 把采样率拉到 192k 造成 starvation */
                     audio_player_scrub_enter();   /* R098: 暂停播放仅跳帧，decoder 停止后重置才安全 */
                     g_app_state = APP_STATE_FAST_FORWARD;
                     g_combo_rew_us = 0; g_combo_stop_us = 0;  // 杩涘叆鍙橀€熸€侊紝鏀惧純鏈畬鎴愮殑缁勫悎閿鏃?
@@ -925,12 +956,12 @@ static void handle_button_events(void)
                 // 淇濇寔鎬侊細鍙橀€熸。浣嶇敱 tape_control_tick() 鎸夋寜浣忔椂闀胯嚜鍔ㄥ崌妗ｏ紝
                 // 姝ゅ浠呯‘淇濋€熷害鍚屾锛坧ress 宸插湪 LONG_PRESS 璋冭繃锛屼笉閲嶅璋冪敤锛夈€?
                 if (g_app_state == APP_STATE_FAST_FORWARD) {
-                    audio_player_set_speed(tape_control_get_speed());
+                    /* S1: tape 速度仅用于跳帧, 不再驱动 I2S (见 FF press 处说明) */
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
                 if (g_app_state == APP_STATE_FAST_FORWARD) {
                                 tape_control_ff_release();
-                                audio_player_set_speed(TAPE_SPEED_NORMAL);
+                                audio_player_set_speed(app_current_play_speed());   /* S1: 恢复用户倍速档位 */
                                 audio_player_scrub_exit(g_state_before_scrub != APP_STATE_PAUSED);
                                 g_app_state = g_state_before_scrub;   /* R111: 恢复快进前状态 */
                                 g_combo_rew_us = 0; g_combo_stop_us = 0;  // 閫€鍑哄彉閫熸€侊紝娓呯┖缁勫悎閿鏃?
@@ -959,7 +990,7 @@ static void handle_button_events(void)
                     /* R111: 暂停态不resume */
                     skip_seconds(-SEEK_STEP_SEC);           // R046锛氬厛缁ф壙鐭寜鍩哄噯鍚庨€€ 5 绉掞紝閬垮厤"鍒氳繃闀挎寜鍙嶈€屽€掗€€鏇村皯"鐨勬柇灞?
                     tape_control_rewind_press();
-                    audio_player_set_speed(tape_control_get_speed());
+                    /* S1: 同 FF —— REW 靠跳帧 seek, I2S 保持用户倍速档位 */
                     audio_player_scrub_enter();   /* R098: 暂停播放仅跳帧，decoder 停止后重置才安全 */
                     g_app_state = APP_STATE_REWIND;
                     g_combo_rew_us = 0; g_combo_stop_us = 0;  // 杩涘叆鍙橀€熸€侊紝鏀惧純鏈畬鎴愮殑缁勫悎閿鏃?
@@ -968,12 +999,12 @@ static void handle_button_events(void)
                        e->event == BTN_EVENT_EXTRA_LONG_PRESS) {
                 // 淇濇寔鎬侊細鍙橀€熸。浣嶇敱 tape_control_tick() 鑷姩鍗囨。锛宲ress 宸茶皟杩囷紝涓嶉噸澶?
                 if (g_app_state == APP_STATE_REWIND) {
-                    audio_player_set_speed(tape_control_get_speed());
+                    /* S1: tape 速度仅用于跳帧, 不再驱动 I2S (见 REW press 处说明) */
                 }
             } else if (e->event == BTN_EVENT_RELEASE) {
                 if (g_app_state == APP_STATE_REWIND) {
                                 tape_control_rewind_release();
-                                audio_player_set_speed(TAPE_SPEED_NORMAL);
+                                audio_player_set_speed(app_current_play_speed());   /* S1: 恢复用户倍速档位 */
                                 audio_player_scrub_exit(g_state_before_scrub != APP_STATE_PAUSED);
                                 g_app_state = g_state_before_scrub;   /* R111: 恢复快进前状态 */
                                 g_combo_rew_us = 0; g_combo_stop_us = 0;  // 閫€鍑哄彉閫熸€侊紝娓呯┖缁勫悎閿鏃?
@@ -1317,6 +1348,10 @@ static void init_hardware(void)
     audio_player_set_volume(vol);
     g_play_mode = (play_mode_t)settings_load_play_mode();
     display_set_play_mode((int)g_play_mode);
+    /* S1: 恢复播放速度档位(默认 2=1.0x), 开播时应用 */
+    g_play_speed_idx = settings_load_play_speed();
+    ESP_LOGI(TAG, "S1: boot play speed idx=%d (%.2fx)",
+             g_play_speed_idx, app_current_play_speed());
 
     // 11. 鏍￠獙鎵€鏈夋寜閿?GPIO 鏄惁涓哄悎娉?RTC 鍞ら啋婧?(鏂扮増鏄犲皠閮ㄥ垎鎸夐敭闈?RTC GPIO)
     const gpio_num_t wakeup_gpios[] = {
@@ -1478,10 +1513,8 @@ extern "C" void app_main(void)
         tape_control_tick();
 
         // 3. 蹇繘/蹇€€閫熷害鏇存柊
-        tape_mode_t mode = tape_control_get_mode();
-        if (mode != TAPE_MODE_NORMAL) {
-            audio_player_set_speed(tape_control_get_speed());
-        }
+        /* S1: FF/REW 的 tape 速度不再驱动 I2S (跳帧由 audio_player_tick 内部处理),
+           保持用户倍速档位, 避免 16x 采样率拉到 192k 造成 buffer starvation */
 
         // 4. 闊抽鎾斁鍣?tick锛堢閬撶淮鎶?璺冲抚/浜嬩欢鐩戝惉锛?
         audio_player_tick();

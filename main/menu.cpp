@@ -7,6 +7,7 @@
  */
 
 #include "menu.h"
+#include "config.h"      /* S1: PLAY_SPEED_COUNT / PLAY_SPEED_VALUES / NVS key */
 #include "button_manager.h"
 #include "display.h"
 #include "settings.h"
@@ -24,6 +25,8 @@ void app_menu_exit(void);
 void app_enter_browse(void);
 int  app_get_play_mode(void);
 void app_set_play_mode(int m);
+int  app_get_play_speed_idx(void);      /* S1 */
+void app_set_play_speed_idx(int idx);   /* S1 */
 void app_show_info(const char *title, const char *text);
 /* R161: 关于屏改走 display_show_text_page(点阵 canvas, 中文友好), 不再用 LVGL 标签信息屏 */
 void app_play_beep(void);
@@ -108,6 +111,8 @@ static void key_beep_set_idx(int i) { settings_save_key_beep(i != 0); }
  * ============================================================ */
 /* R115: 播放模式改为列表选择式(动态子菜单), 不再用TOGGLE */
 void mode_fill_and_enter(void);  /* 前向声明 */
+/* S1: 播放速度动态子菜单 (g_root 在下方引用, 必须提前声明) */
+void speed_fill_and_enter(void);
 
 /* R049c / R049d：系统子菜单（蓝牙音箱在 USE_BT_SPEAKER 时置于此，占原 A-B 复读位置） */
 static const menu_item_t g_system_sub[] = {
@@ -124,6 +129,7 @@ static const menu_item_t g_root[] = {
     { "浏览文件", MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_enter_browse },
     { "书签",     MI_ACTION,  NULL, 0, NULL, NULL, NULL, 0, app_bookmark_enter },
     { "播放模式", MI_ACTION, NULL, 0, NULL, NULL, NULL, 0, mode_fill_and_enter },
+    { "播放速度", MI_ACTION, NULL, 0, NULL, NULL, NULL, 0, speed_fill_and_enter },  /* S1 */
     { "系统设置", MI_SUBMENU, NULL, 0, NULL, NULL, g_system_sub,
 #if defined(CONFIG_USE_BT_SPEAKER)
         5, NULL },   /* R157: +背光亮度 */
@@ -131,7 +137,8 @@ static const menu_item_t g_root[] = {
         4, NULL },   /* R157: +背光亮度 */
 #endif
 };
-static const int g_root_count = 4;   // 根菜单顺序：浏览文件/书签/播放模式/系统设置 (R113: 移除A-B复读菜单项, 仅保留快捷键)
+/* S1: 4 -> 5, 新增"播放速度"(位于播放模式与系统设置之间) */
+static const int g_root_count = 5;   // 根菜单顺序：浏览文件/书签/播放模式/播放速度/系统设置
 
 /* ============================================================
  * R049b/c 动作实现
@@ -255,6 +262,42 @@ void mode_fill_and_enter(void)
         s_stack[s_depth].count = 3;
         s_stack[s_depth].sel   = (cur >= 0 && cur < 3) ? cur : 0;
         s_stack[s_depth].title = "播放模式";
+        s_depth++;
+        s_edit = false;
+        menu_render();
+    }
+}
+
+/* ============================================================
+ * S1: 播放速度动态子菜单 (列表选择式, 与播放模式同款交互)
+ * 档位: 0.5 / 0.75 / 1.0 / 1.25 / 1.5 / 2.0 (保持变调, I2S 采样率实现)
+ * 选择即生效 + 持久化到 NVS(跨曲目/重启保持)
+ * ============================================================ */
+static menu_item_t s_speed_items[PLAY_SPEED_COUNT];
+static const char *s_speed_labels[PLAY_SPEED_COUNT] = {
+    "0.5x", "0.75x", "1.0x (正常)", "1.25x", "1.5x", "2.0x"
+};
+
+void speed_fill_and_enter(void)
+{
+    int cur = app_get_play_speed_idx();
+    for (int i = 0; i < PLAY_SPEED_COUNT; i++) {
+        s_speed_items[i].label = s_speed_labels[i];
+        s_speed_items[i].kind = MI_ACTION;
+        s_speed_items[i].on_enter = NULL;
+        s_speed_items[i].options = NULL;
+        s_speed_items[i].option_count = 0;
+        s_speed_items[i].get_idx = NULL;
+        s_speed_items[i].set_idx = NULL;
+        s_speed_items[i].children = NULL;
+        s_speed_items[i].child_count = 0;
+    }
+
+    if (s_depth < MENU_MAX_DEPTH) {
+        s_stack[s_depth].items = s_speed_items;
+        s_stack[s_depth].count = PLAY_SPEED_COUNT;
+        s_stack[s_depth].sel   = (cur >= 0 && cur < PLAY_SPEED_COUNT) ? cur : PLAY_SPEED_DEFAULT;
+        s_stack[s_depth].title = "播放速度";
         s_depth++;
         s_edit = false;
         menu_render();
@@ -477,6 +520,15 @@ void menu_handle_button(const btn_event_info_t *events, int n)
                     app_set_play_mode(lv->sel);
                     ESP_LOGI(TAG, "Play mode set: %d (%s)", lv->sel, s_mode_labels[lv->sel]);
                     /* 返回上一级 */
+                    if (s_depth > 1) {
+                        s_depth--;
+                        menu_render();
+                    }
+                } else if (it->kind == MI_ACTION && it->on_enter == NULL &&
+                           lv->items == s_speed_items) {
+                    /* S1: 播放速度子菜单 -> 选中即生效(持久化 NVS + 播放中即时变速)并返回 */
+                    app_set_play_speed_idx(lv->sel);
+                    ESP_LOGI(TAG, "Play speed set: idx=%d (%s)", lv->sel, s_speed_labels[lv->sel]);
                     if (s_depth > 1) {
                         s_depth--;
                         menu_render();

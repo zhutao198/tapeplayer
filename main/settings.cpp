@@ -290,6 +290,25 @@ int settings_load_eq(void)
     return (int)v;
 }
 
+/* S1: 播放速度档位 0..5 持久化 (默认 2=1.0x, 老设备无此键时行为不变) */
+void settings_save_play_speed(int idx)
+{
+    if (!g_nvs_handle) return;
+    if (idx < 0 || idx >= PLAY_SPEED_COUNT) idx = PLAY_SPEED_DEFAULT;
+    esp_err_t err = nvs_set_u8(g_nvs_handle, NVS_KEY_PLAY_SPEED, (uint8_t)idx);
+    if (err != ESP_OK) ESP_LOGE(TAG, "nvs_set_u8(%s) failed: 0x%x", NVS_KEY_PLAY_SPEED, err);
+    ESP_LOGI(TAG, "DBG save_play_speed idx=%d", idx);
+}
+
+int settings_load_play_speed(void)
+{
+    if (!g_nvs_handle) return PLAY_SPEED_DEFAULT;
+    uint8_t idx = PLAY_SPEED_DEFAULT;
+    if (nvs_get_u8(g_nvs_handle, NVS_KEY_PLAY_SPEED, &idx) != ESP_OK) idx = PLAY_SPEED_DEFAULT;
+    if (idx >= PLAY_SPEED_COUNT) idx = PLAY_SPEED_DEFAULT;
+    return (int)idx;
+}
+
 void settings_flush(void)
 {
     if (!g_nvs_handle) return;

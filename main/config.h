@@ -225,6 +225,12 @@
 #define NVS_KEY_VOICE       "voice"           // 语音播报 0/1 (R049d stub)
 #define NVS_KEY_EQ          "eq"              // EQ 模式 0..4 (R049d stub)
 #define NVS_KEY_BRIGHTNESS  "brightness"      // 背光亮度 20~100 (%) (R157, 默认100)
+#define NVS_KEY_PLAY_SPEED  "play_speed"      // 播放速度档位 0..5 (S1: 0.5/0.75/1.0/1.25/1.5/2.0, 默认2=1.0x)
+
+/* 播放速度档位表 (保持变调: 变速通过 I2S 采样率实现) */
+#define PLAY_SPEED_COUNT    6
+#define PLAY_SPEED_DEFAULT  2                 // 1.0x 档位索引
+#define PLAY_SPEED_VALUES   {0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f}
 
 /* 固件版本号：用于 OTA 防降级校验 (R049c 真实化) */
 #ifndef APP_VERSION_STR

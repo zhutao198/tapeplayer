@@ -86,6 +86,16 @@ void settings_save_eq(int mode);
 int  settings_load_eq(void);
 
 /**
+ * @brief S1: 保存播放速度档位索引 (0..5 -> 0.5/0.75/1.0/1.25/1.5/2.0)
+ */
+void settings_save_play_speed(int idx);
+
+/**
+ * @brief S1: 加载播放速度档位索引 (默认 2 = 1.0x)
+ */
+int settings_load_play_speed(void);
+
+/**
  * @brief 提交所有未保存的设置（批量 flush，降低 flash 磨损）
  */
 void settings_flush(void);

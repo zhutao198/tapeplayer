@@ -1395,16 +1395,24 @@ void audio_player_set_speed(float speed)
 {
     if (!g_i2s_writer) return;
 
-    (void)speed;
-    /* R098: seek-based FF/REW; keep I2S at file sample rate to avoid i2s-writer
-       overriding the variable clock (speed-up lost) and buffer starvation. */
-    int sample_rate = g_base_sample_rate;
+    /* S1: 变速播放(保持变调) —— 通过 I2S 采样率 = 文件基准率 × 倍率实现。
+       R098 曾把此处锁死为基准率(seek 式 FF/REW 需要), 现恢复变速:
+       - 正常播放: app 传入用户选定的播放速度档位(0.5~2.0);
+       - FF/REW scrub: tape_control 传入的速度（其 seek 由 audio_player_tick
+         独立处理, I2S 变速不会破坏 seek 逻辑; FF/REW 释放后 app 会恢复档位）。
+       采样率限幅 8000..192000, 防止非法值; 与当前率相同则跳过(去重 i2s_set_clk)。 */
+    if (speed <= 0.0f) speed = 1.0f;
+    int sample_rate = (int)(g_base_sample_rate * speed);
+    if (sample_rate < 8000)  sample_rate = 8000;
+    if (sample_rate > 192000) sample_rate = 192000;
 
     if (sample_rate != g_current_sample_rate) {
         g_current_sample_rate = sample_rate;
         // R123-WAV: WAV 直通 I2S 固定 16bit(位深由转换 element 处理)，变速时不能退回 32bit I2S
         int bits = (g_is_wav || g_is_flac) ? 16 : g_file_bits;
         i2s_stream_set_clk(g_i2s_writer, sample_rate, bits, g_file_ch);
+        ESP_LOGI(TAG, "S1: speed=%.2fx base=%dHz -> I2S=%dHz bits=%d ch=%d",
+                 speed, g_base_sample_rate, sample_rate, bits, g_file_ch);
     }
 }
 
