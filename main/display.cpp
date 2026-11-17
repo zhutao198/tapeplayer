@@ -221,6 +221,9 @@ static int64_t   g_sd_toast_until = 0;
 static int64_t   g_vol_hide_until = 0; // 音量条自动隐藏截止时间 (停止调节 3s 后隐藏)
 
 static int s_play_mode = 0;          // 0=SEQ 1=ALL 2=ONE
+/* S1: 播放速度档位 (0..5 -> 0.5/0.75/1.0/1.25/1.5/2.0), 2=1.0x 正常速不显示 */
+static int s_play_speed_idx = 2;
+static const char *const s_play_speed_labels[] = {"0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"};
 
 /* ============================================================
  * 背光 PWM (IO15, LEDC)
@@ -1828,6 +1831,13 @@ void display_set_play_mode(int mode)
     s_play_mode = mode;
 }
 
+void display_set_play_speed_idx(int idx)
+{
+    /* S1: 只接受合法档位, 与 config.h PLAY_SPEED_COUNT 对齐(此处不引 config.h, 用硬上限 5) */
+    if (idx < 0 || idx > 5) idx = 2;
+    s_play_speed_idx = idx;
+}
+
 /* ============================================================
  * 脏区检查 / 屏保 (沿用原逻辑)
  * ============================================================ */
@@ -2293,7 +2303,13 @@ static void display_update_nolock(player_state_t state,
         } else {
             const char *mode_cn = (s_play_mode == 1) ? "列表循环" :
                                   (s_play_mode == 2) ? "单曲循环" : "顺序播放";
-            snprintf(fmt_buf, sizeof(fmt_buf), "%s|%s", fmt_tag, mode_cn);
+            /* S1: 非 1.0x 时在格式行末尾显示倍速, 如 "MP3|顺序播放|1.5x" */
+            if (s_play_speed_idx >= 0 && s_play_speed_idx <= 5 && s_play_speed_idx != 2) {
+                snprintf(fmt_buf, sizeof(fmt_buf), "%s|%s|%s",
+                         fmt_tag, mode_cn, s_play_speed_labels[s_play_speed_idx]);
+            } else {
+                snprintf(fmt_buf, sizeof(fmt_buf), "%s|%s", fmt_tag, mode_cn);
+            }
         }
         /* R119-ui-a: 格式行内容未变时跳过整屏点阵重绘(写~115KB PSRAM)。
            原代码每次 display_update 都 clear+text+invalidate, 即使内容固定("FLAC|顺序播放")

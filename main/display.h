@@ -107,6 +107,12 @@ void display_power(bool on);
 void display_set_play_mode(int mode);
 
 /**
+ * @brief S1: 设置当前播放速度档位 (供主界面格式行显示 0.5x~2.0x)
+ * @param idx 档位索引 0..5 (0.5/0.75/1.0/1.25/1.5/2.0), 默认2=1.0x 不显示
+ */
+void display_set_play_speed_idx(int idx);
+
+/**
  * @brief 触发音量条显示 (调节音量时调用)
  * @note 调用后音量条立即显示最新音量, 并在停止调节 3 秒后自动隐藏
  * @param volume 当前音量 level 0..VOLUME_LEVEL_MAX (15 档逻辑音量)

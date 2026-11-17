@@ -411,6 +411,12 @@ void app_menu_exit(void)
     menu_close();
     display_menu_closed();   /* R102: 清点阵菜单缓存, 恢复 player 渲染 */
     g_app_state = g_state_before_menu;
+    /* S1-fix: 在菜单里改的倍速档位, 退出时无论播放/暂停态都重新应用到引擎。
+       (菜单内 g_app_state=APP_STATE_MENU, app_set_play_speed_idx 里条件不成立,
+       只存了 NVS 没即时生效; 退出时必须补上) */
+    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
+        audio_player_set_speed(app_current_play_speed());
+    }
     if (g_app_state == APP_STATE_PLAYING) audio_player_resume();
 }
 
@@ -456,10 +462,11 @@ void app_set_play_speed_idx(int idx)
     g_play_speed_idx = idx;
     settings_save_play_speed(idx);
     settings_flush();
-    /* 播放中即时生效; 非播放态下一曲开播时生效 */
-    if (g_app_state == APP_STATE_PLAYING || g_app_state == APP_STATE_PAUSED) {
-        audio_player_set_speed(app_current_play_speed());
-    }
+    /* S1-fix: 无条件应用 —— 菜单内 g_app_state=APP_STATE_MENU, 旧的条件判断导致
+       菜单里改档位不生效(只存 NVS)。audio_player_set_speed 内部有 g_i2s_writer
+       空指针保护, 非播放态调用安全(下一曲开播时还会再应用一次)。 */
+    audio_player_set_speed(app_current_play_speed());
+    display_set_play_speed_idx(idx);   /* 立即刷新格式行显示 */
     ESP_LOGI(TAG, "S1: play speed -> idx=%d (%.2fx)", idx, k_play_speed_values[idx]);
 }
 
@@ -1350,6 +1357,7 @@ static void init_hardware(void)
     display_set_play_mode((int)g_play_mode);
     /* S1: 恢复播放速度档位(默认 2=1.0x), 开播时应用 */
     g_play_speed_idx = settings_load_play_speed();
+    display_set_play_speed_idx(g_play_speed_idx);   /* S1: 启动时同步格式行显示 */
     ESP_LOGI(TAG, "S1: boot play speed idx=%d (%.2fx)",
              g_play_speed_idx, app_current_play_speed());
 
