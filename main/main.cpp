@@ -69,15 +69,18 @@ ESP_SYSTEM_INIT_FN(early_pow_en_latch, CORE, BIT(0), 100)
     gpio_ll_matrix_out_default(hw, pin);           /* 路由 GPIO 矩阵输出到 pad */
     gpio_ll_set_level(hw, pin, 1);                /* GPIO_OUT1 bit8 = 高, 建自锁 */
 
-    /* v2.1.1: 消灭"core 阶段 -> lcd_hw_init"约 1 秒内的总线悬空窗口。
+    /* v2.1.1/2: 消灭"core 阶段 -> lcd_hw_init"约 1 秒内的悬空窗口。
        TFT_CS 恒接地, 面板全程监听; 此窗口内 SCLK/MOSI/DC 若高阻悬空,
        悬空 SCLK 的噪声翻转会被面板当真实时钟采样 -> 移入垃圾命令 ->
        残留约 1/20 冷启动失败 (v2.1 的 lcd_hw_init 内钳位只覆盖后半段,
-       前半段 app 启动的 1 秒仍裸露)。这里用与 R118 同款的 gpio_ll 在
-       CORE 阶段(app_main 之前)就把三线钳为输出低, 面板从复位起面对
-       静止总线。与 lcd_hw_init 里的高层钳位(gpio_set_direction/level)
-       叠加幂等, 无冲突; 之后 SPI/esp_lcd 接管时会重新配置这些脚。 */
-    const int lcd_pins[] = {DISPLAY_SCLK_IO, DISPLAY_MOSI_IO, DISPLAY_DC_IO};
+       前半段 app 启动的 1 秒仍裸露)。
+       v2.1.2 补上 RST: 屏侧 RC(110nF+91K 上拉到 LCD VCC)在 MCU 高阻窗口
+       会把 RST 拉到高电平(非复位态), 面板"醒着"监听静止/噪声总线处于
+       亚稳态。四线全钳低后, 面板从复位起 = 硬件复位态 + 静止总线,
+       确定状态。GPIO 强驱低仅吸 36uA(上拉电流), 无压力; 之后
+       lcd_hw_init 的 RST 脉冲/SPI/esp_lcd 接管会重新配置这些脚。 */
+    const int lcd_pins[] = {DISPLAY_SCLK_IO, DISPLAY_MOSI_IO, DISPLAY_DC_IO,
+                            DISPLAY_RESET_IO};   /* v2.1.2: 补上 RST —— 最后一根未钳线 */
     for (size_t i = 0; i < sizeof(lcd_pins) / sizeof(lcd_pins[0]); i++) {
         gpio_ll_func_sel(hw, lcd_pins[i], PIN_FUNC_GPIO);
         gpio_ll_output_enable(hw, lcd_pins[i]);
